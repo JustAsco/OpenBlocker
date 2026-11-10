@@ -1,0 +1,547 @@
+{
+  "categories": [
+    {
+      "id": "social",
+      "name": "Social media",
+      "icon": "💬",
+      "color": "#8b5cf6",
+      "sites": [
+        {
+          "domain": "instagram.com",
+          "name": "Instagram",
+          "related": [
+            "cdninstagram.com"
+          ]
+        },
+        {
+          "domain": "tiktok.com",
+          "name": "TikTok",
+          "related": [
+            "tiktokcdn.com",
+            "tiktokv.com"
+          ]
+        },
+        {
+          "domain": "facebook.com",
+          "name": "Facebook",
+          "related": [
+            "fb.com",
+            "fbcdn.net"
+          ]
+        },
+        {
+          "domain": "x.com",
+          "name": "X (Twitter)",
+          "related": [
+            "twitter.com",
+            "t.co",
+            "twimg.com"
+          ]
+        },
+        {
+          "domain": "reddit.com",
+          "name": "Reddit",
+          "related": [
+            "redd.it",
+            "redditmedia.com",
+            "old.reddit.com"
+          ]
+        },
+        {
+          "domain": "snapchat.com",
+          "name": "Snapchat"
+        },
+        {
+          "domain": "linkedin.com",
+          "name": "LinkedIn"
+        },
+        {
+          "domain": "pinterest.com",
+          "name": "Pinterest"
+        },
+        {
+          "domain": "tumblr.com",
+          "name": "Tumblr"
+        },
+        {
+          "domain": "threads.net",
+          "name": "Threads"
+        },
+        {
+          "domain": "bsky.app",
+          "name": "Bluesky"
+        },
+        {
+          "domain": "9gag.com",
+          "name": "9GAG"
+        },
+        {
+          "domain": "imgur.com",
+          "name": "Imgur"
+        }
+      ],
+      "apps": []
+    },
+    {
+      "id": "video",
+      "name": "Video & streaming",
+      "icon": "📺",
+      "color": "#ef4444",
+      "sites": [
+        {
+          "domain": "youtube.com",
+          "name": "YouTube",
+          "related": [
+            "youtu.be",
+            "ytimg.com",
+            "youtube-nocookie.com"
+          ]
+        },
+        {
+          "domain": "netflix.com",
+          "name": "Netflix",
+          "related": [
+            "nflxvideo.net"
+          ]
+        },
+        {
+          "domain": "twitch.tv",
+          "name": "Twitch"
+        },
+        {
+          "domain": "primevideo.com",
+          "name": "Prime Video"
+        },
+        {
+          "domain": "disneyplus.com",
+          "name": "Disney+"
+        },
+        {
+          "domain": "hulu.com",
+          "name": "Hulu"
+        },
+        {
+          "domain": "max.com",
+          "name": "Max"
+        },
+        {
+          "domain": "crunchyroll.com",
+          "name": "Crunchyroll"
+        },
+        {
+          "domain": "vimeo.com",
+          "name": "Vimeo"
+        },
+        {
+          "domain": "kick.com",
+          "name": "Kick"
+        },
+        {
+          "domain": "dailymotion.com",
+          "name": "Dailymotion"
+        }
+      ],
+      "apps": [
+        {
+          "name": "VLC",
+          "exe": "vlc.exe"
+        },
+        {
+          "name": "Netflix",
+          "exe": "Netflix.exe"
+        }
+      ]
+    },
+    {
+      "id": "gaming",
+      "name": "Gaming",
+      "icon": "🎮",
+      "color": "#10b981",
+      "sites": [
+        {
+          "domain": "store.steampowered.com",
+          "name": "Steam Store",
+          "related": [
+            "steamcommunity.com"
+          ]
+        },
+        {
+          "domain": "epicgames.com",
+          "name": "Epic Games"
+        },
+        {
+          "domain": "roblox.com",
+          "name": "Roblox"
+        },
+        {
+          "domain": "chess.com",
+          "name": "Chess.com"
+        },
+        {
+          "domain": "lichess.org",
+          "name": "Lichess"
+        },
+        {
+          "domain": "poki.com",
+          "name": "Poki"
+        },
+        {
+          "domain": "crazygames.com",
+          "name": "CrazyGames"
+        },
+        {
+          "domain": "miniclip.com",
+          "name": "Miniclip"
+        }
+      ],
+      "apps": [
+        {
+          "name": "Steam",
+          "exe": "steam.exe"
+        },
+        {
+          "name": "Epic Games Launcher",
+          "exe": "EpicGamesLauncher.exe"
+        },
+        {
+          "name": "Battle.net",
+          "exe": "Battle.net.exe"
+        },
+        {
+          "name": "Riot Client",
+          "exe": "RiotClientServices.exe"
+        },
+        {
+          "name": "League of Legends",
+          "exe": "LeagueClient.exe"
+        },
+        {
+          "name": "Valorant",
+          "exe": "VALORANT.exe"
+        },
+        {
+          "name": "EA app",
+          "exe": "EADesktop.exe"
+        },
+        {
+          "name": "Ubisoft Connect",
+          "exe": "UbisoftConnect.exe"
+        },
+        {
+          "name": "GOG Galaxy",
+          "exe": "GalaxyClient.exe"
+        },
+        {
+          "name": "Xbox app",
+          "exe": "XboxPcApp.exe"
+        },
+        {
+          "name": "Roblox",
+          "exe": "RobloxPlayerBeta.exe"
+        },
+        {
+          "name": "Minecraft Launcher",
+          "exe": "MinecraftLauncher.exe"
+        },
+        {
+          "name": "Fortnite",
+          "exe": "FortniteClient-Win64-Shipping.exe"
+        },
+        {
+          "name": "Counter-Strike 2",
+          "exe": "cs2.exe"
+        },
+        {
+          "name": "Dota 2",
+          "exe": "dota2.exe"
+        },
+        {
+          "name": "Overwatch",
+          "exe": "Overwatch.exe"
+        }
+      ]
+    },
+    {
+      "id": "news",
+      "name": "News & forums",
+      "icon": "📰",
+      "color": "#f59e0b",
+      "sites": [
+        {
+          "domain": "news.ycombinator.com",
+          "name": "Hacker News"
+        },
+        {
+          "domain": "cnn.com",
+          "name": "CNN"
+        },
+        {
+          "domain": "bbc.com",
+          "name": "BBC",
+          "related": [
+            "bbc.co.uk"
+          ]
+        },
+        {
+          "domain": "nytimes.com",
+          "name": "New York Times"
+        },
+        {
+          "domain": "theguardian.com",
+          "name": "The Guardian"
+        },
+        {
+          "domain": "foxnews.com",
+          "name": "Fox News"
+        },
+        {
+          "domain": "spiegel.de",
+          "name": "Der Spiegel"
+        },
+        {
+          "domain": "bild.de",
+          "name": "BILD"
+        },
+        {
+          "domain": "theverge.com",
+          "name": "The Verge"
+        },
+        {
+          "domain": "4chan.org",
+          "name": "4chan"
+        },
+        {
+          "domain": "quora.com",
+          "name": "Quora"
+        }
+      ],
+      "apps": []
+    },
+    {
+      "id": "shopping",
+      "name": "Shopping",
+      "icon": "🛒",
+      "color": "#ec4899",
+      "sites": [
+        {
+          "domain": "amazon.com",
+          "name": "Amazon",
+          "related": [
+            "amazon.de",
+            "amazon.co.uk"
+          ]
+        },
+        {
+          "domain": "ebay.com",
+          "name": "eBay",
+          "related": [
+            "ebay.de"
+          ]
+        },
+        {
+          "domain": "aliexpress.com",
+          "name": "AliExpress"
+        },
+        {
+          "domain": "temu.com",
+          "name": "Temu"
+        },
+        {
+          "domain": "shein.com",
+          "name": "SHEIN"
+        },
+        {
+          "domain": "etsy.com",
+          "name": "Etsy"
+        },
+        {
+          "domain": "zalando.com",
+          "name": "Zalando",
+          "related": [
+            "zalando.de"
+          ]
+        }
+      ],
+      "apps": []
+    },
+    {
+      "id": "chat",
+      "name": "Messaging",
+      "icon": "📱",
+      "color": "#3b82f6",
+      "sites": [
+        {
+          "domain": "discord.com",
+          "name": "Discord",
+          "related": [
+            "discord.gg",
+            "discordapp.com"
+          ]
+        },
+        {
+          "domain": "web.whatsapp.com",
+          "name": "WhatsApp Web"
+        },
+        {
+          "domain": "web.telegram.org",
+          "name": "Telegram Web"
+        },
+        {
+          "domain": "messenger.com",
+          "name": "Messenger"
+        }
+      ],
+      "apps": [
+        {
+          "name": "Discord",
+          "exe": "Discord.exe"
+        },
+        {
+          "name": "Telegram",
+          "exe": "Telegram.exe"
+        },
+        {
+          "name": "WhatsApp",
+          "exe": "WhatsApp.exe"
+        },
+        {
+          "name": "Signal",
+          "exe": "Signal.exe"
+        },
+        {
+          "name": "Messenger",
+          "exe": "Messenger.exe"
+        },
+        {
+          "name": "Slack",
+          "exe": "slack.exe"
+        }
+      ]
+    },
+    {
+      "id": "music",
+      "name": "Music",
+      "icon": "🎵",
+      "color": "#14b8a6",
+      "sites": [
+        {
+          "domain": "open.spotify.com",
+          "name": "Spotify Web"
+        },
+        {
+          "domain": "soundcloud.com",
+          "name": "SoundCloud"
+        },
+        {
+          "domain": "music.youtube.com",
+          "name": "YouTube Music"
+        }
+      ],
+      "apps": [
+        {
+          "name": "Spotify",
+          "exe": "Spotify.exe"
+        }
+      ]
+    },
+    {
+      "id": "gambling",
+      "name": "Gambling",
+      "icon": "🃏",
+      "color": "#f97316",
+      "sites": [
+        {
+          "domain": "bet365.com",
+          "name": "bet365"
+        },
+        {
+          "domain": "stake.com",
+          "name": "Stake"
+        },
+        {
+          "domain": "pokerstars.com",
+          "name": "PokerStars"
+        },
+        {
+          "domain": "draftkings.com",
+          "name": "DraftKings"
+        },
+        {
+          "domain": "tipico.de",
+          "name": "Tipico"
+        }
+      ],
+      "apps": []
+    },
+    {
+      "id": "adult",
+      "name": "Adult",
+      "icon": "🔞",
+      "color": "#a3a3a3",
+      "sites": [
+        {
+          "domain": "pornhub.com",
+          "name": "Pornhub"
+        },
+        {
+          "domain": "xvideos.com",
+          "name": "XVideos"
+        },
+        {
+          "domain": "xnxx.com",
+          "name": "XNXX"
+        },
+        {
+          "domain": "xhamster.com",
+          "name": "xHamster"
+        },
+        {
+          "domain": "onlyfans.com",
+          "name": "OnlyFans"
+        },
+        {
+          "domain": "chaturbate.com",
+          "name": "Chaturbate"
+        }
+      ],
+      "apps": []
+    },
+    {
+      "id": "browsers",
+      "name": "Web browsers",
+      "icon": "🌐",
+      "color": "#06b6d4",
+      "sites": [],
+      "apps": [
+        {
+          "name": "Google Chrome",
+          "exe": "chrome.exe"
+        },
+        {
+          "name": "Mozilla Firefox",
+          "exe": "firefox.exe"
+        },
+        {
+          "name": "Microsoft Edge",
+          "exe": "msedge.exe"
+        },
+        {
+          "name": "Brave",
+          "exe": "brave.exe"
+        },
+        {
+          "name": "Opera",
+          "exe": "opera.exe"
+        },
+        {
+          "name": "Opera GX",
+          "exe": "opera_gx.exe"
+        },
+        {
+          "name": "Vivaldi",
+          "exe": "vivaldi.exe"
+        }
+      ]
+    }
+  ]
+}

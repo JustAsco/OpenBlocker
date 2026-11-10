@@ -4,6 +4,7 @@
 
 import type {
   BlockList,
+  Category,
   InstalledApp,
   LockMode,
   PomodoroConfig,
@@ -51,6 +52,8 @@ export const api = {
   snapshot: () => call<Snapshot>("get_snapshot"),
   saveList: (list: BlockList) => call<Snapshot>("save_list", { list }),
   deleteList: (id: string) => call<Snapshot>("delete_list", { id }),
+  saveCategory: (category: Category) => call<Snapshot>("save_category", { category }),
+  deleteCategory: (id: string) => call<Snapshot>("delete_category", { id }),
   saveSchedule: (schedule: Schedule) => call<Snapshot>("save_schedule", { schedule }),
   deleteSchedule: (id: string) => call<Snapshot>("delete_schedule", { id }),
   startSession: (listId: string, minutes: number, lock: LockMode) =>

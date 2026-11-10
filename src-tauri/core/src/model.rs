@@ -31,6 +31,71 @@ pub struct BlockList {
     pub sites: Vec<String>,
     #[serde(default)]
     pub apps: Vec<AppEntry>,
+    /// Ids of [`Category`]s whose sites and apps are included in this list.
+    #[serde(default)]
+    pub categories: Vec<String>,
+}
+
+/// A reusable, editable group of sites and apps ("Social media", "Adult", …).
+/// Block lists include categories by reference, so editing a category
+/// changes every list that uses it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Category {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub icon: String,
+    #[serde(default)]
+    pub sites: Vec<String>,
+    #[serde(default)]
+    pub apps: Vec<AppEntry>,
+}
+
+/// Built-in catalog shared with the frontend (`src/lib/catalog.ts` imports the same file).
+pub const CATALOG_JSON: &str = include_str!("../catalog.json");
+
+#[derive(Deserialize)]
+struct Catalog {
+    categories: Vec<CatalogCategory>,
+}
+
+#[derive(Deserialize)]
+struct CatalogCategory {
+    id: String,
+    name: String,
+    icon: String,
+    color: String,
+    sites: Vec<CatalogSite>,
+    apps: Vec<AppEntry>,
+}
+
+#[derive(Deserialize)]
+struct CatalogSite {
+    domain: String,
+    #[serde(default)]
+    related: Vec<String>,
+}
+
+/// The built-in categories, in their factory state.
+pub fn default_categories() -> Vec<Category> {
+    let catalog: Catalog = serde_json::from_str(CATALOG_JSON).expect("catalog.json is valid");
+    catalog
+        .categories
+        .into_iter()
+        .map(|c| Category {
+            id: c.id,
+            name: c.name,
+            icon: c.icon,
+            color: c.color,
+            sites: c
+                .sites
+                .into_iter()
+                .flat_map(|s| std::iter::once(s.domain).chain(s.related))
+                .collect(),
+            apps: c.apps,
+        })
+        .collect()
 }
 
 /// A weekly recurring block. `start == end` means "the whole day".
@@ -189,6 +254,7 @@ pub struct DayStats {
 #[serde(rename_all = "camelCase", default)]
 pub struct State {
     pub version: u32,
+    pub categories: Vec<Category>,
     pub lists: Vec<BlockList>,
     pub schedules: Vec<Schedule>,
     pub sessions: Vec<Session>,
@@ -203,34 +269,25 @@ impl Default for State {
     fn default() -> Self {
         Self {
             version: 1,
+            categories: default_categories(),
             lists: vec![
                 BlockList {
                     id: "social".into(),
                     name: "Social Media".into(),
                     color: "#8b5cf6".into(),
                     icon: "💬".into(),
-                    sites: [
-                        "instagram.com",
-                        "tiktok.com",
-                        "facebook.com",
-                        "x.com",
-                        "twitter.com",
-                        "reddit.com",
-                        "snapchat.com",
-                    ]
-                    .map(String::from)
-                    .to_vec(),
+                    sites: vec![],
                     apps: vec![],
+                    categories: vec!["social".into()],
                 },
                 BlockList {
                     id: "video".into(),
                     name: "Video & Streaming".into(),
                     color: "#ef4444".into(),
                     icon: "📺".into(),
-                    sites: ["youtube.com", "youtu.be", "netflix.com", "twitch.tv"]
-                        .map(String::from)
-                        .to_vec(),
+                    sites: vec![],
                     apps: vec![],
+                    categories: vec!["video".into()],
                 },
                 BlockList {
                     id: "games".into(),
@@ -238,18 +295,8 @@ impl Default for State {
                     color: "#10b981".into(),
                     icon: "🎮".into(),
                     sites: vec![],
-                    apps: vec![
-                        AppEntry {
-                            name: "Steam".into(),
-                            exe: "steam.exe".into(),
-                            path: None,
-                        },
-                        AppEntry {
-                            name: "Epic Games Launcher".into(),
-                            exe: "EpicGamesLauncher.exe".into(),
-                            path: None,
-                        },
-                    ],
+                    apps: vec![],
+                    categories: vec!["gaming".into()],
                 },
             ],
             schedules: vec![],
@@ -265,5 +312,9 @@ impl Default for State {
 impl State {
     pub fn list(&self, id: &str) -> Option<&BlockList> {
         self.lists.iter().find(|l| l.id == id)
+    }
+
+    pub fn category(&self, id: &str) -> Option<&Category> {
+        self.categories.iter().find(|c| c.id == id)
     }
 }
