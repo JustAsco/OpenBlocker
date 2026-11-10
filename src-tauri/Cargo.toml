@@ -1,0 +1,32 @@
+[workspace]
+members = [".", "core"]
+
+[package]
+name = "openblocker"
+version = "0.1.0"
+description = "A modern, open-source focus and distraction blocker"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "openblocker_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = "2.7.4"
+
+[dependencies]
+base64 = "0.23.1"
+chrono = "0.4.45"
+openblocker-core = { path = "core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sysinfo = "0.40.1"
+tauri = { version = "2.12.5", features = ["tray-icon"] }
+tauri-plugin-notification = "2.8.0"
+uuid = { version = "1.29.2", features = ["v4"] }
+
+[target."cfg(windows)".dependencies]
+png = "0.18.1"
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem"] }
+winreg = "0.56.0"

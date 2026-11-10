@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, monospace;
+
+  --color-bg: #0a0a10;
+  --color-panel: #12121b;
+  --color-card: #171723;
+  --color-elevated: #1e1e2d;
+  --color-line: #262637;
+  --color-line-strong: #34344a;
+  --color-fg: #ececf3;
+  --color-muted: #9a9ab0;
+  --color-faint: #66667d;
+  --color-accent: #8b5cf6;
+  --color-accent-2: #06b6d4;
+  --color-good: #10b981;
+  --color-warn: #f59e0b;
+  --color-bad: #ef4444;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow: hidden;
+  }
+  input,
+  textarea,
+  select {
+    user-select: text;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+@utility card {
+  @apply rounded-2xl border border-line bg-card;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition
+    disabled:cursor-not-allowed disabled:opacity-40 active:scale-[.98];
+}
+
+@utility btn-primary {
+  @apply btn text-white shadow-lg shadow-violet-900/30;
+  background: linear-gradient(135deg, var(--color-accent), color-mix(in srgb, var(--color-accent) 55%, var(--color-accent-2)));
+  &:hover:not(:disabled) {
+  filter: brightness(1.1);
+  }
+}
+
+@utility btn-ghost {
+  @apply btn border border-line bg-elevated text-fg hover:border-line-strong hover:bg-line;
+}
+
+@utility btn-danger {
+  @apply btn border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20;
+}
+
+@utility input {
+  @apply w-full rounded-xl border border-line bg-panel px-3 py-2 text-sm text-fg outline-none transition
+    placeholder:text-faint focus:border-accent focus:ring-4 focus:ring-violet-500/15;
+}
+
+@utility label {
+  @apply mb-1.5 block text-xs font-medium tracking-wide text-muted uppercase;
+}
+
+@utility chip {
+  @apply inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2 py-1 text-xs;
+}
+
+@utility gradient-text {
+  background: linear-gradient(135deg, #c4b5fd, #67e8f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-fade-up {
+  animation: fade-up 0.25s ease-out both;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-good) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+.pulse-dot {
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -1,0 +1,128 @@
+import type { ActiveBlock, Schedule, State } from "./types";
+
+export const MINUTE = 60_000;
+export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const DAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+/** 0 = Monday */
+export const weekday = (d: Date) => (d.getDay() + 6) % 7;
+export const minuteOfDay = (d: Date) => d.getHours() * 60 + d.getMinutes();
+
+export function fmtClock(min: number): string {
+  const m = ((min % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+export function parseClock(s: string): number {
+  const [h, m] = s.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+/** "1h 05m", "12m 30s", "45s" */
+export function fmtDuration(ms: number, seconds = true): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return seconds ? `${m}m ${String(s).padStart(2, "0")}s` : `${m}m`;
+  return seconds ? `${s}s` : "<1m";
+}
+
+/** "25:00" style countdown */
+export function fmtTimer(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+export function fmtTime(ts: number): string {
+  const d = new Date(ts);
+  const sameDay = new Date().toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+}
+
+export function dateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Port of engine::schedule_remaining_ms. */
+export function scheduleRemaining(s: Schedule, now: Date): number | null {
+  const m = minuteOfDay(now);
+  const d = weekday(now);
+  const yesterday = (d + 6) % 7;
+  const has = (x: number) => s.days.includes(x);
+  let left: number;
+  if (s.start === s.end) {
+    if (!has(d)) return null;
+    left = 1440 - m;
+  } else if (s.start < s.end) {
+    if (!(has(d) && s.start <= m && m < s.end)) return null;
+    left = s.end - m;
+  } else if (has(d) && m >= s.start) {
+    left = 1440 - m + s.end;
+  } else if (has(yesterday) && m < s.end) {
+    left = s.end - m;
+  } else return null;
+  return left * MINUTE - (now.getSeconds() * 1000 + now.getMilliseconds());
+}
+
+/** Port of engine::active_blocks (used by the browser mock). */
+export function activeBlocks(state: State, now = Date.now()): ActiveBlock[] {
+  const out: ActiveBlock[] = [];
+  for (const s of state.sessions)
+    if (s.startedAt <= now && now < s.endsAt)
+      out.push({ listId: s.listId, source: "session", refId: s.id, endsAt: s.endsAt, locked: s.lock !== "none" });
+  const date = new Date(now);
+  for (const sch of state.schedules) {
+    const left = scheduleRemaining(sch, date);
+    if (left !== null)
+      out.push({ listId: sch.listId, source: "schedule", refId: sch.id, endsAt: now + left, locked: sch.locked });
+  }
+  const p = state.pomodoro;
+  if (p && p.phase === "focus" && p.pausedRemaining === null && p.config.listId)
+    out.push({ listId: p.config.listId, source: "pomodoro", refId: "pomodoro", endsAt: p.phaseEndsAt, locked: p.config.locked });
+  return out.filter((b) => state.lists.some((l) => l.id === b.listId));
+}
+
+/** Port of hosts::normalize_domain. */
+export function normalizeDomain(input: string): string | null {
+  let s = input.trim().toLowerCase();
+  const scheme = s.indexOf("://");
+  if (scheme >= 0) s = s.slice(scheme + 3);
+  s = s.split(/[/?#]/)[0];
+  const at = s.lastIndexOf("@");
+  if (at >= 0) s = s.slice(at + 1);
+  s = s.split(":")[0];
+  s = s.replace(/^\*\./, "").replace(/^\.+/, "").replace(/\.+$/, "").replace(/^www\./, "");
+  const ok =
+    s.length > 0 &&
+    s.length <= 253 &&
+    s.includes(".") &&
+    s.split(".").every((l) => l.length > 0 && l.length <= 63 && /^[a-z0-9-]+$/.test(l) && !l.startsWith("-") && !l.endsWith("-"));
+  return ok ? s : null;
+}
+
+export function uid(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+export const LIST_COLORS = ["#8b5cf6", "#06b6d4", "#ef4444", "#f59e0b", "#10b981", "#ec4899", "#3b82f6", "#f97316", "#14b8a6", "#a3a3a3"];
+export const LIST_EMOJIS = ["💬", "📺", "🎮", "📰", "🛒", "🎵", "🔞", "🃏", "📱", "🌐", "🍿", "⚽", "💸", "🧠", "⛔", "🔥"];
+
+/** Human duration from minutes: "15m", "1h", "1h 30m", "2d 3h". */
+export function fmtMinutes(min: number): string {
+  const d = Math.floor(min / 1440);
+  const h = Math.floor((min % 1440) / 60);
+  const m = Math.round(min % 60);
+  return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "0m";
+}
