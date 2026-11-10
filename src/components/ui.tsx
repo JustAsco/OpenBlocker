@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CheckCircle2, Info, X, XCircle } from "lucide-react";
+import { CheckCircle2, Info, Lock, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -113,20 +113,39 @@ export function ListBadge({ list, className }: { list: BlockList; className?: st
 
 // ─── controls ───────────────────────────────────────────────────────
 
-export function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode; hint?: ReactNode }) {
+/** On/off switch. `lockedOn`: it's on and can't be turned off right now (a lock is running). */
+export function Toggle({
+  checked,
+  onChange,
+  label,
+  hint,
+  lockedOn,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  hint?: ReactNode;
+  lockedOn?: boolean;
+}) {
+  const frozen = !!lockedOn && checked;
   return (
-    <label className="flex cursor-pointer items-start justify-between gap-6 py-3">
+    <label className={clsx("flex items-start justify-between gap-6 py-3", frozen ? "cursor-not-allowed" : "cursor-pointer")}>
       <span>
-        <span className="block text-sm font-medium">{label}</span>
+        <span className="flex items-center gap-1.5 text-sm font-medium">
+          {label}
+          {frozen && <Lock size={12} className="text-amber-400" aria-label="Can't be turned off while a locked block is running" />}
+        </span>
         {hint && <span className="mt-0.5 block text-xs text-muted">{hint}</span>}
       </span>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        disabled={frozen}
+        title={frozen ? "Can't be turned off while a locked block is running" : undefined}
         onClick={() => onChange(!checked)}
         className={clsx(
-          "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition",
+          "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:opacity-60",
           checked ? "border-transparent bg-accent" : "border-line-strong bg-elevated",
         )}
       >

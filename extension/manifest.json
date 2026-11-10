@@ -1,18 +1,45 @@
 {
   "manifest_version": 3,
   "name": "OpenBlocker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Enforces your OpenBlocker blocks and allowlists in this browser, including tabs that are already open.",
-  "icons": { "32": "icons/32.png", "64": "icons/64.png", "128": "icons/128.png" },
-  "permissions": ["declarativeNetRequest", "storage", "tabs", "alarms"],
-  "host_permissions": ["<all_urls>"],
+  "icons": {
+    "32": "icons/32.png",
+    "64": "icons/64.png",
+    "128": "icons/128.png"
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "tabs",
+    "alarms",
+    "idle"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "background.js",
-    "scripts": ["common.js", "background.js"]
+    "scripts": [
+      "common.js",
+      "background.js"
+    ]
   },
   "incognito": "spanning",
-  "web_accessible_resources": [{ "resources": ["blocked.html"], "matches": ["<all_urls>"] }],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "blocked.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
   "browser_specific_settings": {
-    "gecko": { "id": "extension@openblocker.app", "strict_min_version": "128.0" }
+    "gecko": {
+      "id": "extension@openblocker.app",
+      "strict_min_version": "128.0"
+    }
   }
 }

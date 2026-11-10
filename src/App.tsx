@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CalendarDays, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
+import { CalendarDays, Hourglass, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ExtensionPrompt } from "./components/ExtensionPrompt";
 import { Toasts } from "./components/ui";
@@ -9,17 +9,19 @@ import { CategoriesPage } from "./pages/Categories";
 import { Dashboard } from "./pages/Dashboard";
 import { FocusPage } from "./pages/Focus";
 import { FreezePage } from "./pages/Freeze";
+import { LimitsPage } from "./pages/Limits";
 import { ListsPage } from "./pages/Lists";
 import { SchedulePage } from "./pages/Schedule";
 import { SettingsPage } from "./pages/Settings";
 
-export type Page = "today" | "lists" | "categories" | "schedule" | "focus" | "freeze" | "settings";
+export type Page = "today" | "lists" | "categories" | "schedule" | "limits" | "focus" | "freeze" | "settings";
 
 const NAV: { id: Page; label: string; icon: typeof Timer }[] = [
   { id: "today", label: "Today", icon: LayoutDashboard },
   { id: "lists", label: "Block lists", icon: ShieldBan },
   { id: "categories", label: "Categories", icon: Tags },
   { id: "schedule", label: "Schedule", icon: CalendarDays },
+  { id: "limits", label: "Daily limits", icon: Hourglass },
   { id: "focus", label: "Focus timer", icon: Timer },
   { id: "freeze", label: "Freeze PC", icon: Snowflake },
   { id: "settings", label: "Settings", icon: SettingsIcon },
@@ -83,7 +85,7 @@ export default function App() {
           <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-8 py-2.5 text-sm text-amber-200 backdrop-blur">
             <ShieldAlert size={18} className="shrink-0" />
             <span className="flex-1">{status.hostsError} App blocking still works.</span>
-            {isTauri && (
+            {isTauri && !status.service && (
               <button className="btn-ghost py-1" onClick={() => run(async () => (await api.relaunchAsAdmin(), api.snapshot()))}>
                 Restart as administrator
               </button>
@@ -107,6 +109,7 @@ export default function App() {
           {page === "lists" && <ListsPage go={setPage} />}
           {page === "categories" && <CategoriesPage go={setPage} />}
           {page === "schedule" && <SchedulePage />}
+          {page === "limits" && <LimitsPage go={setPage} />}
           {page === "focus" && <FocusPage />}
           {page === "freeze" && <FreezePage />}
           {page === "settings" && <SettingsPage />}

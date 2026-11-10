@@ -41,7 +41,7 @@ export function SettingsPage() {
         <section className="card p-6">
           <h2 className="mb-2 font-semibold">Blocking</h2>
           <div className="divide-y divide-line">
-            <Toggle label="Block subdomains" hint="Also block www., m. and mobile. versions of every website." checked={settings.blockSubdomains} onChange={(blockSubdomains) => save({ blockSubdomains })} />
+            <Toggle label="Block subdomains" hint="Also block www., m. and mobile. versions of every website." checked={settings.blockSubdomains} lockedOn={locked} onChange={(blockSubdomains) => save({ blockSubdomains })} />
             <Toggle label="Flush DNS cache" hint="Helps new blocks apply sooner. Browsers can keep open connections alive; the extension below fixes that." checked={settings.flushDns} onChange={(flushDns) => save({ flushDns })} />
             <Toggle label="Block Task Manager while frozen" checked={settings.freezeBlocksTaskManager} onChange={(freezeBlocksTaskManager) => save({ freezeBlocksTaskManager })} />
             <div className="py-3">
@@ -55,10 +55,16 @@ export function SettingsPage() {
                 max={500}
                 step={10}
                 value={settings.unlockTextLength}
-                onChange={(e) => save({ unlockTextLength: Number(e.target.value) })}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  // While locked, the text may get longer but not shorter.
+                  if (!locked || v >= settings.unlockTextLength) save({ unlockTextLength: v });
+                }}
                 className="w-full accent-violet-500"
               />
-              <p className="mt-1 text-xs text-muted">How much you must type to stop a “Type to unlock” block early.</p>
+              <p className="mt-1 text-xs text-muted">
+                How much you must type to stop a “Type to unlock” block early.{locked && " Can only be made longer while a locked block is running."}
+              </p>
             </div>
           </div>
         </section>
@@ -125,6 +131,7 @@ export function SettingsPage() {
               label="Close browsers without the extension"
               hint="While websites are blocked, browsers in which the extension isn't running are closed after 30 seconds. Always on while an allowlist is active."
               checked={settings.requireExtension}
+              lockedOn={locked}
               onChange={(requireExtension) => save({ requireExtension })}
             />
             <Toggle
@@ -142,8 +149,13 @@ export function SettingsPage() {
             {autostart !== null && (status.platform === "windows" || !isTauri) && (
               <Toggle
                 label="Start with Windows"
-                hint="Starts minimized at login with administrator rights, so blocks apply from boot."
+                hint={
+                  status.service
+                    ? "Opens OpenBlocker in the tray when you log in. Blocking itself runs in the background service either way."
+                    : "Opens OpenBlocker in the tray when you log in, so blocks apply from the start."
+                }
                 checked={autostart}
+                lockedOn={locked}
                 onChange={(v) =>
                   api
                     .setAutostart(v)
@@ -164,15 +176,19 @@ export function SettingsPage() {
         <section className="card p-6">
           <h2 className="mb-4 font-semibold">System status</h2>
           <div className="flex items-start gap-3">
-            {status.elevated ? <ShieldCheck className="shrink-0 text-good" /> : <ShieldAlert className="shrink-0 text-warn" />}
+            {status.service || status.elevated ? <ShieldCheck className="shrink-0 text-good" /> : <ShieldAlert className="shrink-0 text-warn" />}
             <div className="text-sm">
-              <div className="font-medium">{status.elevated ? "Running with administrator rights" : "Limited mode"}</div>
+              <div className="font-medium">
+                {status.service ? "Protected by the background service" : status.elevated ? "Running with administrator rights" : "Limited mode"}
+              </div>
               <p className="mt-0.5 text-muted">
-                {status.elevated
-                  ? "Website and app blocking are fully enabled."
-                  : "Website blocking edits the system hosts file, which needs administrator rights. App blocking still works."}
+                {status.service
+                  ? "Blocking runs in the OpenBlocker service, even while this window is closed. Closing or killing the app doesn't end a block, and locks can't be undone by editing files."
+                  : status.elevated
+                    ? "Website and app blocking work while OpenBlocker is open. Install it with the installer to get the background service, so blocks keep running when the app is closed."
+                    : "The background service isn't running, and website blocking needs it (or administrator rights). App blocking still works."}
               </p>
-              {!status.elevated && isTauri && (
+              {!status.service && !status.elevated && isTauri && (
                 <button className="btn-ghost mt-3" onClick={() => run(async () => (await api.relaunchAsAdmin(), api.snapshot()))}>
                   Restart as administrator
                 </button>

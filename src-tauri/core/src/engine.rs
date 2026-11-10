@@ -14,6 +14,8 @@ pub enum Source {
     Session,
     Schedule,
     Pomodoro,
+    /// A daily usage limit that has been used up.
+    Limit,
 }
 
 /// One reason a list is currently being enforced.
@@ -76,6 +78,37 @@ pub fn schedule_remaining_ms(schedule: &Schedule, local: &NaiveDateTime) -> Opti
     Some(minutes_left * MINUTE_MS - into_minute)
 }
 
+/// Local date key `YYYY-MM-DD`, as used by stats and usage.
+pub fn date_key(local: &NaiveDateTime) -> String {
+    local.format("%Y-%m-%d").to_string()
+}
+
+/// Milliseconds until the next local midnight.
+pub fn ms_until_midnight(local: &NaiveDateTime) -> i64 {
+    let into_day = local.num_seconds_from_midnight() as i64 * 1000 + (local.nanosecond() / 1_000_000) as i64;
+    1440 * MINUTE_MS - into_day
+}
+
+/// Does `limit` apply on this local day?
+pub fn limit_applies(limit: &UsageLimit, local: &NaiveDateTime) -> bool {
+    limit.days.contains(&clock(local).1)
+}
+
+/// Seconds of `limit` used today.
+pub fn limit_used(state: &State, limit_id: &str, local: &NaiveDateTime) -> u64 {
+    state
+        .usage
+        .get(&date_key(local))
+        .and_then(|d| d.get(limit_id))
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Is the limit used up for today?
+pub fn limit_exhausted(state: &State, limit: &UsageLimit, local: &NaiveDateTime) -> bool {
+    limit_applies(limit, local) && limit_used(state, &limit.id, local) >= limit.minutes as u64 * 60
+}
+
 /// Every reason a list is enforced at this moment.
 pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<ActiveBlock> {
     let mut out = Vec::new();
@@ -114,6 +147,17 @@ pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<A
             }
         }
     }
+    for l in &state.limits {
+        if limit_exhausted(state, l, local) {
+            out.push(ActiveBlock {
+                list_id: l.list_id.clone(),
+                source: Source::Limit,
+                ref_id: l.id.clone(),
+                ends_at: now_ms + ms_until_midnight(local),
+                locked: l.locked,
+            });
+        }
+    }
     // Drop blocks referencing deleted lists.
     out.retain(|b| state.list(&b.list_id).is_some());
     out
@@ -138,12 +182,18 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
 /// A list's own items plus those of its categories (normalised).
 pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSet<String>) {
     let cats = list.categories.iter().filter_map(|id| state.category(id));
-    let sites = list
+    let mut sites: BTreeSet<String> = list
         .sites
         .iter()
         .chain(cats.clone().flat_map(|c| &c.sites))
         .filter_map(|s| crate::hosts::normalize_site(s))
         .collect();
+    // Community lists are normalised when they're loaded.
+    for id in &list.categories {
+        if let Some(extra) = state.source_sites.get(id) {
+            sites.extend(extra.iter().cloned());
+        }
+    }
     let apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
     (sites, apps)
 }
@@ -329,6 +379,132 @@ pub fn tick(state: &mut State, now_ms: i64) -> Vec<Event> {
     events
 }
 
+/// What the user is doing right now, for usage limits.
+#[derive(Clone, Debug, Default)]
+pub struct Activity {
+    /// Executable of the foreground window, e.g. "steam.exe".
+    pub exe: Option<String>,
+    /// URL of the active tab, when the foreground window is a browser with the extension.
+    pub url: Option<String>,
+}
+
+/// Does `list` cover what the user is doing?
+fn activity_matches(state: &State, list: &BlockList, activity: &Activity) -> bool {
+    let (sites, apps) = list_items(state, list);
+    let site_hit = activity
+        .url
+        .as_deref()
+        .is_some_and(|url| sites.iter().any(|s| crate::hosts::url_matches(url, s)));
+    // A browser showing an allowed site doesn't count as using the browser app.
+    let app_hit = activity.url.is_none() && activity.exe.as_deref().is_some_and(|exe| apps.iter().any(|a| exe_matches(exe, a)));
+    // Limits only make sense for lists that block things.
+    list.mode == ListMode::Block && (site_hit || app_hit)
+}
+
+/// Adds `seconds` of usage to every limit that applies today and covers
+/// `activity`. Returns ids of limits that were used up by this call.
+pub fn add_usage(state: &mut State, local: &NaiveDateTime, seconds: u64, activity: &Activity) -> Vec<String> {
+    if seconds == 0 || (activity.exe.is_none() && activity.url.is_none()) {
+        return vec![];
+    }
+    let today = date_key(local);
+    let hits: Vec<(String, u64)> = state
+        .limits
+        .iter()
+        .filter(|l| limit_applies(l, local))
+        .filter(|l| state.list(&l.list_id).is_some_and(|list| activity_matches(state, list, activity)))
+        .map(|l| (l.id.clone(), l.minutes as u64 * 60))
+        .collect();
+    let mut used_up = vec![];
+    let day = state.usage.entry(today.clone()).or_default();
+    for (id, allowed) in hits {
+        let v = day.entry(id.clone()).or_default();
+        let before = *v;
+        *v += seconds;
+        if before < allowed && *v >= allowed {
+            used_up.push(id);
+        }
+    }
+    // Keep two weeks of history.
+    while state.usage.len() > 14 {
+        let oldest = state.usage.keys().next().cloned().unwrap();
+        state.usage.remove(&oldest);
+    }
+    used_up
+}
+
+/// Would replacing `old` by `new` weaken a lock that is running at this
+/// moment? Returns a human-readable reason if so. This is the single rule
+/// both the app and the background service enforce:
+/// * every locked block must keep running at least as long as before,
+/// * a locked list may only get stricter (block lists only grow, allowlists
+///   only shrink), whether edited directly or through its categories,
+/// * a running freeze can't be shortened,
+/// * settings that weaken blocking can't be turned off while locked,
+/// * today's usage of a locked limit never goes down.
+pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTime) -> Option<String> {
+    const SLACK_MS: i64 = 5_000; // the app and the service tick independently
+    let old_blocks = active_blocks(old, now_ms, local);
+    let new_blocks = active_blocks(new, now_ms, local);
+    let locked: Vec<&ActiveBlock> = old_blocks.iter().filter(|b| b.locked).collect();
+    for b in &locked {
+        let kept = new_blocks
+            .iter()
+            .any(|n| n.locked && n.list_id == b.list_id && n.ends_at >= b.ends_at - SLACK_MS);
+        if !kept {
+            return Some("A locked block can't be stopped or shortened.".into());
+        }
+    }
+    let locked_lists: BTreeSet<&str> = locked.iter().map(|b| b.list_id.as_str()).collect();
+    for id in locked_lists {
+        let (Some(o), Some(n)) = (old.list(id), new.list(id)) else {
+            return Some("A locked list can't be deleted.".into());
+        };
+        if o.mode != n.mode {
+            return Some(format!("“{}” is locked: its mode can't change.", o.name));
+        }
+        let (os, oa) = list_items(old, o);
+        let (ns, na) = list_items(new, n);
+        let apps_ok = oa.iter().all(|a| na.iter().any(|x| exe_matches(x, a)));
+        let sites_ok = match o.mode {
+            ListMode::Block => os.is_subset(&ns),
+            ListMode::Allow => ns.is_subset(&os),
+        };
+        if !apps_ok || !sites_ok {
+            return Some(match o.mode {
+                ListMode::Block => format!("“{}” is locked. You can add items, but not remove them.", o.name),
+                ListMode::Allow => format!("“{}” is a locked allowlist. You can remove sites, but not add them.", o.name),
+            });
+        }
+    }
+    if let Some(f) = &old.freeze {
+        if f.ends_at > now_ms && new.freeze.as_ref().is_none_or(|n| n.ends_at < f.ends_at) {
+            return Some("The freeze can't be shortened.".into());
+        }
+        if old.settings.freeze_blocks_task_manager && !new.settings.freeze_blocks_task_manager {
+            return Some("This setting can't be turned off while frozen.".into());
+        }
+    }
+    if !locked.is_empty() {
+        let (o, n) = (&old.settings, &new.settings);
+        if (o.block_subdomains && !n.block_subdomains)
+            || (o.require_extension && !n.require_extension)
+            || n.unlock_text_length < o.unlock_text_length
+        {
+            return Some("Settings that loosen blocking can't be changed while a locked block is running.".into());
+        }
+    }
+    let today = date_key(local);
+    for l in old.limits.iter().filter(|l| l.locked) {
+        let before = old.usage.get(&today).and_then(|d| d.get(&l.id)).copied().unwrap_or(0);
+        let after = new.usage.get(&today).and_then(|d| d.get(&l.id)).copied().unwrap_or(0);
+        if after < before && new.limits.iter().any(|x| x.id == l.id) {
+            return Some("Usage of a locked limit can't be reset.".into());
+        }
+    }
+    None
+}
+
 /// Data that can be exported, imported and (later) synced between devices.
 /// Running blocks, the timer and statistics are deliberately not included.
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
@@ -342,6 +518,8 @@ pub struct Backup {
     pub lists: Vec<BlockList>,
     pub schedules: Vec<Schedule>,
     pub settings: Settings,
+    #[serde(default)]
+    pub limits: Vec<UsageLimit>,
 }
 
 pub const BACKUP_APP: &str = "OpenBlocker";
@@ -356,6 +534,7 @@ pub fn backup(state: &State, now_ms: i64) -> Backup {
         lists: state.lists.clone(),
         schedules: state.schedules.clone(),
         settings: state.settings.clone(),
+        limits: state.limits.clone(),
     }
 }
 
@@ -393,6 +572,7 @@ pub fn restore(state: &mut State, b: Backup, now_ms: i64, local: &NaiveDateTime)
         .into_iter()
         .filter(|s| lists.contains(&s.list_id) && !s.days.is_empty() && s.start < 1440 && s.end < 1440)
         .collect();
+    state.limits = b.limits.into_iter().filter(|l| lists.contains(&l.list_id) && !l.days.is_empty()).collect();
     state.sessions.retain(|s| lists.contains(&s.list_id));
     if let Some(p) = state.pomodoro.as_mut() {
         if p.config.list_id.as_ref().is_some_and(|id| !lists.contains(id)) {
@@ -646,5 +826,100 @@ mod tests {
         let fresh = factory_reset(&state);
         assert!(fresh.schedules.is_empty() && fresh.freeze.is_none());
         assert_eq!(fresh.stats["2026-01-01"].pomodoros, 3);
+    }
+
+    fn limit(minutes: u32, locked: bool) -> UsageLimit {
+        UsageLimit { id: "lim".into(), list_id: "video".into(), minutes, days: (0..7).collect(), locked }
+    }
+
+    #[test]
+    fn usage_limits_count_and_block_until_midnight() {
+        let local = at(4, 22, 0); // Wednesday 22:00
+        let mut state = State::default();
+        state.limits.push(limit(1, false));
+        let yt = Activity { exe: Some("chrome.exe".into()), url: Some("https://www.youtube.com/watch?v=1".into()) };
+        let other = Activity { exe: Some("chrome.exe".into()), url: Some("https://wikipedia.org/".into()) };
+        assert!(add_usage(&mut state, &local, 30, &other).is_empty());
+        assert_eq!(limit_used(&state, "lim", &local), 0);
+        assert!(add_usage(&mut state, &local, 30, &yt).is_empty());
+        assert!(active_blocks(&state, 0, &local).is_empty());
+        assert_eq!(add_usage(&mut state, &local, 30, &yt), vec!["lim".to_string()]);
+        let blocks = active_blocks(&state, 0, &local);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].source, Source::Limit);
+        assert_eq!(blocks[0].ends_at, 2 * 60 * MINUTE_MS);
+        // A new day starts fresh.
+        assert!(active_blocks(&state, 0, &at(5, 0, 1)).is_empty());
+        // Apps count too (a browser only through its URL).
+        let mut state = State::default();
+        state.limits.push(UsageLimit { list_id: "games".into(), ..limit(1, false) });
+        add_usage(&mut state, &local, 10, &Activity { exe: Some("Steam.exe".into()), url: None });
+        assert_eq!(limit_used(&state, "lim", &local), 10);
+    }
+
+    #[test]
+    fn lock_violation_rules() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.sessions.push(Session { id: "s".into(), list_id: "social".into(), started_at: 0, ends_at: now + 60 * MINUTE_MS, lock: LockMode::Timer });
+        assert!(lock_violation(&old, &old, now, &local).is_none());
+
+        let mut new = old.clone();
+        new.sessions.clear();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "stopping");
+
+        let mut new = old.clone();
+        new.sessions[0].ends_at -= 10 * MINUTE_MS;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "shortening");
+
+        let mut new = old.clone();
+        new.categories.iter_mut().find(|c| c.id == "social").unwrap().sites.pop();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "shrinking a category of a locked list");
+
+        let mut new = old.clone();
+        new.lists[0].sites.push("example.com".into());
+        new.lists[1].sites.clear(); // unlocked list: anything goes
+        assert!(lock_violation(&old, &new, now, &local).is_none(), "growing is fine");
+
+        // Allowlists: adding allowed sites weakens, removing strengthens.
+        let mut old_allow = old.clone();
+        old_allow.lists[0].mode = ListMode::Allow;
+        let mut new = old_allow.clone();
+        new.lists[0].sites.push("example.com".into());
+        assert!(lock_violation(&old_allow, &new, now, &local).is_some(), "allowing more");
+        let mut new = old_allow.clone();
+        new.lists[0].mode = ListMode::Block;
+        assert!(lock_violation(&old_allow, &new, now, &local).is_some(), "flipping mode");
+
+        let mut new = old.clone();
+        new.settings.block_subdomains = false;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "loosening settings");
+
+        // Once the lock is over, everything is allowed again.
+        let later = now + 61 * MINUTE_MS;
+        let mut new = old.clone();
+        new.sessions.clear();
+        new.settings.block_subdomains = false;
+        assert!(lock_violation(&old, &new, later, &local).is_none());
+
+        // Locked, used-up limits can't be raised or have their usage reset.
+        let mut old = State::default();
+        old.limits.push(limit(1, true));
+        old.usage.insert(date_key(&local), [("lim".to_string(), 60u64)].into());
+        let mut new = old.clone();
+        new.limits[0].minutes = 5;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "raising a used-up locked limit");
+        let mut new = old.clone();
+        new.usage.clear();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "resetting usage");
+    }
+
+    #[test]
+    fn community_lists_are_included() {
+        let mut state = State::default();
+        state.source_sites.insert("social".into(), std::sync::Arc::new(["huge-list-domain.com".to_string()].into()));
+        let (sites, _) = list_items(&state, &state.lists[0]);
+        assert!(sites.contains("huge-list-domain.com"));
     }
 }

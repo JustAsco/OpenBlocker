@@ -26,21 +26,50 @@ function browserHint() {
   return "chrome";
 }
 
+/**
+ * URL of the active tab while a browser window has focus and the user isn't
+ * idle, so OpenBlocker can count time for usage limits. Nothing else about
+ * your browsing is sent, and it only goes to the app on this computer.
+ */
+async function activeUrl() {
+  try {
+    if ((await api.idle.queryState(60)) !== "active") return "";
+    const win = await api.windows.getLastFocused();
+    if (!win?.focused) return "";
+    const [tab] = await api.tabs.query({ active: true, windowId: win.id });
+    return tab?.url && /^https?:/.test(tab.url) ? tab.url : "";
+  } catch {
+    return "";
+  }
+}
+
+let lastRules = null; // last full rules (with rev), to reuse when unchanged
+
 async function fetchRules() {
   try {
-    const res = await fetch(`${ENDPOINT}?b=${browserHint()}&v=${VERSION}`, {
+    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl() });
+    if (lastRules?.rev) params.set("r", lastRules.rev);
+    const res = await fetch(`${ENDPOINT}?${params}`, {
       headers: { "X-OpenBlocker": "1" },
       cache: "no-store",
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const rules = await res.json();
-    await api.storage.local.set({ rules, connected: true, checkedAt: Date.now() });
+    let rules = await res.json();
+    if (rules.unchanged && lastRules?.rev === rules.rev) {
+      // Big community lists aren't resent every two seconds.
+      rules = lastRules;
+      await api.storage.local.set({ connected: true, checkedAt: Date.now() });
+    } else {
+      lastRules = rules;
+      await api.storage.local.set({ rules, connected: true, checkedAt: Date.now() });
+    }
     return rules;
   } catch {
     // App not reachable (closed or killed): keep enforcing the last known
     // rules until the blocks they belong to would have ended.
     const { rules } = await api.storage.local.get("rules");
     await api.storage.local.set({ connected: false, checkedAt: Date.now() });
+    lastRules = null;
     return rules && rules.until && rules.until > Date.now() ? rules : EMPTY;
   }
 }
@@ -97,7 +126,7 @@ async function sweepTabs(rules) {
 }
 
 async function apply(rules) {
-  const key = JSON.stringify([rules.blocked, rules.blockedPaths, rules.allowOnly]);
+  const key = rules.rev ?? JSON.stringify([rules.blocked, rules.blockedPaths, rules.allowOnly]);
   if (key === currentKey) return;
   const existing = await api.declarativeNetRequest.getDynamicRules();
   await api.declarativeNetRequest.updateDynamicRules({

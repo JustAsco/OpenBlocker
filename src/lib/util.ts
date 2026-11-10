@@ -75,7 +75,8 @@ export function scheduleRemaining(s: Schedule, now: Date): number | null {
 }
 
 /** Port of engine::active_blocks (used by the browser mock). */
-export function activeBlocks(state: State, now = Date.now()): ActiveBlock[] {
+/** Mirrors `active_blocks` in the core (used by the browser mock). `usage` = seconds used today per limit. */
+export function activeBlocks(state: State, now = Date.now(), usage: Record<string, number> = {}): ActiveBlock[] {
   const out: ActiveBlock[] = [];
   for (const s of state.sessions)
     if (s.startedAt <= now && now < s.endsAt)
@@ -89,6 +90,11 @@ export function activeBlocks(state: State, now = Date.now()): ActiveBlock[] {
   const p = state.pomodoro;
   if (p && p.phase === "focus" && p.pausedRemaining === null && p.config.listId)
     out.push({ listId: p.config.listId, source: "pomodoro", refId: "pomodoro", endsAt: p.phaseEndsAt, locked: p.config.locked });
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  for (const l of state.limits ?? [])
+    if (l.days.includes(weekday(date)) && (usage[l.id] ?? 0) >= l.minutes * 60)
+      out.push({ listId: l.listId, source: "limit", refId: l.id, endsAt: midnight.getTime(), locked: l.locked });
   return out.filter((b) => state.lists.some((l) => l.id === b.listId));
 }
 
