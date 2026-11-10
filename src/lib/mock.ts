@@ -4,7 +4,7 @@
 
 import type { InstalledApp, PomodoroConfig, Pomodoro, Snapshot, State } from "./types";
 import { defaultCategories } from "./catalog";
-import { activeBlocks, dateKey, listTargets, MINUTE, normalizeDomain, uid } from "./util";
+import { activeBlocks, dateKey, listTargets, MINUTE, normalizeSite, uid } from "./util";
 
 const KEY = "openblocker-mock-state-v2";
 
@@ -44,6 +44,7 @@ function defaultState(): State {
       freezeBlocksTaskManager: true,
       unlockTextLength: 120,
       requireExtension: false,
+      suggestExtension: true,
     },
     stats,
   };
@@ -52,7 +53,11 @@ function defaultState(): State {
 function load(): State {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const s = JSON.parse(raw) as State;
+      s.settings = { ...defaultState().settings, ...s.settings };
+      return s;
+    }
   } catch {
     /* ignore */
   }
@@ -95,7 +100,8 @@ function snapshot(): Snapshot {
       hostsError: null,
       elevated: true,
       platform: "browser-preview",
-      extension: [{ exe: "chrome.exe", name: "Google Chrome", lastSeen: Date.now(), extensionVersion: "0.1.0" }],
+      // localStorage "mock-extension" = "0" previews the app without a connected extension.
+      extension: localStorage.getItem("mock-extension") === "0" ? [] : [{ exe: "chrome.exe", name: "Google Chrome", lastSeen: Date.now(), extensionVersion: "0.1.0" }],
       extensionRequired: allowed !== null || (state.settings.requireExtension && sites.size > 0),
       allowlistSites: allowed ? (allowed as Set<string>).size : null,
       bridgeError: null,
@@ -177,7 +183,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     case "get_snapshot":
       return snapshot();
     case "save_list": {
-      const list = { ...a.list, sites: [...new Set<string>(a.list.sites.map(normalizeDomain).filter(Boolean))] };
+      const list = { ...a.list, sites: [...new Set<string>(a.list.sites.map(normalizeSite).filter(Boolean))] };
       const old = state.lists.find((l) => l.id === list.id);
       if (old) {
         const until = lockedUntil(list.id);
@@ -194,7 +200,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       state.sessions = state.sessions.filter((s) => s.listId !== a.id);
       return commit();
     case "save_category": {
-      const c = { ...a.category, sites: [...new Set<string>(a.category.sites.map(normalizeDomain).filter(Boolean))] };
+      const c = { ...a.category, sites: [...new Set<string>(a.category.sites.map(normalizeSite).filter(Boolean))] };
       const old = state.categories.find((x) => x.id === c.id);
       if (old) {
         const until = state.lists.filter((l) => l.categories.includes(c.id)).map((l) => lockedUntil(l.id)).find(Boolean);
@@ -292,6 +298,46 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       return;
     case "relaunch_as_admin":
       return;
+    case "mock_export":
+      return JSON.stringify(
+        { app: "OpenBlocker", format: 1, exportedAt: now, categories: state.categories, lists: state.lists, schedules: state.schedules, settings: state.settings },
+        null,
+        2,
+      );
+    case "mock_import": {
+      let b;
+      try {
+        b = JSON.parse(a.text);
+      } catch {
+        fail("This isn't a valid OpenBlocker settings file.");
+      }
+      if (b?.app !== "OpenBlocker") fail("This isn't an OpenBlocker settings file.");
+      if (activeBlocks(state).some((x) => x.locked)) fail("A locked block is running. You can import settings once it ends.");
+      const ids = new Set<string>(b.lists.map((l: { id: string }) => l.id));
+      Object.assign(state, {
+        categories: b.categories,
+        lists: b.lists,
+        schedules: b.schedules.filter((s: { listId: string }) => ids.has(s.listId)),
+        sessions: state.sessions.filter((s) => ids.has(s.listId)),
+        settings: { ...state.settings, ...b.settings },
+      });
+      return commit();
+    }
+    case "reset_challenge": {
+      if (!state.freeze && !activeBlocks(state).some((x) => x.locked)) return null;
+      if (!challenges.has("__reset__")) {
+        const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        const len = Math.min(1000, Math.max(300, state.settings.unlockTextLength * 3));
+        challenges.set("__reset__", Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
+      }
+      return challenges.get("__reset__");
+    }
+    case "factory_reset": {
+      if ((state.freeze || activeBlocks(state).some((x) => x.locked)) && a.answer !== challenges.get("__reset__")) fail("The text doesn't match.");
+      state = { ...defaultState(), schedules: [], stats: state.stats };
+      challenges.clear();
+      return commit();
+    }
   }
   fail(`unknown command ${cmd}`);
 }

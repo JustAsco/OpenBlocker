@@ -8,7 +8,9 @@ const ENDPOINT = "http://127.0.0.1:47613/v1/rules";
 const VERSION = api.runtime.getManifest().version;
 const BLOCK_PAGE = api.runtime.getURL("blocked.html");
 const POLL_MS = 2000;
-const EMPTY = { blocked: [], allowOnly: null, until: null, lists: [] };
+const EMPTY = { blocked: [], blockedPaths: [], allowOnly: null, until: null, lists: [] };
+// Browsers cap regex rules (Chrome: 1000); leave room for the other rules.
+const MAX_PATH_RULES = 900;
 
 let current = null; // rules currently installed
 let currentKey = null;
@@ -55,6 +57,21 @@ function buildRules(rules) {
       condition: { regexFilter: "^https?://.*", requestDomains: rules.blocked, resourceTypes: ["main_frame", "sub_frame"] },
     });
   }
+  const escape = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  (rules.blockedPaths || []).slice(0, MAX_PATH_RULES).forEach((p, i) => {
+    const slash = p.indexOf("/");
+    out.push({
+      id: 10 + i,
+      priority: 2,
+      action: redirect,
+      condition: {
+        // The path itself and everything below it, on the domain and its subdomains.
+        regexFilter: `^https?://([^/?#]*\\.)?${escape(p.slice(0, slash))}(:[0-9]+)?${escape(p.slice(slash))}([/?#].*)?$`,
+        isUrlFilterCaseSensitive: false,
+        resourceTypes: ["main_frame", "sub_frame"],
+      },
+    });
+  });
   if (rules.allowOnly) {
     out.push({
       id: 2,
@@ -80,7 +97,7 @@ async function sweepTabs(rules) {
 }
 
 async function apply(rules) {
-  const key = JSON.stringify([rules.blocked, rules.allowOnly]);
+  const key = JSON.stringify([rules.blocked, rules.blockedPaths, rules.allowOnly]);
   if (key === currentKey) return;
   const existing = await api.declarativeNetRequest.getDynamicRules();
   await api.declarativeNetRequest.updateDynamicRules({
@@ -108,7 +125,8 @@ async function tick() {
   }
 }
 
-// Navigations that don't hit the network (back/forward cache, prerender) skip
+// Navigations that don't hit the network (back/forward cache, prerender, and
+// single-page apps like YouTube switching to /shorts) skip
 // declarativeNetRequest, so check URL changes as well.
 api.tabs.onUpdated.addListener((tabId, info) => {
   if (info.url && current && isBlocked(info.url, current)) {

@@ -64,10 +64,12 @@ function Letter({ text, size }: { text: string; size: number }) {
 export function SiteIcon({ domain, size = 18 }: { domain: string; size?: number }) {
   const [load] = usePref("site-icons", true);
   const [failed, setFailed] = useState(false);
-  if (!load || failed) return <Letter text={domain} size={size} />;
+  // Entries can be parts of a site ("youtube.com/shorts"): use the domain's icon.
+  const host = domain.split("/")[0];
+  if (!load || failed) return <Letter text={host} size={size} />;
   return (
     <img
-      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
       width={size}
       height={size}
       alt=""
@@ -165,13 +167,23 @@ export function Segmented<T extends string | number>({
   );
 }
 
+/** Open modals, innermost last: Escape only closes the topmost one. */
+const modalStack: object[] = [];
+
 export function Modal({ open, onClose, title, children, width = 480 }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; width?: number }) {
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const me = {};
+    modalStack.push(me);
+    const h = (e: KeyboardEvent) => e.key === "Escape" && modalStack[modalStack.length - 1] === me && close.current();
     window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener("keydown", h);
+      modalStack.splice(modalStack.indexOf(me), 1);
+    };
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onMouseDown={onClose}>

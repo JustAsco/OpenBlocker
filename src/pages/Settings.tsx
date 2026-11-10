@@ -1,5 +1,6 @@
-import { Copy, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ResetModal } from "../components/ResetModal";
 import { PageHeader, Toggle, usePref } from "../components/ui";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -20,6 +21,18 @@ export function SettingsPage() {
     api.getAutostart().then(setAutostart).catch(() => setAutostart(false));
   }, []);
   const save = (patch: Partial<Settings>) => run(() => api.saveSettings({ ...settings, ...patch }));
+  const locked = status.active.some((b) => b.locked);
+  // Hidden emergency reset: click the version number 7 times in a row.
+  const [resetOpen, setResetOpen] = useState(false);
+  const clicks = useRef<number[]>([]);
+  const versionClick = () => {
+    const now = Date.now();
+    clicks.current = [...clicks.current.filter((t) => now - t < 3000), now];
+    if (clicks.current.length >= 7) {
+      clicks.current = [];
+      setResetOpen(true);
+    }
+  };
 
   return (
     <>
@@ -114,6 +127,12 @@ export function SettingsPage() {
               checked={settings.requireExtension}
               onChange={(requireExtension) => save({ requireExtension })}
             />
+            <Toggle
+              label="Suggest the extension"
+              hint="When websites get blocked and no browser has the extension, ask whether you'd like to set it up. Blocking through the hosts file works either way."
+              checked={settings.suggestExtension}
+              onChange={(suggestExtension) => save({ suggestExtension })}
+            />
           </div>
         </section>
 
@@ -163,9 +182,42 @@ export function SettingsPage() {
         </section>
 
         <section className="card p-6">
+          <h2 className="mb-1 font-semibold">Backup</h2>
+          <p className="mb-4 text-sm text-muted">
+            Save your block lists, categories, schedules and settings to a file, to keep a backup or move them to another computer. Running blocks and statistics
+            aren't included.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn-ghost"
+              onClick={() =>
+                api
+                  .exportSettings()
+                  .then((saved) => saved && toast("Settings exported.", "success"))
+                  .catch((e) => toast(String(e), "error"))
+              }
+            >
+              <Download size={15} /> Export…
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={locked}
+              title={locked ? "Not available while a locked block is running" : "Replaces your lists, categories, schedules and settings"}
+              onClick={() => run(api.importSettings, "Settings imported.")}
+            >
+              <Upload size={15} /> Import…
+            </button>
+          </div>
+          {locked && <p className="mt-2 text-xs text-faint">Importing is disabled while a locked block is running.</p>}
+        </section>
+
+        <section className="card p-6">
           <h2 className="mb-2 font-semibold">About</h2>
           <p className="text-sm text-muted">
-            OpenBlocker 0.1.0 · free &amp; open source under the AGPL-3.0. Your data never leaves your computer.
+            <span onClick={versionClick} className="cursor-default select-none">
+              OpenBlocker 0.1.0
+            </span>{" "}
+            · free &amp; open source under the AGPL-3.0. Your data never leaves your computer.
           </p>
           <p className="mt-3 flex items-center gap-2 text-sm text-muted">
             <Heart size={16} className="text-pink-400" /> Contributions welcome!
@@ -173,6 +225,7 @@ export function SettingsPage() {
           <p className="mt-3 text-xs text-faint">Platform: {status.platform}</p>
         </section>
       </div>
+      <ResetModal open={resetOpen} onClose={() => setResetOpen(false)} />
     </>
   );
 }

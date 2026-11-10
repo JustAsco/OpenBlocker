@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissions for the OpenBlocker windows",
   "windows": ["main", "freeze-*"],
-  "permissions": ["core:default", "notification:default"]
+  "permissions": ["core:default", "notification:default", "dialog:allow-open", "dialog:allow-save"]
 }

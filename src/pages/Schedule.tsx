@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Lock, Moon, Plus, Sparkles, Sun, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LockWarning } from "../components/LockWarning";
 import { Modal, PageHeader, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -256,6 +257,7 @@ export function SchedulePage() {
 function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | null; onClose: () => void; state: State }) {
   const { run } = useStore();
   const [s, setS] = useState<Schedule | null>(schedule);
+  const [confirming, setConfirming] = useState(false);
   useEffect(() => setS(schedule), [schedule]);
   if (!s) return null;
 
@@ -265,6 +267,12 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
   const setDays = (days: number[]) => setS({ ...s, days: [...days].sort() });
   const toggleDay = (d: number) => setDays(s.days.includes(d) ? s.days.filter((x) => x !== d) : [...s.days, d]);
   const list = state.lists.find((l) => l.id === s.listId);
+  const save = () => run(() => api.saveSchedule(s), "Schedule saved.").then((ok) => ok && onClose());
+  // Warn when a lock is new, or when a locked schedule now covers different times.
+  const before = state.schedules.find((x) => x.id === s.id);
+  const lockIsNew =
+    s.locked && !(before?.locked && before.listId === s.listId && before.start === s.start && before.end === s.end && s.days.every((d) => before.days.includes(d)));
+  const neverEnds = len * s.days.length >= 7 * 1440;
 
   const summary = () => {
     const sorted = [...s.days].sort();
@@ -348,10 +356,28 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
         <button className="btn-ghost" onClick={onClose}>
           Cancel
         </button>
-        <button className="btn-primary" disabled={!s.days.length || !s.listId} onClick={() => run(() => api.saveSchedule(s), "Schedule saved.").then((ok) => ok && onClose())}>
-          Save
+        <button className="btn-primary" disabled={!s.days.length || !s.listId} onClick={() => (lockIsNew ? setConfirming(true) : save())}>
+          {s.locked && <Lock size={15} />} Save
         </button>
       </div>
+      <LockWarning
+        open={confirming}
+        what={`Every time this schedule runs, ${list?.name ?? "its list"}`}
+        until={<>until that run ends ({allDay ? "midnight" : fmtClock(s.end)})</>}
+        severe={
+          neverEnds ? (
+            <>
+              <span className="font-medium">This schedule never ends.</span> It blocks around the clock, every day of the week, so once it starts you'll never be able
+              to edit or delete it again. Leave at least one gap, or turn the lock off.
+            </>
+          ) : undefined
+        }
+        onClose={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          save();
+        }}
+      />
     </Modal>
   );
 }

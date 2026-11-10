@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { CalendarDays, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ExtensionPrompt } from "./components/ExtensionPrompt";
 import { Toasts } from "./components/ui";
 import { api, isTauri } from "./lib/api";
 import { useStore } from "./lib/store";
@@ -111,6 +112,7 @@ export default function App() {
           {page === "settings" && <SettingsPage />}
         </div>
       </main>
+      <ExtensionPrompt go={setPage} />
       <Toasts />
     </div>
   );

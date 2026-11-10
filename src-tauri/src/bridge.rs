@@ -56,6 +56,10 @@ pub struct BrowserSeen {
 pub struct Rules {
     /// Domains to block (subdomains included).
     pub blocked: Vec<String>,
+    /// Parts of websites to block, e.g. `youtube.com/shorts` (the path and
+    /// everything below it, on the domain and its subdomains). A separate
+    /// field so older extension versions simply ignore it.
+    pub blocked_paths: Vec<String>,
     /// When set, *only* these domains may be opened.
     pub allow_only: Option<Vec<String>>,
     /// Latest end of the active blocks, so a stale rule set can expire if the

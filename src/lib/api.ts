@@ -75,4 +75,42 @@ export const api = {
   extensionPath: () => call<string | null>("extension_path"),
   openExtensionFolder: () => call<void>("open_extension_folder"),
   relaunchAsAdmin: () => call<void>("relaunch_as_admin"),
+  /** Asks where to save, then writes lists, categories, schedules and settings. False if cancelled. */
+  exportSettings: async (): Promise<boolean> => {
+    const name = `openblocker-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    if (isTauri) {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const path = await save({ defaultPath: name, filters: [{ name: "OpenBlocker settings", extensions: ["json"] }] });
+      if (!path) return false;
+      await call<void>("export_settings", { path });
+      return true;
+    }
+    const json = await call<string>("mock_export");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return true;
+  },
+  /** Asks for a settings file and replaces lists, categories, schedules and settings. Null if cancelled. */
+  importSettings: async (): Promise<Snapshot | null> => {
+    if (isTauri) {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ multiple: false, directory: false, filters: [{ name: "OpenBlocker settings", extensions: ["json"] }] });
+      return path ? call<Snapshot>("import_settings", { path }) : null;
+    }
+    const text = await new Promise<string | null>((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json,application/json";
+      input.onchange = () => (input.files?.[0] ? input.files[0].text().then(resolve) : resolve(null));
+      input.oncancel = () => resolve(null);
+      input.click();
+    });
+    return text === null ? null : call<Snapshot>("mock_import", { text });
+  },
+  /** Text to type for an emergency reset; null when nothing is locked. */
+  resetChallenge: () => call<string | null>("reset_challenge"),
+  factoryReset: (answer?: string) => call<Snapshot>("factory_reset", { answer }),
 };

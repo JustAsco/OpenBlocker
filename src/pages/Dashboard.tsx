@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { CalendarClock, Flame, Lock, LockKeyhole, Play, Plus, ShieldCheck, Square, Timer, TypeIcon, Unlock, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Page } from "../App";
+import { LockWarning, fmtWhen } from "../components/LockWarning";
 import { UnlockModal } from "../components/UnlockModal";
 import { ListBadge, Segmented } from "../components/ui";
 import { api } from "../lib/api";
@@ -160,8 +161,10 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
   const [minutes, setMinutes] = useState(60);
   const [custom, setCustom] = useState("");
   const [lock, setLock] = useState<LockMode>("none");
+  const [confirming, setConfirming] = useState(false);
 
   const effective = minutes === -1 ? Math.max(1, 1440 - minuteOfDay(new Date())) : custom ? Number(custom) : minutes;
+  const start = () => run(() => api.startSession(listId, effective, lock), `Blocking for ${fmtMinutes(effective)}. You've got this!`);
 
   if (state.lists.length === 0) {
     return (
@@ -238,10 +241,25 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
       <button
         className="btn-primary w-full py-3 text-base"
         disabled={!listId || !effective}
-        onClick={() => run(() => api.startSession(listId, effective, lock), `Blocking for ${fmtMinutes(effective)}. You've got this!`)}
+        onClick={() => (lock === "timer" ? setConfirming(true) : start())}
       >
-        <Play size={18} /> Start blocking · {fmtMinutes(effective)}
+        {lock === "timer" ? <Lock size={18} /> : <Play size={18} />} Start blocking · {fmtMinutes(effective)}
       </button>
+      <LockWarning
+        open={confirming}
+        what={`Blocking ${state.lists.find((l) => l.id === listId)?.name ?? "this list"} for ${fmtMinutes(effective)}`}
+        until={<>until <span className="text-fg">{fmtWhen(Date.now() + effective * 60_000)}</span></>}
+        severe={
+          effective >= 1440 ? (
+            <>That's {fmtMinutes(effective)}. Make sure this is really what you want; for recurring blocks a schedule is usually the better choice.</>
+          ) : undefined
+        }
+        onClose={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          start();
+        }}
+      />
     </div>
   );
 }

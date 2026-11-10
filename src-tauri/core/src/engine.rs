@@ -142,7 +142,7 @@ pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSe
         .sites
         .iter()
         .chain(cats.clone().flat_map(|c| &c.sites))
-        .filter_map(|s| crate::hosts::normalize_domain(s))
+        .filter_map(|s| crate::hosts::normalize_site(s))
         .collect();
     let apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
     (sites, apps)
@@ -154,7 +154,11 @@ pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<S
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     let mut allowed: Option<BTreeSet<String>> = None;
     for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && l.mode == ListMode::Allow) {
-        allowed.get_or_insert_with(BTreeSet::new).extend(list_items(state, list).0);
+        // A path in an allowlist allows its whole website.
+        let sites = list_items(state, list).0;
+        allowed
+            .get_or_insert_with(BTreeSet::new)
+            .extend(sites.iter().map(|s| crate::hosts::site_domain(s).to_string()));
     }
     allowed
 }
@@ -323,6 +327,89 @@ pub fn tick(state: &mut State, now_ms: i64) -> Vec<Event> {
         events.push(Event::FreezeEnded);
     }
     events
+}
+
+/// Data that can be exported, imported and (later) synced between devices.
+/// Running blocks, the timer and statistics are deliberately not included.
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Backup {
+    /// Always "OpenBlocker"; used to reject unrelated JSON files.
+    pub app: String,
+    pub format: u32,
+    pub exported_at: i64,
+    pub categories: Vec<Category>,
+    pub lists: Vec<BlockList>,
+    pub schedules: Vec<Schedule>,
+    pub settings: Settings,
+}
+
+pub const BACKUP_APP: &str = "OpenBlocker";
+pub const BACKUP_FORMAT: u32 = 1;
+
+pub fn backup(state: &State, now_ms: i64) -> Backup {
+    Backup {
+        app: BACKUP_APP.into(),
+        format: BACKUP_FORMAT,
+        exported_at: now_ms,
+        categories: state.categories.clone(),
+        lists: state.lists.clone(),
+        schedules: state.schedules.clone(),
+        settings: state.settings.clone(),
+    }
+}
+
+/// Replaces lists, categories, schedules and settings with those of `b`.
+/// Refused while any locked block runs, so an import can never be used to
+/// weaken a lock. Quick blocks and the focus timer keep running if their list
+/// still exists.
+pub fn restore(state: &mut State, b: Backup, now_ms: i64, local: &NaiveDateTime) -> Result<(), String> {
+    if b.app != BACKUP_APP {
+        return Err("This isn't an OpenBlocker settings file.".into());
+    }
+    if b.format > BACKUP_FORMAT {
+        return Err("This file was made by a newer version of OpenBlocker. Please update first.".into());
+    }
+    if active_blocks(state, now_ms, local).iter().any(|a| a.locked) {
+        return Err("A locked block is running. You can import settings once it ends.".into());
+    }
+    let mut ids = BTreeSet::new();
+    if b.lists.iter().any(|l| l.id.is_empty() || !ids.insert(l.id.as_str())) {
+        return Err("The file contains invalid block lists.".into());
+    }
+    let mut ids = BTreeSet::new();
+    if b.categories.iter().any(|c| c.id.is_empty() || !ids.insert(c.id.as_str())) {
+        return Err("The file contains invalid categories.".into());
+    }
+    state.categories = b.categories;
+    state.lists = b.lists;
+    let cats: BTreeSet<String> = state.categories.iter().map(|c| c.id.clone()).collect();
+    for l in &mut state.lists {
+        l.categories.retain(|c| cats.contains(c));
+    }
+    let lists: BTreeSet<String> = state.lists.iter().map(|l| l.id.clone()).collect();
+    state.schedules = b
+        .schedules
+        .into_iter()
+        .filter(|s| lists.contains(&s.list_id) && !s.days.is_empty() && s.start < 1440 && s.end < 1440)
+        .collect();
+    state.sessions.retain(|s| lists.contains(&s.list_id));
+    if let Some(p) = state.pomodoro.as_mut() {
+        if p.config.list_id.as_ref().is_some_and(|id| !lists.contains(id)) {
+            p.config.list_id = None;
+        }
+    }
+    state.settings = b.settings;
+    Ok(())
+}
+
+/// Emergency reset: back to factory state, ending every block, schedule,
+/// focus session and freeze. Statistics are kept.
+pub fn factory_reset(state: &State) -> State {
+    State {
+        stats: state.stats.clone(),
+        ..State::default()
+    }
 }
 
 #[cfg(test)]
@@ -504,5 +591,60 @@ mod tests {
         let ev = tick(&mut st, 1000);
         assert_eq!(ev, vec![Event::SessionEnded { list_id: "social".into() }]);
         assert!(st.sessions.is_empty());
+    }
+
+    #[test]
+    fn path_sites_are_kept_and_allowlists_use_their_domain() {
+        let mut state = State::default();
+        state.lists[0].sites = vec!["https://www.youtube.com/shorts/".into()];
+        state.lists[0].categories.clear();
+        let (sites, _) = list_items(&state, &state.lists[0]);
+        assert!(sites.contains("youtube.com/shorts"));
+        state.lists[0].mode = ListMode::Allow;
+        let blocks = vec![ActiveBlock {
+            list_id: state.lists[0].id.clone(),
+            source: Source::Session,
+            ref_id: "x".into(),
+            ends_at: 1,
+            locked: false,
+        }];
+        assert_eq!(allowed_sites(&state, &blocks), Some(["youtube.com".to_string()].into()));
+    }
+
+    #[test]
+    fn backup_roundtrip_and_lock_protection() {
+        let now = 1_000_000;
+        let local = at(4, 12, 0);
+        let mut state = State::default();
+        state.lists.truncate(1);
+        let b = backup(&state, now);
+        let json = serde_json::to_string(&b).unwrap();
+
+        let mut other = State::default();
+        other.sessions.push(Session { id: "s".into(), list_id: "games".into(), started_at: 0, ends_at: now * 2, lock: LockMode::None });
+        restore(&mut other, serde_json::from_str(&json).unwrap(), now, &local).unwrap();
+        assert_eq!(other.lists, state.lists);
+        // Quick blocks of lists that no longer exist are dropped.
+        assert!(other.sessions.is_empty());
+
+        // Never while a locked block runs.
+        other.sessions.push(Session { id: "l".into(), list_id: state.lists[0].id.clone(), started_at: 0, ends_at: now * 2, lock: LockMode::Timer });
+        assert!(restore(&mut other, b.clone(), now, &local).is_err());
+
+        let mut bad = b;
+        bad.app = "Something else".into();
+        assert!(restore(&mut State::default(), bad, now, &local).is_err());
+    }
+
+    #[test]
+    fn factory_reset_ends_everything_but_keeps_stats() {
+        let mut state = State::default();
+        state.schedules.push(sched(&[0, 1, 2, 3, 4, 5, 6], 0, 0));
+        state.schedules[0].locked = true;
+        state.freeze = Some(Freeze { started_at: 0, ends_at: 10, message: String::new() });
+        state.stats.insert("2026-01-01".into(), DayStats { pomodoros: 3, ..Default::default() });
+        let fresh = factory_reset(&state);
+        assert!(fresh.schedules.is_empty() && fresh.freeze.is_none());
+        assert_eq!(fresh.stats["2026-01-01"].pomodoros, 3);
     }
 }

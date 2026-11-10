@@ -38,6 +38,43 @@ pub fn normalize_domain(input: &str) -> Option<String> {
     valid.then(|| s.to_string())
 }
 
+/// Like [`normalize_domain`], but keeps the path so parts of a website can be
+/// blocked: `https://www.YouTube.com/Shorts/?x=1` → `youtube.com/shorts`.
+/// Query, fragment and trailing slashes are dropped; without a path the result
+/// is a plain domain.
+pub fn normalize_site(input: &str) -> Option<String> {
+    let s = input.trim().to_lowercase();
+    let rest = match s.find("://") {
+        Some(i) => &s[i + 3..],
+        None => &s[..],
+    };
+    let (host, path) = match rest.find('/') {
+        // A '?' or '#' before the first '/' means there is no path.
+        Some(i) if !rest[..i].contains(['?', '#']) => (&rest[..i], &rest[i..]),
+        _ => (rest, ""),
+    };
+    let domain = normalize_domain(host)?;
+    let path = path.split(['?', '#']).next().unwrap_or("").trim_end_matches('/');
+    if path.is_empty() {
+        return Some(domain);
+    }
+    if path.chars().any(|c| c.is_whitespace() || c.is_control()) || path.contains("//") {
+        return None;
+    }
+    Some(format!("{domain}{path}"))
+}
+
+/// `youtube.com/shorts` → `youtube.com`; plain domains are returned unchanged.
+pub fn site_domain(site: &str) -> &str {
+    site.split('/').next().unwrap_or(site)
+}
+
+/// Does this site entry only cover part of a website? Those can only be
+/// enforced by the browser extension, never by the hosts file.
+pub fn is_path_site(site: &str) -> bool {
+    site.contains('/')
+}
+
 /// Host names written for one blocked domain.
 pub fn expand(domain: &str, subdomains: bool) -> Vec<String> {
     let mut out = vec![domain.to_string()];
@@ -50,7 +87,10 @@ pub fn expand(domain: &str, subdomains: bool) -> Vec<String> {
 }
 
 /// Renders our managed block (empty string when nothing is blocked).
+/// Path entries (`youtube.com/shorts`) are skipped: the hosts file can only
+/// block whole domains.
 pub fn render_section(domains: &BTreeSet<String>, subdomains: bool, newline: &str) -> String {
+    let domains: Vec<&String> = domains.iter().filter(|d| !is_path_site(d)).collect();
     if domains.is_empty() {
         return String::new();
     }
@@ -125,6 +165,27 @@ mod tests {
         assert_eq!(normalize_domain("localhost"), None);
         assert_eq!(normalize_domain("not a domain.com"), None);
         assert_eq!(normalize_domain(""), None);
+    }
+
+    #[test]
+    fn normalizes_sites_with_paths() {
+        assert_eq!(normalize_site("https://www.YouTube.com/Shorts/?x=1").as_deref(), Some("youtube.com/shorts"));
+        assert_eq!(normalize_site("youtube.com/shorts/abc#t").as_deref(), Some("youtube.com/shorts/abc"));
+        assert_eq!(normalize_site("reddit.com/").as_deref(), Some("reddit.com"));
+        assert_eq!(normalize_site("reddit.com?x=/y").as_deref(), Some("reddit.com"));
+        assert_eq!(normalize_site("user@x.com:8080/a").as_deref(), Some("x.com/a"));
+        assert_eq!(normalize_site("x.com/a b"), None);
+        assert_eq!(normalize_site("nope/path"), None);
+        assert_eq!(site_domain("youtube.com/shorts"), "youtube.com");
+    }
+
+    #[test]
+    fn paths_never_reach_the_hosts_file() {
+        let domains: BTreeSet<String> = ["youtube.com/shorts".to_string()].into();
+        assert_eq!(render_section(&domains, true, "\n"), "");
+        let domains: BTreeSet<String> = ["youtube.com/shorts".to_string(), "x.com".to_string()].into();
+        let s = render_section(&domains, false, "\n");
+        assert!(s.contains("0.0.0.0 x.com") && !s.contains("youtube"));
     }
 
     #[test]

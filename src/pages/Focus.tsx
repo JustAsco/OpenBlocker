@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Coffee, Lock, Pause, Play, SkipForward, Square, Target } from "lucide-react";
 import { useState } from "react";
+import { LockWarning } from "../components/LockWarning";
 import { PageHeader, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -132,6 +133,8 @@ function Setup() {
     totalRounds: 4,
   });
   const set = (p: Partial<PomodoroConfig>) => setCfg({ ...cfg, ...p });
+  const [confirming, setConfirming] = useState(false);
+  const start = () => run(() => api.pomodoroStart(cfg), "Focus mode on. Let's go! 🎯");
   const totalMin = cfg.totalRounds
     ? cfg.totalRounds * cfg.focusMin + (cfg.totalRounds - 1 - Math.floor((cfg.totalRounds - 1) / cfg.rounds)) * cfg.breakMin + Math.floor((cfg.totalRounds - 1) / cfg.rounds) * cfg.longBreakMin
     : null;
@@ -196,9 +199,19 @@ function Setup() {
         <p className="mt-2 text-sm text-muted">
           {cfg.totalRounds ?? "∞"} × {cfg.focusMin} min focus
         </p>
-        <button className="btn-primary mt-8 w-full py-3 text-base" onClick={() => run(() => api.pomodoroStart(cfg), "Focus mode on. Let's go! 🎯")}>
-          <Play size={18} /> Start focusing
+        <button className="btn-primary mt-8 w-full py-3 text-base" onClick={() => (cfg.locked ? setConfirming(true) : start())}>
+          {cfg.locked ? <Lock size={18} /> : <Play size={18} />} Start focusing
         </button>
+        <LockWarning
+          open={confirming}
+          what={cfg.listId ? `Every focus round (${cfg.focusMin} min)` : `Every focus round (${cfg.focusMin} min) of this timer`}
+          until={<>until the round ends{cfg.totalRounds ? `, for all ${cfg.totalRounds} rounds` : ", and the timer runs until you stop it during a break"}</>}
+          onClose={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            start();
+          }}
+        />
       </div>
     </div>
   );
