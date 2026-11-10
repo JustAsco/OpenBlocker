@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the OpenBlocker windows",
+  "windows": ["main", "freeze-*"],
+  "permissions": ["core:default", "notification:default"]
+}

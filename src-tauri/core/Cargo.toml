@@ -1,0 +1,11 @@
+[package]
+name = "openblocker-core"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "Platform-independent blocking logic for OpenBlocker (model, schedules, hosts rendering)."
+
+[dependencies]
+chrono = { version = "0.4.45", features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
