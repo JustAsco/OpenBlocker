@@ -87,7 +87,13 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
           const others = blocks.filter((b) => b.source !== "session");
           const othersEnd = others.length ? Math.max(...others.map((b) => b.endsAt)) : 0;
           const labels = blocks.map((b) =>
-            b.source === "session" ? "Quick block" : b.source === "pomodoro" ? "Focus timer" : state.schedules.find((s) => s.id === b.refId)?.label || "Scheduled",
+            b.source === "session"
+              ? "Quick block"
+              : b.source === "pomodoro"
+                ? "Focus timer"
+                : b.source === "limit"
+                  ? "Daily limit used up"
+                  : state.schedules.find((s) => s.id === b.refId)?.label || "Scheduled",
           );
           const start = blocks.length === 1 ? (session?.startedAt ?? (blocks[0].source === "pomodoro" ? state.pomodoro?.phaseStartedAt : undefined)) : undefined;
           const pct = start ? Math.min(100, ((now - start) / (endsAt - start)) * 100) : null;

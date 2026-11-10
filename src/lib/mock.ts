@@ -36,6 +36,7 @@ function defaultState(): State {
     sessions: [],
     pomodoro: null,
     freeze: null,
+    limits: [{ id: "l1", listId: "video", minutes: 45, days: [0, 1, 2, 3, 4, 5, 6], locked: false }],
     settings: {
       flushDns: true,
       notifications: true,
@@ -56,6 +57,7 @@ function load(): State {
     if (raw) {
       const s = JSON.parse(raw) as State;
       s.settings = { ...defaultState().settings, ...s.settings };
+      s.limits ??= [];
       return s;
     }
   } catch {
@@ -65,6 +67,8 @@ function load(): State {
 }
 
 let state = load();
+/** Seconds used today per limit (the real app measures this; the mock fakes some). */
+const usage: Record<string, number> = { l1: 31 * 60 };
 const challenges = new Map<string, string>();
 const subs = new Set<(s: Snapshot) => void>();
 
@@ -77,7 +81,7 @@ function persist() {
 }
 
 function snapshot(): Snapshot {
-  const active = activeBlocks(state);
+  const active = activeBlocks(state, Date.now(), usage);
   const ids = new Set(active.map((a) => a.listId));
   const sites = new Set<string>();
   const apps = new Set<string>();
@@ -98,13 +102,16 @@ function snapshot(): Snapshot {
       blockedSites: sites.size,
       blockedApps: apps.size,
       hostsError: null,
-      elevated: true,
+      elevated: false,
+      // localStorage "mock-service" = "0" previews the app without the background service.
+      service: localStorage.getItem("mock-service") !== "0",
       platform: "browser-preview",
       // localStorage "mock-extension" = "0" previews the app without a connected extension.
       extension: localStorage.getItem("mock-extension") === "0" ? [] : [{ exe: "chrome.exe", name: "Google Chrome", lastSeen: Date.now(), extensionVersion: "0.1.0" }],
       extensionRequired: allowed !== null || (state.settings.requireExtension && sites.size > 0),
       allowlistSites: allowed ? (allowed as Set<string>).size : null,
       bridgeError: null,
+      usageToday: { ...usage },
     },
   };
 }
@@ -298,9 +305,41 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       return;
     case "relaunch_as_admin":
       return;
+    case "save_limit": {
+      const l = { ...a.limit, id: a.limit.id || uid() };
+      if (!l.days.length) fail("Pick at least one day.");
+      const i = state.limits.findIndex((x) => x.id === l.id);
+      if (i >= 0) {
+        const old = state.limits[i];
+        if (old.locked && activeBlocks(state, now, usage).some((b) => b.refId === old.id) && (l.minutes > old.minutes || !l.locked))
+          fail("This limit is used up and locked until midnight.");
+        state.limits[i] = l;
+      } else state.limits.push(l);
+      return commit();
+    }
+    case "delete_limit":
+      if (activeBlocks(state, now, usage).some((b) => b.refId === a.id && b.locked)) fail("This limit is used up and locked until midnight.");
+      state.limits = state.limits.filter((l) => l.id !== a.id);
+      return commit();
+    case "set_category_source": {
+      const domains = new Set<string>();
+      for (const line of String(a.text).split("\n")) {
+        const t = line.split("#")[0].trim().split(/\s+/);
+        const d = normalizeSite(t.length > 1 ? t[1] : t[0]);
+        if (d && !d.includes("/") && d !== "localhost") domains.add(d);
+      }
+      if (!domains.size) fail("No websites found in that list.");
+      state.categories = state.categories.map((c) =>
+        c.id === a.id ? { ...c, source: { url: a.url, name: a.name, updatedAt: now, count: domains.size } } : c,
+      );
+      return commit();
+    }
+    case "remove_category_source":
+      state.categories = state.categories.map((c) => (c.id === a.id ? { ...c, source: null } : c));
+      return commit();
     case "mock_export":
       return JSON.stringify(
-        { app: "OpenBlocker", format: 1, exportedAt: now, categories: state.categories, lists: state.lists, schedules: state.schedules, settings: state.settings },
+        { app: "OpenBlocker", format: 1, exportedAt: now, categories: state.categories, lists: state.lists, schedules: state.schedules, settings: state.settings, limits: state.limits },
         null,
         2,
       );
@@ -318,6 +357,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
         categories: b.categories,
         lists: b.lists,
         schedules: b.schedules.filter((s: { listId: string }) => ids.has(s.listId)),
+        limits: (b.limits ?? []).filter((l: { listId: string }) => ids.has(l.listId)),
         sessions: state.sessions.filter((s) => ids.has(s.listId)),
         settings: { ...state.settings, ...b.settings },
       });
@@ -334,7 +374,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     }
     case "factory_reset": {
       if ((state.freeze || activeBlocks(state).some((x) => x.locked)) && a.answer !== challenges.get("__reset__")) fail("The text doesn't match.");
-      state = { ...defaultState(), schedules: [], stats: state.stats };
+      state = { ...defaultState(), schedules: [], limits: [], stats: state.stats };
       challenges.clear();
       return commit();
     }

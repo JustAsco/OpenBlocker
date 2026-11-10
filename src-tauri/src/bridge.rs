@@ -1,25 +1,31 @@
-//! Local HTTP bridge between the app and the OpenBlocker browser extension.
+//! Local HTTP bridge between OpenBlocker and its browser extension.
 //!
 //! The extension polls `GET http://127.0.0.1:47613/v1/rules` every couple of
-//! seconds. Each request doubles as a heartbeat, so the app knows in which
-//! browsers the extension is running.
+//! seconds. Each request doubles as a heartbeat (so we know in which browsers
+//! the extension runs) and reports the active tab for usage limits. The
+//! bridge is served by the background service when it's installed, otherwise
+//! by the app itself.
 //!
-//! Hardening:
-//! * listens on 127.0.0.1 only;
-//! * sends no CORS headers, so ordinary web pages can't read the rules
-//!   (the extension has host permissions and doesn't need CORS);
+//! Hardening (see [`crate::http::trusted`]):
+//! * listens on 127.0.0.1 only and checks the `Host` header;
+//! * sends no CORS headers, so web pages can't read the rules;
 //! * requires an `X-OpenBlocker` header, which pages can't add without a
 //!   CORS preflight that we never approve, so they can't fake heartbeats;
 //! * on Windows the calling browser is identified from the TCP connection's
 //!   owning process instead of trusting what the caller says.
 
-use serde::Serialize;
+use crate::http;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 pub const PORT: u16 = 47613;
 /// A browser counts as protected if its extension checked in this recently.
 pub const HEARTBEAT_TIMEOUT_MS: i64 = 45_000;
+/// The reported active tab is trusted for usage limits this long.
+pub const ACTIVE_TAB_TIMEOUT_MS: i64 = 6_000;
 
 /// Browsers whose processes can be closed when they run without the extension.
 pub const BROWSERS: &[(&str, &str)] = &[
@@ -41,17 +47,21 @@ pub fn browser_name(exe: &str) -> Option<&'static str> {
     BROWSERS.iter().find(|(e, _)| e.eq_ignore_ascii_case(exe)).map(|(_, n)| *n)
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserSeen {
     pub exe: String,
     pub name: String,
     pub last_seen: i64,
     pub extension_version: String,
+    /// URL of the active tab while the browser window has focus and the user
+    /// isn't idle (reported by the extension; used for usage limits).
+    #[serde(default)]
+    pub active_url: Option<String>,
 }
 
 /// What the extension should enforce right now.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rules {
     /// Domains to block (subdomains included).
@@ -72,6 +82,8 @@ pub struct Rules {
 #[derive(Default)]
 pub struct Bridge {
     seen: Mutex<HashMap<String, BrowserSeen>>,
+    /// (revision, serialised rules with the revision included)
+    rules: Mutex<Arc<(String, String)>>,
     pub error: Mutex<Option<String>>,
 }
 
@@ -97,6 +109,30 @@ impl Bridge {
             .get(&exe.to_lowercase())
             .is_some_and(|b| now_ms - b.last_seen < HEARTBEAT_TIMEOUT_MS)
     }
+
+    /// Publishes new rules. Serialising once here keeps big community lists
+    /// cheap: polls with the current revision get a tiny "unchanged" answer.
+    pub fn set_rules(&self, rules: &Rules) {
+        let json = serde_json::to_string(rules).unwrap_or_else(|_| "{}".into());
+        let rev = format!("{:016x}", fnv1a(json.as_bytes()));
+        let mut cur = self.rules.lock().unwrap();
+        if cur.0 != rev {
+            let with_rev = format!("{{\"rev\":\"{rev}\",{}", &json[1..]);
+            *cur = Arc::new((rev, with_rev));
+        }
+    }
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
+}
+
+/// URL of the active tab in a browser, if the report is fresh.
+pub fn active_url(browsers: &[BrowserSeen], exe: &str, now_ms: i64) -> Option<String> {
+    browsers
+        .iter()
+        .find(|b| b.exe.eq_ignore_ascii_case(exe) && now_ms - b.last_seen < ACTIVE_TAB_TIMEOUT_MS)
+        .and_then(|b| b.active_url.clone())
 }
 
 fn exe_from_hint(hint: &str) -> Option<&'static str> {
@@ -111,58 +147,77 @@ fn exe_from_hint(hint: &str) -> Option<&'static str> {
     })
 }
 
-fn query_param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
-    url.split_once('?')?
-        .1
-        .split('&')
-        .filter_map(|kv| kv.split_once('='))
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| v)
-}
-
-/// Runs the bridge server forever (call from a dedicated thread).
-pub fn serve(bridge: Arc<Bridge>, rules: impl Fn() -> Rules) {
-    let server = match tiny_http::Server::http(("127.0.0.1", PORT)) {
-        Ok(s) => s,
-        Err(e) => {
-            *bridge.error.lock().unwrap() = Some(format!("Browser extension bridge unavailable (port {PORT}): {e}"));
-            return;
-        }
-    };
-    let json = tiny_http::Header::from_bytes("Content-Type", "application/json").unwrap();
-    let no_store = tiny_http::Header::from_bytes("Cache-Control", "no-store").unwrap();
-    for req in server.incoming_requests() {
-        let authorised = req.headers().iter().any(|h| h.field.equiv("X-OpenBlocker"));
-        let url = req.url().to_string();
-        if req.method() != &tiny_http::Method::Get || !url.starts_with("/v1/rules") || !authorised {
-            let _ = req.respond(tiny_http::Response::empty(404));
+/// Serves the bridge whenever `active()` is true, giving the port up while
+/// it's false (the app hands the bridge over to the background service this
+/// way). Runs forever; call from a dedicated thread.
+pub fn run(bridge: Arc<Bridge>, active: impl Fn() -> bool) {
+    loop {
+        if !active() {
+            std::thread::sleep(Duration::from_secs(1));
             continue;
         }
-        let hint = query_param(&url, "b").unwrap_or("");
-        let version = query_param(&url, "v").unwrap_or("").chars().take(20).collect::<String>();
-        let peer_port = req.remote_addr().map(|a| a.port()).unwrap_or(0);
-        let exe = owning_exe(peer_port)
-            .filter(|e| browser_name(e).is_some())
-            .or_else(|| exe_from_hint(hint).map(String::from));
-        if let Some(exe) = exe {
-            let exe = exe.to_lowercase();
-            let name = browser_name(&exe).unwrap_or("Browser").to_string();
-            bridge.seen.lock().unwrap().insert(
-                exe.clone(),
-                BrowserSeen {
-                    exe,
-                    name,
-                    last_seen: chrono::Utc::now().timestamp_millis(),
-                    extension_version: version,
-                },
-            );
+        match tiny_http::Server::http(("127.0.0.1", PORT)) {
+            Ok(server) => {
+                *bridge.error.lock().unwrap() = None;
+                let stop = AtomicBool::new(false);
+                while !stop.load(Ordering::Relaxed) {
+                    match server.recv_timeout(Duration::from_millis(500)) {
+                        Ok(Some(req)) => handle(&bridge, req),
+                        Ok(None) => {}
+                        Err(_) => break,
+                    }
+                    if !active() {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            Err(e) => {
+                *bridge.error.lock().unwrap() = Some(format!("Browser extension bridge unavailable (port {PORT}): {e}"));
+                std::thread::sleep(Duration::from_secs(3));
+            }
         }
-        let body = serde_json::to_string(&rules()).unwrap_or_else(|_| "{}".into());
-        let resp = tiny_http::Response::from_string(body)
-            .with_header(json.clone())
-            .with_header(no_store.clone());
-        let _ = req.respond(resp);
     }
+}
+
+fn handle(bridge: &Bridge, req: tiny_http::Request) {
+    let url = req.url().to_string();
+    if req.method() != &tiny_http::Method::Get || !url.starts_with("/v1/rules") || !http::trusted(&req, "X-OpenBlocker", PORT) {
+        let _ = req.respond(tiny_http::Response::empty(404));
+        return;
+    }
+    let hint = http::query_param(&url, "b").unwrap_or("");
+    let version = http::query_param(&url, "v").unwrap_or("").chars().take(20).collect::<String>();
+    let active_url = http::query_param(&url, "a")
+        .map(http::percent_decode)
+        .filter(|u| !u.is_empty() && u.len() < 4096);
+    let peer_port = req.remote_addr().map(|a| a.port()).unwrap_or(0);
+    let exe = owning_exe(peer_port)
+        .filter(|e| browser_name(e).is_some())
+        .or_else(|| exe_from_hint(hint).map(String::from));
+    if let Some(exe) = exe {
+        let exe = exe.to_lowercase();
+        let name = browser_name(&exe).unwrap_or("Browser").to_string();
+        bridge.seen.lock().unwrap().insert(
+            exe.clone(),
+            BrowserSeen {
+                exe,
+                name,
+                last_seen: chrono::Utc::now().timestamp_millis(),
+                extension_version: version,
+                active_url,
+            },
+        );
+    }
+    let rules = bridge.rules.lock().unwrap().clone();
+    let body = if http::query_param(&url, "r") == Some(rules.0.as_str()) {
+        format!("{{\"rev\":\"{}\",\"unchanged\":true}}", rules.0)
+    } else if rules.0.is_empty() {
+        serde_json::to_string(&Rules::default()).unwrap()
+    } else {
+        rules.1.clone()
+    };
+    let no_store = tiny_http::Header::from_bytes("Cache-Control", "no-store").unwrap();
+    let _ = req.respond(tiny_http::Response::from_string(body).with_header(http::json_header()).with_header(no_store));
 }
 
 /// Executable name of the process owning the client side of a loopback TCP

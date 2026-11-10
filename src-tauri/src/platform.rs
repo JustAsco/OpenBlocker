@@ -33,11 +33,12 @@ pub fn can_write_hosts() -> bool {
     std::fs::OpenOptions::new().append(true).open(hosts_path()).is_ok()
 }
 
-/// Rewrites our managed section of the hosts file. Returns Ok(true) if the file changed.
-pub fn apply_hosts(domains: &BTreeSet<String>, subdomains: bool) -> Result<bool, String> {
+/// Rewrites our managed section of the hosts file. `expand` picks the domains
+/// that also get www./m. variants. Returns Ok(true) if the file changed.
+pub fn apply_hosts(domains: &BTreeSet<String>, subdomains: bool, expand: impl Fn(&str) -> bool) -> Result<bool, String> {
     let path = hosts_path();
     let existing = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read hosts file: {e}"))?;
-    let section = hosts::render_section(domains, subdomains, hosts::newline_for(&existing));
+    let section = hosts::render_section(domains, subdomains, expand, hosts::newline_for(&existing));
     let merged = hosts::merge(&existing, &section);
     if merged == existing {
         return Ok(false);
@@ -384,24 +385,23 @@ mod windows_impl {
 
 // ───────────────────────────── autostart ─────────────────────────────
 //
-// On Windows we register a Task Scheduler task that runs at logon with the
-// highest privileges, so website blocking works from boot without a UAC
-// prompt. (A plain "Run" registry key cannot start elevated programs.)
+// The app no longer needs administrator rights (the background service does
+// the privileged work), so a per-user "Run" registry entry is enough. Older
+// versions used an elevated scheduled task; it's removed when found.
 
 #[cfg(windows)]
-const TASK_NAME: &str = "OpenBlocker";
-
+const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(windows)]
-fn schtasks(args: &[&str]) -> std::io::Result<std::process::Output> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::process::Command::new("schtasks").args(args).creation_flags(CREATE_NO_WINDOW).output()
-}
+const RUN_VALUE: &str = "OpenBlocker";
 
 pub fn autostart_enabled() -> bool {
     #[cfg(windows)]
     {
-        schtasks(&["/Query", "/TN", TASK_NAME]).map(|o| o.status.success()).unwrap_or(false)
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(RUN_KEY)
+            .and_then(|k| k.get_value::<String, _>(RUN_VALUE))
+            .is_ok()
     }
     #[cfg(not(windows))]
     {
@@ -409,67 +409,202 @@ pub fn autostart_enabled() -> bool {
     }
 }
 
-#[cfg(windows)]
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
-}
-
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let fail = |o: std::process::Output| {
-            let msg = String::from_utf8_lossy(&o.stderr).trim().to_string();
-            if msg.to_lowercase().contains("denied") {
-                "Changing this needs administrator rights.".to_string()
-            } else {
-                format!("Task Scheduler error: {msg}")
-            }
-        };
-        if !enabled {
-            let o = schtasks(&["/Delete", "/TN", TASK_NAME, "/F"]).map_err(|e| e.to_string())?;
-            return if o.status.success() || !autostart_enabled() { Ok(()) } else { Err(fail(o)) };
-        }
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let user = format!(
-            "{}\\{}",
-            std::env::var("USERDOMAIN").unwrap_or_default(),
-            std::env::var("USERNAME").unwrap_or_default()
-        );
-        let xml = format!(
-            r#"<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Starts OpenBlocker at logon so your blocks stay active.</Description></RegistrationInfo>
-  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId></LogonTrigger></Triggers>
-  <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>5</Priority>
-  </Settings>
-  <Actions Context="Author"><Exec><Command>{exe}</Command><Arguments>--minimized</Arguments></Exec></Actions>
-</Task>"#,
-            user = xml_escape(&user),
-            exe = xml_escape(&exe.to_string_lossy()),
-        );
-        // schtasks expects UTF-16 LE with BOM.
-        let mut bytes = vec![0xFF, 0xFE];
-        bytes.extend(xml.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        let path = std::env::temp_dir().join("openblocker-task.xml");
-        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-        let o = schtasks(&["/Create", "/TN", TASK_NAME, "/XML", &path.to_string_lossy(), "/F"]).map_err(|e| e.to_string());
-        let _ = std::fs::remove_file(&path);
-        let o = o?;
-        if o.status.success() {
-            Ok(())
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY).map_err(|e| e.to_string())?;
+        if enabled {
+            let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            key.set_value(RUN_VALUE, &format!("\"{}\" --minimized", exe.to_string_lossy()))
+                .map_err(|e| e.to_string())
         } else {
-            Err(fail(o))
+            match key.delete_value(RUN_VALUE) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            }
         }
     }
     #[cfg(not(windows))]
     {
         let _ = enabled;
         Err("Autostart is only implemented on Windows so far.".into())
+    }
+}
+
+// ───────────────────────────── activity (usage limits) ─────────────────────────────
+
+/// Executable name of the window the user is looking at.
+pub fn foreground_exe() -> Option<String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::core::PWSTR;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_invalid() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = CloseHandle(handle);
+        if !ok {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        path.rsplit('\\').next().map(str::to_string)
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Milliseconds since the last keyboard or mouse input.
+pub fn idle_ms() -> u64 {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::SystemInformation::GetTickCount;
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+        let mut info = LASTINPUTINFO {
+            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+            dwTime: 0,
+        };
+        if !GetLastInputInfo(&mut info).as_bool() {
+            return 0;
+        }
+        GetTickCount().wrapping_sub(info.dwTime) as u64
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+// ───────────────────────────── service support ─────────────────────────────
+
+/// Where the background service keeps its protected copy of the state
+/// (`C:\ProgramData\OpenBlocker`).
+pub fn service_data_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".into())).join("OpenBlocker")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/var/lib/openblocker")
+    }
+}
+
+/// Lets only SYSTEM and administrators change the service's data; users may
+/// read it. (ProgramData lets every user create files by default.)
+pub fn protect_service_dir(dir: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("icacls")
+            .arg(dir)
+            .args(["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-32-545:(OI)(CI)RX", "/Q"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+}
+
+/// Is a copy of our own executable (other than this process) running in the
+/// interactive user's session?
+pub fn ui_running_in_console_session(sys: &mut System) -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::RemoteDesktop::{ProcessIdToSessionId, WTSGetActiveConsoleSessionId};
+        let me = std::process::id();
+        let Some(name) = std::env::current_exe().ok().and_then(|p| p.file_name().map(|f| f.to_string_lossy().to_lowercase())) else {
+            return false;
+        };
+        let console = unsafe { WTSGetActiveConsoleSessionId() };
+        sys.refresh_processes(ProcessesToUpdate::All, true);
+        sys.processes().iter().any(|(pid, p)| {
+            let mut session = u32::MAX;
+            pid.as_u32() != me
+                && p.name().to_string_lossy().to_lowercase() == name
+                && unsafe { ProcessIdToSessionId(pid.as_u32(), &mut session) }.is_ok()
+                && session == console
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = sys;
+        true
+    }
+}
+
+/// Starts the app (our own executable) in the logged-in user's session, as
+/// that user. Only possible from a service running as SYSTEM.
+pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    unsafe {
+        use std::ffi::c_void;
+        use windows::core::{PCWSTR, PWSTR};
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
+        use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
+        use windows::Win32::System::Threading::{CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW};
+
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let session = WTSGetActiveConsoleSessionId();
+        if session == u32::MAX {
+            return Err("nobody is logged in".into());
+        }
+        let mut token = HANDLE::default();
+        WTSQueryUserToken(session, &mut token).map_err(|e| e.to_string())?;
+        let mut env: *mut c_void = std::ptr::null_mut();
+        let _ = CreateEnvironmentBlock(&mut env, Some(token), false);
+        let mut cmd: Vec<u16> = format!("\"{}\" {args}", exe.to_string_lossy()).encode_utf16().chain([0]).collect();
+        let desktop: Vec<u16> = "winsta0\\default".encode_utf16().chain([0]).collect();
+        let si = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            lpDesktop: PWSTR(desktop.as_ptr() as *mut u16),
+            ..Default::default()
+        };
+        let mut pi = PROCESS_INFORMATION::default();
+        let result = CreateProcessAsUserW(
+            Some(token),
+            PCWSTR::null(),
+            Some(PWSTR(cmd.as_mut_ptr())),
+            None,
+            None,
+            false,
+            CREATE_UNICODE_ENVIRONMENT,
+            (!env.is_null()).then_some(env as *const c_void),
+            PCWSTR::null(),
+            &si,
+            &mut pi,
+        );
+        if !env.is_null() {
+            let _ = DestroyEnvironmentBlock(env);
+        }
+        let _ = CloseHandle(token);
+        if result.is_ok() {
+            let _ = CloseHandle(pi.hProcess);
+            let _ = CloseHandle(pi.hThread);
+        }
+        result.map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        Err("not supported on this platform".into())
     }
 }

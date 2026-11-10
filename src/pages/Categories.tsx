@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Lock, Plus } from "lucide-react";
+import { Download, Library, Lock, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import { EditorShell, ItemsEditor, useDraft } from "../components/ItemsEditor";
@@ -66,7 +66,7 @@ export function CategoriesPage({ go }: { go: (p: Page) => void }) {
                       </span>
                       <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
                       {usedBy > 0 && <span className="size-1.5 shrink-0 rounded-full bg-accent" title={`Used by ${usedBy} block list(s)`} />}
-                      <span className="w-7 shrink-0 text-right text-xs text-faint tabular-nums">{c.sites.length + c.apps.length}</span>
+                      <span className="w-10 shrink-0 text-right text-xs text-faint tabular-nums">{fmtCount(c.sites.length + c.apps.length + (c.source?.count ?? 0))}</span>
                     </button>
                   );
                 })}
@@ -89,7 +89,9 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
   const [confirm, setConfirm] = useState<"delete" | "reset" | null>(null);
   const usedBy = state.lists.filter((l) => l.categories.includes(category.id));
   const factory = factoryCategory(category.id);
-  const isFactory = factory && JSON.stringify(factory) === JSON.stringify(category);
+  // The community list is managed separately and doesn't make it "customised".
+  const { source: _source, ...plain } = category;
+  const isFactory = factory && JSON.stringify(factory) === JSON.stringify(plain);
 
   const lockEnds = snap!.status.active
     .filter((a) => a.locked && usedBy.some((l) => l.id === a.listId))
@@ -104,7 +106,7 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
       name={draft.name}
       subtitle={
         <>
-          {draft.sites.length} websites · {draft.apps.length} apps ·{" "}
+          {draft.sites.length} websites{category.source && ` + ${category.source.count.toLocaleString()} from a community list`} · {draft.apps.length} apps ·{" "}
           {usedBy.length ? (
             <>
               used in{" "}
@@ -143,6 +145,7 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
         </>
       }
     >
+      <CommunityList category={category} locked={!!lockEnds} />
       <ItemsEditor
         sites={draft.sites}
         apps={draft.apps}
@@ -179,5 +182,92 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
         </div>
       </Modal>
     </EditorShell>
+  );
+}
+
+const fmtCount = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/** Well-maintained lists by Steven Black (MIT), each a few thousand to ~80,000 domains. */
+const PRESETS: { name: string; url: string; size: string; forCategory: string }[] = [
+  { name: "Adult websites", url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts", size: "~77,000", forCategory: "adult" },
+  { name: "Gambling", url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/gambling-only/hosts", size: "~6,700", forCategory: "gambling" },
+  { name: "Social networks", url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/social-only/hosts", size: "~3,800", forCategory: "social" },
+  { name: "Fake news", url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/fakenews-only/hosts", size: "~2,200", forCategory: "news" },
+];
+
+/** Import a large community domain list into a category, or update/remove it. */
+function CommunityList({ category, locked }: { category: Category; locked: boolean }) {
+  const { run } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [custom, setCustom] = useState("");
+  const src = category.source;
+  const load = async (url: string, name: string) => {
+    setBusy(true);
+    await run(() => api.importCategorySource(category.id, url, name), "Community list imported.");
+    setBusy(false);
+  };
+  const presets = [...PRESETS].sort((a, b) => Number(b.forCategory === category.id) - Number(a.forCategory === category.id));
+
+  return (
+    <section className="mb-7 rounded-xl border border-line bg-panel p-4">
+      <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+        <Library size={16} className="text-accent-2" /> Community list
+      </h3>
+      {src ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="min-w-0 flex-1 text-sm text-muted">
+            <span className="text-fg">{src.name}</span> · {src.count.toLocaleString()} websites · updated {new Date(src.updatedAt).toLocaleDateString()}
+          </p>
+          <button className="btn-ghost py-1.5" disabled={busy} onClick={() => load(src.url, src.name)}>
+            <RefreshCw size={14} className={clsx(busy && "animate-spin")} /> Update
+          </button>
+          <button
+            className="btn-ghost py-1.5"
+            disabled={busy || locked}
+            title={locked ? "Used by a locked block" : undefined}
+            onClick={() => run(() => api.removeCategorySource(category.id), "Community list removed.")}
+          >
+            <Trash2 size={14} /> Remove
+          </button>
+        </div>
+      ) : (
+        <>
+          <p className="mb-3 text-sm text-muted">
+            Add thousands of known websites at once from a maintained list. It's downloaded once now; update it whenever you like.
+          </p>
+          <div className="mb-3 grid gap-2 sm:grid-cols-2">
+            {presets.map((p) => (
+              <button
+                key={p.url}
+                disabled={busy}
+                onClick={() => load(p.url, `${p.name} (Steven Black)`)}
+                className={clsx(
+                  "flex items-center gap-3 rounded-xl border px-3 py-2 text-left text-sm transition disabled:opacity-50",
+                  p.forCategory === category.id ? "border-accent/60 bg-accent/10" : "border-line bg-card hover:border-line-strong",
+                )}
+              >
+                <Download size={15} className="shrink-0 text-muted" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">{p.name}</span>
+                  <span className="block text-xs text-muted">{p.size} websites</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="input"
+              placeholder="Or paste the URL of a hosts file or domain list"
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+            />
+            <button className="btn-ghost shrink-0" disabled={busy || !/^https:\/\//.test(custom.trim())} onClick={() => load(custom.trim(), new URL(custom.trim()).hostname)}>
+              {busy ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />} Import
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-faint">Lists come from GitHub (Steven Black, MIT license). Downloading is the only time OpenBlocker contacts them.</p>
+        </>
+      )}
+    </section>
   );
 }

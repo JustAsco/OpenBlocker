@@ -13,8 +13,20 @@ function hostOf(url) {
   }
 }
 
+// Community lists can hold 100k+ domains: look them up in a Set, checking
+// the host and each parent domain (a.b.example.com, b.example.com, …).
+var domainSets = new WeakMap();
 function domainMatches(host, domains) {
-  return domains.some((d) => host === d || host.endsWith("." + d));
+  let set = domainSets.get(domains);
+  if (!set) {
+    set = new Set(domains);
+    domainSets.set(domains, set);
+  }
+  for (let h = host; h; h = h.slice(h.indexOf(".") + 1 || h.length)) {
+    if (set.has(h)) return true;
+    if (!h.includes(".")) break;
+  }
+  return false;
 }
 
 /** Does the URL fall under a path rule like "youtube.com/shorts"? */

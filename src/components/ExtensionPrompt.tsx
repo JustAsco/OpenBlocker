@@ -51,7 +51,7 @@ export function ExtensionPrompt({ go }: { go: (p: Page) => void }) {
     setOpen(false);
     if (never) run(() => api.saveSettings({ ...state.settings, suggestExtension: false }));
   };
-  const hostsWorking = status.elevated && !status.hostsError;
+  const hostsWorking = (status.service || status.elevated) && !status.hostsError;
 
   return (
     <Modal
@@ -71,7 +71,8 @@ export function ExtensionPrompt({ go }: { go: (p: Page) => void }) {
         </p>
       ) : (
         <p className="mb-3 text-sm text-amber-200">
-          OpenBlocker isn't running with administrator rights, so it can't edit the hosts file. Without the extension, websites aren't blocked right now.
+          OpenBlocker can't edit the hosts file right now (the background service isn't running and the app has no administrator rights). Without the
+          extension, websites aren't blocked.
         </p>
       )}
       <p className="mb-5 text-sm text-muted">

@@ -1,16 +1,22 @@
 //! OpenBlocker desktop app: wires the platform-independent core to Tauri,
-//! the OS (hosts file, processes) and the UI.
+//! the OS and the UI. When the background service is installed (see
+//! `service.rs`) it does the enforcing and this app only edits, counts usage
+//! and shows things; otherwise the app enforces by itself.
 
 mod bridge;
+mod enforce;
+mod http;
 mod platform;
+pub mod service;
 
 use chrono::{Local, NaiveDateTime};
 use openblocker_core::engine::{self, ActiveBlock, Event};
 use openblocker_core::hosts;
 use openblocker_core::model::*;
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
@@ -21,22 +27,41 @@ use tauri_plugin_notification::NotificationExt;
 const TICK: Duration = Duration::from_millis(1000);
 const MAX_SESSION_MIN: u32 = 60 * 24 * 30;
 const MAX_FREEZE_MIN: u32 = 60 * 12;
-/// Key of the emergency-reset challenge in `Inner::challenges`.
+/// Key of the emergency-reset challenge.
 const RESET_CHALLENGE: &str = "__reset__";
+/// No input for this long = away; usage limits stop counting.
+const IDLE_MS: u64 = 60_000;
+/// Largest community list accepted (the hosts file has to stay workable).
+const MAX_SOURCE_DOMAINS: usize = 250_000;
+/// Without changes, the state is still sent to the service this often.
+const PUBLISH_EVERY_MS: i64 = 30_000;
 
 struct Inner {
     state: State,
     path: PathBuf,
-    /// Unlock text per text-locked session id.
+    /// Downloaded community lists, one file per category.
+    sources_dir: PathBuf,
+    /// Unlock text per text-locked session id (only without the service).
     challenges: HashMap<String, String>,
-    /// Domains currently written to the hosts file (None = unknown / needs write).
-    applied_sites: Option<BTreeSet<String>>,
     hosts_error: Option<String>,
-    hosts_retry_at: i64,
     last_tick: i64,
     focus_carry_ms: i64,
+    usage_carry_ms: i64,
     last_save: i64,
+    /// A command changed the state; save it (and publish it) soon.
+    dirty: bool,
     bridge: Arc<bridge::Bridge>,
+    /// Latest status from the background service; None = not running.
+    svc: Option<service::Status>,
+    svc_up: Arc<AtomicBool>,
+    /// The service's generation our state is based on (see `service::Publish`).
+    svc_gen: Option<u64>,
+    publish_now: bool,
+    last_publish: i64,
+    /// Ask the enforcer to rewrite the hosts file (retry after an error).
+    retry_hosts: bool,
+    /// "date/limit id" pairs already warned about (5 minutes left).
+    limit_warned: BTreeSet<String>,
 }
 
 type Shared = Arc<Mutex<Inner>>;
@@ -49,7 +74,10 @@ struct Status {
     blocked_sites: usize,
     blocked_apps: usize,
     hosts_error: Option<String>,
+    /// This process may edit the hosts file itself.
     elevated: bool,
+    /// The background service is running and enforcing.
+    service: bool,
     platform: &'static str,
     /// Browsers in which the extension is currently running.
     extension: Vec<bridge::BrowserSeen>,
@@ -58,6 +86,8 @@ struct Status {
     /// Number of allowed sites while an allowlist is active.
     allowlist_sites: Option<usize>,
     bridge_error: Option<String>,
+    /// Seconds used today per usage limit id.
+    usage_today: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -85,28 +115,52 @@ fn fmt_until(ts: i64) -> String {
         .unwrap_or_default()
 }
 
+fn load_sources(dir: &std::path::Path, state: &State) -> BTreeMap<String, Arc<BTreeSet<String>>> {
+    state
+        .categories
+        .iter()
+        .filter(|c| c.source.is_some())
+        .filter_map(|c| {
+            let text = std::fs::read_to_string(dir.join(format!("{}.txt", c.id))).ok()?;
+            Some((c.id.clone(), Arc::new(text.lines().map(str::to_string).collect())))
+        })
+        .collect()
+}
+
 impl Inner {
-    fn load(path: PathBuf, bridge: Arc<bridge::Bridge>) -> Self {
-        let state = std::fs::read_to_string(&path)
+    fn load(dir: PathBuf, bridge: Arc<bridge::Bridge>, svc_up: Arc<AtomicBool>) -> Self {
+        let path = dir.join("state.json");
+        let sources_dir = dir.join("sources");
+        let mut state = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str::<State>(&s).ok())
             .unwrap_or_default();
+        state.source_sites = load_sources(&sources_dir, &state);
         Self {
             state,
             path,
+            sources_dir,
             challenges: HashMap::new(),
-            applied_sites: None,
             hosts_error: None,
-            hosts_retry_at: 0,
             last_tick: now_ms(),
             focus_carry_ms: 0,
+            usage_carry_ms: 0,
             last_save: now_ms(),
+            dirty: false,
             bridge,
+            svc: None,
+            svc_up,
+            svc_gen: None,
+            publish_now: true,
+            last_publish: 0,
+            retry_hosts: false,
+            limit_warned: BTreeSet::new(),
         }
     }
 
     fn save(&mut self) {
         self.last_save = now_ms();
+        self.dirty = false;
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -122,55 +176,44 @@ impl Inner {
         engine::active_blocks(&self.state, now_ms(), &local_now())
     }
 
-    fn snapshot(&self) -> Snapshot {
-        let active = self.blocks();
-        let (sites, apps) = engine::enforced_targets(&self.state, &active);
-        let allowed = engine::allowed_sites(&self.state, &active);
-        let extension_required = self.extension_required(&active);
-        Snapshot {
-            state: self.state.clone(),
-            status: Status {
-                now: now_ms(),
-                active,
-                blocked_sites: sites.len(),
-                blocked_apps: apps.len(),
-                hosts_error: self.hosts_error.clone(),
-                elevated: platform::can_write_hosts(),
-                platform: std::env::consts::OS,
-                extension: self.bridge.connected(now_ms()),
-                extension_required,
-                allowlist_sites: allowed.map(|a| a.len()),
-                bridge_error: self.bridge.error.lock().unwrap().clone(),
-            },
+    fn browsers(&self, now: i64) -> Vec<bridge::BrowserSeen> {
+        match &self.svc {
+            Some(s) => s.browsers.clone(),
+            None => self.bridge.connected(now),
         }
     }
 
-    /// Allowlists can only be enforced by the extension, so browsers without
-    /// it are closed while one is active (or always, if the user opted in).
-    fn extension_required(&self, active: &[ActiveBlock]) -> bool {
-        engine::allowed_sites(&self.state, active).is_some()
-            || (self.state.settings.require_extension && !engine::enforced_targets(&self.state, active).0.is_empty())
-    }
-
-    fn extension_rules(&self) -> bridge::Rules {
+    fn snapshot(&self) -> Snapshot {
+        let now = now_ms();
         let active = self.blocks();
-        let (sites, _) = engine::enforced_targets(&self.state, &active);
+        let (sites, apps) = engine::enforced_targets(&self.state, &active);
         let allowed = engine::allowed_sites(&self.state, &active);
-        let (paths, domains): (Vec<String>, Vec<String>) = sites.into_iter().partition(|s| hosts::is_path_site(s));
-        // A path on a domain that is blocked anyway adds nothing.
-        let paths = paths.into_iter().filter(|p| !domains.iter().any(|d| d == hosts::site_domain(p))).collect();
-        let mut lists: Vec<String> = active
-            .iter()
-            .filter_map(|b| self.state.list(&b.list_id).map(|l| l.name.clone()))
-            .collect();
-        lists.sort();
-        lists.dedup();
-        bridge::Rules {
-            blocked: domains,
-            blocked_paths: paths,
-            allow_only: allowed.map(|a| a.into_iter().collect()),
-            until: active.iter().map(|b| b.ends_at).max(),
-            lists,
+        let mut state = self.state.clone();
+        // Usage history and huge community lists stay out of the UI payload.
+        state.usage.clear();
+        Snapshot {
+            state,
+            status: Status {
+                now,
+                blocked_sites: sites.len(),
+                blocked_apps: apps.len(),
+                hosts_error: match &self.svc {
+                    Some(s) => s.hosts_error.clone(),
+                    None => self.hosts_error.clone(),
+                },
+                elevated: platform::can_write_hosts(),
+                service: self.svc.is_some(),
+                platform: std::env::consts::OS,
+                extension: self.browsers(now),
+                extension_required: enforce::extension_required(&self.state, &active),
+                allowlist_sites: allowed.map(|a| a.len()),
+                bridge_error: match &self.svc {
+                    Some(s) => s.bridge_error.clone(),
+                    None => self.bridge.error.lock().unwrap().clone(),
+                },
+                usage_today: self.state.usage.get(&today_key()).cloned().unwrap_or_default(),
+                active,
+            },
         }
     }
 
@@ -187,23 +230,58 @@ impl Inner {
         self.state.stats.entry(today_key()).or_default()
     }
 
-    /// Commit a change from a command and return the fresh snapshot.
+    /// Mark a command's change for saving/publishing and return the fresh snapshot.
     fn commit(&mut self) -> Snapshot {
-        self.applied_sites = None; // force re-evaluation on next tick
-        self.hosts_retry_at = 0;
-        self.save();
+        self.dirty = true;
+        self.publish_now = true;
+        self.retry_hosts = true;
         self.snapshot()
+    }
+
+    /// Takes over the service's state (it refused ours, so it knows better),
+    /// keeping what only this app tracks.
+    fn adopt(&mut self, mut theirs: State) {
+        theirs.source_sites = load_sources(&self.sources_dir, &theirs);
+        for (day, mine) in &self.state.stats {
+            let t = theirs.stats.entry(day.clone()).or_default();
+            t.focus_seconds = t.focus_seconds.max(mine.focus_seconds);
+            t.blocked_launches = t.blocked_launches.max(mine.blocked_launches);
+            t.pomodoros = t.pomodoros.max(mine.pomodoros);
+        }
+        self.state = theirs;
+        self.save();
     }
 }
 
 type Res<T> = Result<T, String>;
 
+/// Runs a command. Every change is checked against the lock rules the
+/// background service also enforces, so nothing can weaken a running lock.
 fn with<T>(shared: &tauri::State<'_, Shared>, f: impl FnOnce(&mut Inner) -> Res<T>) -> Res<T> {
     let mut inner = shared.lock().map_err(|_| "internal lock poisoned".to_string())?;
-    f(&mut inner)
+    let before = inner.state.clone();
+    let out = f(&mut inner)?;
+    if let Some(why) = engine::lock_violation(&before, &inner.state, now_ms(), &local_now()) {
+        inner.state = before;
+        inner.dirty = false;
+        return Err(why);
+    }
+    if inner.dirty {
+        inner.save();
+    }
+    Ok(out)
 }
 
-// ───────────────────────────── commands ─────────────────────────────
+/// For the few commands that may legitimately end a lock (the typed unlock
+/// text, the emergency reset). They check the challenge themselves.
+fn with_unguarded<T>(shared: &tauri::State<'_, Shared>, f: impl FnOnce(&mut Inner) -> Res<T>) -> Res<T> {
+    let mut inner = shared.lock().map_err(|_| "internal lock poisoned".to_string())?;
+    let out = f(&mut inner)?;
+    if inner.dirty {
+        inner.save();
+    }
+    Ok(out)
+}
 
 #[tauri::command]
 fn get_snapshot(shared: tauri::State<'_, Shared>) -> Res<Snapshot> {
@@ -291,6 +369,8 @@ fn save_category(shared: tauri::State<'_, Shared>, mut category: Category) -> Re
                     ));
                 }
             }
+            // The community list is managed by its own commands.
+            category.source = old.source.clone();
             if let Some(slot) = i.state.categories.iter_mut().find(|c| c.id == old.id) {
                 *slot = category;
             }
@@ -298,6 +378,7 @@ fn save_category(shared: tauri::State<'_, Shared>, mut category: Category) -> Re
             if category.id.is_empty() {
                 category.id = uuid::Uuid::new_v4().to_string();
             }
+            category.source = None;
             i.state.categories.push(category);
         }
         Ok(i.commit())
@@ -414,6 +495,9 @@ fn random_text(len: usize) -> String {
 #[tauri::command]
 fn unlock_challenge(shared: tauri::State<'_, Shared>, id: String) -> Res<String> {
     with(&shared, |i| {
+        if i.svc.is_some() {
+            return service::client::challenge(&id);
+        }
         let len = i.state.settings.unlock_text_length.clamp(10, 1000) as usize;
         Ok(i.challenges.entry(id).or_insert_with(|| random_text(len)).clone())
     })
@@ -421,10 +505,12 @@ fn unlock_challenge(shared: tauri::State<'_, Shared>, id: String) -> Res<String>
 
 #[tauri::command]
 fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<String>) -> Res<Snapshot> {
-    with(&shared, |i| {
+    with_unguarded(&shared, |i| {
         let s = i.state.sessions.iter().find(|s| s.id == id).ok_or("Session not found.")?;
         match s.lock {
             LockMode::Timer => return Err(format!("Locked until {}. Stay strong 💪", fmt_until(s.ends_at))),
+            // The service checks the text and ends the block on its side too.
+            LockMode::Text if i.svc.is_some() => i.svc_gen = Some(service::client::unlock(&id, answer)?),
             LockMode::Text => {
                 let expected = i.challenges.get(&id).ok_or("Request the unlock text first.")?;
                 if answer.as_deref() != Some(expected.as_str()) {
@@ -550,6 +636,15 @@ fn import_settings(shared: tauri::State<'_, Shared>, path: String) -> Res<Snapsh
     with(&shared, |i| {
         let before = serde_json::to_string_pretty(&i.state).ok();
         engine::restore(&mut i.state, backup, now_ms(), &local_now())?;
+        // Community lists live in their own files: keep the ones we have,
+        // the others have to be downloaded again.
+        i.state.source_sites = load_sources(&i.sources_dir, &i.state);
+        let loaded: BTreeSet<String> = i.state.source_sites.keys().cloned().collect();
+        for c in &mut i.state.categories {
+            if !loaded.contains(&c.id) {
+                c.source = None;
+            }
+        }
         if let Some(json) = before {
             let _ = std::fs::write(i.path.with_file_name("state.before-import.json"), json);
         }
@@ -565,6 +660,9 @@ fn reset_challenge(shared: tauri::State<'_, Shared>) -> Res<Option<String>> {
         if !i.any_lock() {
             return Ok(None);
         }
+        if i.svc.is_some() {
+            return service::client::challenge(RESET_CHALLENGE).map(Some);
+        }
         // Deliberately much longer than a normal unlock: this ends *every* lock.
         let len = (i.state.settings.unlock_text_length as usize * 3).clamp(300, 1000);
         Ok(Some(i.challenges.entry(RESET_CHALLENGE.into()).or_insert_with(|| random_text(len)).clone()))
@@ -576,8 +674,11 @@ fn reset_challenge(shared: tauri::State<'_, Shared>) -> Res<Option<String>> {
 /// schedule). The previous state is kept next to the data file.
 #[tauri::command]
 fn factory_reset(shared: tauri::State<'_, Shared>, answer: Option<String>) -> Res<Snapshot> {
-    with(&shared, |i| {
-        if i.any_lock() {
+    with_unguarded(&shared, |i| {
+        if i.svc.is_some() {
+            // The service decides whether the text was needed and correct.
+            i.svc_gen = Some(service::client::unlock(RESET_CHALLENGE, answer)?);
+        } else if i.any_lock() {
             let expected = i.challenges.get(RESET_CHALLENGE).ok_or("Request the reset text first.")?;
             if answer.as_deref() != Some(expected.as_str()) {
                 return Err("The text doesn't match.".into());
@@ -588,6 +689,101 @@ fn factory_reset(shared: tauri::State<'_, Shared>, answer: Option<String>) -> Re
         }
         i.state = engine::factory_reset(&i.state);
         i.challenges.clear();
+        let _ = std::fs::remove_dir_all(&i.sources_dir);
+        Ok(i.commit())
+    })
+}
+
+#[tauri::command]
+fn save_limit(shared: tauri::State<'_, Shared>, mut limit: UsageLimit) -> Res<Snapshot> {
+    with(&shared, |i| {
+        let list = i.state.list(&limit.list_id).ok_or("Pick a block list for this limit.")?;
+        if list.mode == ListMode::Allow {
+            return Err("Limits only work with lists that block things, not allowlists.".into());
+        }
+        if limit.minutes == 0 || limit.minutes > 24 * 60 {
+            return Err("Choose between 1 minute and 24 hours.".into());
+        }
+        limit.days.retain(|d| *d < 7);
+        limit.days.sort();
+        limit.days.dedup();
+        if limit.days.is_empty() {
+            return Err("Pick at least one day.".into());
+        }
+        if limit.id.is_empty() {
+            limit.id = uuid::Uuid::new_v4().to_string();
+        }
+        match i.state.limits.iter_mut().find(|l| l.id == limit.id) {
+            Some(l) => *l = limit,
+            None => i.state.limits.push(limit),
+        }
+        Ok(i.commit())
+    })
+}
+
+#[tauri::command]
+fn delete_limit(shared: tauri::State<'_, Shared>, id: String) -> Res<Snapshot> {
+    with(&shared, |i| {
+        i.state.limits.retain(|l| l.id != id);
+        Ok(i.commit())
+    })
+}
+
+/// Stores a downloaded community list for a category. The UI downloads it
+/// (the list sites allow that) and passes the raw text.
+#[tauri::command]
+fn set_category_source(shared: tauri::State<'_, Shared>, id: String, url: String, name: String, text: String) -> Res<Snapshot> {
+    with(&shared, |i| {
+        if i.state.category(&id).is_none() {
+            return Err("Category not found.".into());
+        }
+        let mut domains = hosts::parse_domain_list(&text);
+        if domains.is_empty() {
+            return Err("No websites found in that list.".into());
+        }
+        if domains.len() > MAX_SOURCE_DOMAINS {
+            return Err(format!(
+                "That list has {} websites; OpenBlocker supports up to {MAX_SOURCE_DOMAINS} per list (bigger ones slow down every browser lookup).",
+                domains.len()
+            ));
+        }
+        // While a lock uses the category, its list can only grow.
+        if engine::category_locked_until(&i.state, &id, now_ms(), &local_now()).is_some() {
+            if let Some(old) = i.state.source_sites.get(&id) {
+                domains.extend(old.iter().cloned());
+            }
+        }
+        let _ = std::fs::create_dir_all(&i.sources_dir);
+        let body = domains.iter().map(String::as_str).collect::<Vec<_>>().join("\n");
+        std::fs::write(i.sources_dir.join(format!("{id}.txt")), body).map_err(|e| format!("Couldn't save the list: {e}"))?;
+        if i.svc.is_some() {
+            service::client::upload_source(&id, &domains)?;
+        }
+        let count = domains.len();
+        i.state.source_sites.insert(id.clone(), Arc::new(domains));
+        if let Some(c) = i.state.categories.iter_mut().find(|c| c.id == id) {
+            c.source = Some(CategorySource {
+                url,
+                name,
+                updated_at: now_ms(),
+                count,
+            });
+        }
+        Ok(i.commit())
+    })
+}
+
+#[tauri::command]
+fn remove_category_source(shared: tauri::State<'_, Shared>, id: String) -> Res<Snapshot> {
+    with(&shared, |i| {
+        i.state.source_sites.remove(&id);
+        if let Some(c) = i.state.categories.iter_mut().find(|c| c.id == id) {
+            c.source = None;
+        }
+        // While a lock uses the category this change is refused, so the file stays.
+        if engine::category_locked_until(&i.state, &id, now_ms(), &local_now()).is_none() {
+            let _ = std::fs::remove_file(i.sources_dir.join(format!("{id}.txt")));
+        }
         Ok(i.commit())
     })
 }
@@ -630,7 +826,10 @@ async fn get_autostart() -> bool {
 }
 
 #[tauri::command]
-async fn set_autostart(enabled: bool) -> Res<bool> {
+async fn set_autostart(shared: tauri::State<'_, Shared>, enabled: bool) -> Res<bool> {
+    if !enabled && shared.lock().map_err(|e| e.to_string())?.any_lock() {
+        return Err("Autostart can't be turned off while a locked block is running.".into());
+    }
     tauri::async_runtime::spawn_blocking(move || platform::set_autostart(enabled).map(|_| platform::autostart_enabled()))
         .await
         .map_err(|e| e.to_string())?
@@ -745,18 +944,37 @@ fn sync_freeze_windows(app: &AppHandle, frozen: bool) {
     });
 }
 
+/// What the user is doing right now, for usage limits (None when idle).
+fn current_activity(browsers: &[bridge::BrowserSeen], now: i64) -> engine::Activity {
+    if platform::idle_ms() > IDLE_MS {
+        return engine::Activity::default();
+    }
+    let exe = platform::foreground_exe();
+    let url = exe
+        .as_deref()
+        .filter(|e| bridge::browser_name(e).is_some())
+        .and_then(|e| bridge::active_url(browsers, e, now));
+    engine::Activity { exe, url }
+}
+
 fn engine_loop(app: AppHandle, shared: Shared) {
-    let mut killer = platform::ProcessKiller::new();
+    let mut enforcer = enforce::Enforcer::new();
     let mut last_browser_note = 0i64;
+    let mut kill_seq: Option<u64> = None;
     loop {
-        let (apps, snapshot, notes, settings, flush, frozen, require_ext, bridge) = {
+        let now = now_ms();
+        let local = local_now();
+        let browsers = shared.lock().unwrap().browsers(now);
+        let activity = current_activity(&browsers, now);
+
+        // 1. Advance timers, stats and usage.
+        let (mut notes, settings, publish, local_state) = {
             let mut i = shared.lock().unwrap();
-            let now = now_ms();
             let elapsed = (now - i.last_tick).clamp(0, 5000);
             i.last_tick = now;
 
             let events = engine::tick(&mut i.state, now);
-            let mut dirty = !events.is_empty();
+            let mut dirty = !events.is_empty() || i.dirty;
             for e in &events {
                 if *e == Event::PomodoroFocusCompleted {
                     i.day().pomodoros += 1;
@@ -765,11 +983,11 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             if !events.is_empty() {
                 let live: BTreeSet<String> = i.state.sessions.iter().map(|s| s.id.clone()).collect();
                 i.challenges.retain(|id, _| live.contains(id));
+                i.publish_now = true;
             }
-            let notes: Vec<_> = events.iter().filter_map(|e| describe(e, &i.state)).collect();
+            let mut notes: Vec<_> = events.iter().filter_map(|e| describe(e, &i.state)).collect();
 
-            let blocks = i.blocks();
-            if !blocks.is_empty() || i.state.freeze.is_some() {
+            if !i.blocks().is_empty() || i.state.freeze.is_some() {
                 i.focus_carry_ms += elapsed;
                 let secs = i.focus_carry_ms / 1000;
                 if secs > 0 {
@@ -778,63 +996,115 @@ fn engine_loop(app: AppHandle, shared: Shared) {
                 }
             }
 
-            let (sites, mut apps) = engine::enforced_targets(&i.state, &blocks);
-            let frozen = i.state.freeze.is_some();
-            if frozen && i.state.settings.freeze_blocks_task_manager {
-                apps.insert("taskmgr.exe".into());
+            i.usage_carry_ms += elapsed;
+            let secs = (i.usage_carry_ms / 1000) as u64;
+            i.usage_carry_ms %= 1000;
+            for id in engine::add_usage(&mut i.state, &local, secs, &activity) {
+                if let Some(name) = i.state.limits.iter().find(|l| l.id == id).and_then(|l| i.state.list(&l.list_id)).map(|l| l.name.clone()) {
+                    notes.push(("Daily limit reached ⏳".into(), format!("“{name}” is blocked until midnight.")));
+                }
+                i.publish_now = true;
+                dirty = true;
             }
-            let mut flush = false;
-            if i.applied_sites.as_ref() != Some(&sites) && now >= i.hosts_retry_at {
-                match platform::apply_hosts(&sites, i.state.settings.block_subdomains) {
-                    Ok(changed) => {
-                        flush = changed && i.state.settings.flush_dns;
-                        i.applied_sites = Some(sites);
-                        i.hosts_error = None;
-                    }
-                    Err(e) => {
-                        i.hosts_error = Some(e);
-                        i.hosts_retry_at = now + 15_000;
+            let day = today_key();
+            for l in i.state.limits.clone() {
+                let used = engine::limit_used(&i.state, &l.id, &local);
+                let allowed = l.minutes as u64 * 60;
+                let key = format!("{day}/{}", l.id);
+                if engine::limit_applies(&l, &local) && allowed > 600 && used + 300 >= allowed && used < allowed && i.limit_warned.insert(key) {
+                    if let Some(list) = i.state.list(&l.list_id) {
+                        notes.push(("5 minutes left ⏳".into(), format!("Your daily time for “{}” is almost up.", list.name)));
                     }
                 }
             }
+
             if now - i.last_save > 60_000 {
                 dirty = true;
             }
             if dirty {
                 i.save();
             }
-            let require_ext = i.extension_required(&blocks);
-            (apps, i.snapshot(), notes, i.state.settings.clone(), flush, frozen, require_ext, i.bridge.clone())
+            let publish = (i.svc.is_some() && (i.publish_now || now - i.last_publish > PUBLISH_EVERY_MS)).then(|| {
+                i.publish_now = false;
+                i.last_publish = now;
+                (serde_json::to_string(&i.state).unwrap_or_default(), i.svc_gen)
+            });
+            let local_state = i.svc.is_none().then(|| {
+                if std::mem::take(&mut i.retry_hosts) {
+                    enforcer.invalidate();
+                }
+                i.state.clone()
+            });
+            (notes, i.state.settings.clone(), publish, local_state)
         };
 
-        if flush {
-            platform::flush_dns();
+        // 2. The service enforces; keep it up to date.
+        if let Some((json, generation)) = publish {
+            match service::client::publish(&json, generation) {
+                Ok(service::Publish::Accepted(g)) => {
+                    let mut i = shared.lock().unwrap();
+                    i.svc_gen = Some(i.svc_gen.unwrap_or(0).max(g));
+                }
+                Ok(service::Publish::Rejected(_why, theirs, g)) => {
+                    let mut i = shared.lock().unwrap();
+                    i.adopt(*theirs);
+                    i.svc_gen = Some(g);
+                }
+                Err(_) => shared.lock().unwrap().publish_now = true,
+            }
+        }
+        let mut killed = vec![];
+        let mut closed = vec![];
+        match service::client::status(kill_seq.unwrap_or(u64::MAX)) {
+            Ok(status) => {
+                if kill_seq.is_some() {
+                    killed = status.killed.clone();
+                }
+                kill_seq = Some(status.seq);
+                let mut i = shared.lock().unwrap();
+                if i.svc.is_none() {
+                    // Just (re)connected: send our state right away.
+                    i.publish_now = true;
+                }
+                i.svc = Some(status);
+                i.svc_up.store(true, Ordering::Relaxed);
+            }
+            Err(_) => {
+                let mut i = shared.lock().unwrap();
+                if i.svc.take().is_some() {
+                    enforcer.invalidate();
+                }
+                i.svc_gen = None;
+                i.svc_up.store(false, Ordering::Relaxed);
+                kill_seq = None;
+            }
+        }
+
+        // 3. No service: enforce here (needs administrator rights for websites).
+        if let Some(state) = local_state {
+            let bridge = shared.lock().unwrap().bridge.clone();
+            let out = enforcer.run(&state, &bridge, now, &local);
+            shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
+            killed = out.killed;
+            closed = out.closed_browsers;
+        }
+
+        if !killed.is_empty() {
+            shared.lock().unwrap().day().blocked_launches += killed.len() as u32;
+            let _ = app.emit("app-blocked", &killed);
+            notes.push(("Blocked 🚫".into(), format!("{} was closed.", killed.join(", "))));
+        }
+        if !closed.is_empty() && now - last_browser_note > 60_000 {
+            last_browser_note = now;
+            notes.push(("Browser closed 🧩".into(), format!("{} doesn't have the OpenBlocker extension running.", closed.join(", "))));
         }
         for (title, body) in notes {
             notify(&app, settings.notifications, &title, &body);
         }
-        let killed = killer.enforce(&apps);
-        if !killed.is_empty() {
-            {
-                let mut i = shared.lock().unwrap();
-                i.day().blocked_launches += killed.len() as u32;
-            }
-            let _ = app.emit("app-blocked", &killed);
-            notify(&app, settings.notifications, "Blocked 🚫", &format!("{} was closed.", killed.join(", ")));
-        }
-        if require_ext {
-            let now = now_ms();
-            let closed = killer.close_unprotected_browsers(|exe| bridge.is_connected(exe, now));
-            if !closed.is_empty() && now - last_browser_note > 60_000 {
-                last_browser_note = now;
-                notify(
-                    &app,
-                    settings.notifications,
-                    "Browser closed 🧩",
-                    &format!("{} doesn't have the OpenBlocker extension running.", closed.join(", ")),
-                );
-            }
-        }
+        let (snapshot, frozen) = {
+            let i = shared.lock().unwrap();
+            (i.snapshot(), i.state.freeze.is_some())
+        };
         sync_freeze_windows(&app, frozen);
         let _ = app.emit("snapshot", &snapshot);
         std::thread::sleep(TICK);
@@ -859,8 +1129,11 @@ fn try_quit(app: &AppHandle) {
         show_main(app);
         return;
     }
-    // Leave the system clean: remove our hosts entries.
-    let _ = platform::apply_hosts(&BTreeSet::new(), false);
+    // Leave the system clean: remove our hosts entries (unless the service
+    // owns them; it keeps enforcing schedules while the app is closed).
+    if i.svc.is_none() {
+        let _ = platform::apply_hosts(&BTreeSet::new(), false, |_| true);
+    }
     i.save();
     drop(i);
     app.exit(0);
@@ -875,14 +1148,13 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let bridge = Arc::new(bridge::Bridge::default());
-            let shared: Shared = Arc::new(Mutex::new(Inner::load(dir.join("state.json"), bridge.clone())));
+            // Ask the service first, so the app doesn't grab the bridge port
+            // for a moment when the service owns it.
+            let svc_up = Arc::new(AtomicBool::new(service::client::status(u64::MAX).is_ok()));
+            let shared: Shared = Arc::new(Mutex::new(Inner::load(dir, bridge.clone(), svc_up.clone())));
             app.manage(shared.clone());
-            {
-                let shared = shared.clone();
-                std::thread::spawn(move || {
-                    bridge::serve(bridge, move || shared.lock().unwrap().extension_rules());
-                });
-            }
+            // The app serves the extension only while the service doesn't.
+            std::thread::spawn(move || bridge::run(bridge, move || !svc_up.load(Ordering::Relaxed)));
 
             let open = MenuItem::with_id(app, "open", "Open OpenBlocker", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -909,7 +1181,7 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Started from the logon task: stay in the tray.
+            // Started at logon or by the service: stay in the tray.
             if !std::env::args().any(|a| a == "--minimized") {
                 show_main(app.handle());
             }
@@ -962,6 +1234,10 @@ pub fn run() {
             import_settings,
             reset_challenge,
             factory_reset,
+            save_limit,
+            delete_limit,
+            set_category_source,
+            remove_category_source,
             installed_apps,
             app_icon,
             get_autostart,

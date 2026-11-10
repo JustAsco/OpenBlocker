@@ -2,7 +2,8 @@
 //! mirrored in `src/lib/types.ts` on the frontend.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// A program that should be closed while a block is active.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +65,22 @@ pub struct Category {
     pub sites: Vec<String>,
     #[serde(default)]
     pub apps: Vec<AppEntry>,
+    /// A community domain list this category also includes. The (often very
+    /// many) domains are stored in a separate file, not in the state.
+    #[serde(default)]
+    pub source: Option<CategorySource>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategorySource {
+    pub url: String,
+    /// Display name, e.g. "StevenBlack · Adult".
+    pub name: String,
+    /// Unix ms of the last successful download.
+    pub updated_at: i64,
+    /// Number of domains in the downloaded list.
+    pub count: usize,
 }
 
 /// Built-in catalog shared with the frontend (`src/lib/catalog.ts` imports the same file).
@@ -108,6 +125,7 @@ pub fn default_categories() -> Vec<Category> {
                 .flat_map(|s| std::iter::once(s.domain).chain(s.related))
                 .collect(),
             apps: c.apps,
+            source: None,
         })
         .collect()
 }
@@ -142,6 +160,23 @@ pub enum LockMode {
     Text,
     /// Cannot be stopped until the timer runs out.
     Timer,
+}
+
+/// "At most N minutes per day": time spent on a list's websites and apps is
+/// counted, and once the limit is used up the list is blocked until midnight.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageLimit {
+    pub id: String,
+    pub list_id: String,
+    /// Allowed minutes per day.
+    pub minutes: u32,
+    /// Days the limit applies (0 = Monday … 6 = Sunday); other days are unlimited.
+    pub days: Vec<u8>,
+    /// Once used up, the block can't be stopped and the limit can't be raised
+    /// or removed until midnight.
+    #[serde(default)]
+    pub locked: bool,
 }
 
 /// A manually started, one-off block ("Block Instagram for 2 hours").
@@ -285,6 +320,13 @@ pub struct State {
     pub settings: Settings,
     /// Keyed by local date `YYYY-MM-DD`.
     pub stats: BTreeMap<String, DayStats>,
+    pub limits: Vec<UsageLimit>,
+    /// Seconds used per limit id, keyed by local date `YYYY-MM-DD`.
+    pub usage: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Domains of each category's community list (normalised), loaded from
+    /// their own files. Never serialised.
+    #[serde(skip)]
+    pub source_sites: BTreeMap<String, Arc<BTreeSet<String>>>,
 }
 
 impl Default for State {
@@ -330,6 +372,9 @@ impl Default for State {
             freeze: None,
             settings: Settings::default(),
             stats: BTreeMap::new(),
+            limits: vec![],
+            usage: BTreeMap::new(),
+            source_sites: BTreeMap::new(),
         }
     }
 }

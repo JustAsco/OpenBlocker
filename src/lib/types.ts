@@ -29,6 +29,25 @@ export interface Category {
   icon: string;
   sites: string[];
   apps: AppEntry[];
+  /** A community domain list included in this category (its domains live in a separate file). */
+  source?: CategorySource | null;
+}
+
+export interface CategorySource {
+  url: string;
+  name: string;
+  updatedAt: number;
+  count: number;
+}
+
+/** "At most N minutes per day" for a block list. */
+export interface UsageLimit {
+  id: string;
+  listId: string;
+  minutes: number;
+  /** 0 = Monday … 6 = Sunday */
+  days: number[];
+  locked: boolean;
 }
 
 export interface Schedule {
@@ -108,9 +127,10 @@ export interface State {
   freeze: Freeze | null;
   settings: Settings;
   stats: Record<string, DayStats>;
+  limits: UsageLimit[];
 }
 
-export type Source = "session" | "schedule" | "pomodoro";
+export type Source = "session" | "schedule" | "pomodoro" | "limit";
 
 export interface ActiveBlock {
   listId: string;
@@ -126,12 +146,17 @@ export interface Status {
   blockedSites: number;
   blockedApps: number;
   hostsError: string | null;
+  /** The app itself may edit the hosts file. */
   elevated: boolean;
+  /** The background service is running and enforcing. */
+  service: boolean;
   platform: string;
   extension: BrowserSeen[];
   extensionRequired: boolean;
   allowlistSites: number | null;
   bridgeError: string | null;
+  /** Seconds used today per usage limit id. */
+  usageToday: Record<string, number>;
 }
 
 export interface BrowserSeen {

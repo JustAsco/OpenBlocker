@@ -3,6 +3,7 @@
 // developed and previewed without the native backend.
 
 import type {
+  UsageLimit,
   BlockList,
   Category,
   InstalledApp,
@@ -110,6 +111,21 @@ export const api = {
     });
     return text === null ? null : call<Snapshot>("mock_import", { text });
   },
+  saveLimit: (limit: UsageLimit) => call<Snapshot>("save_limit", { limit }),
+  deleteLimit: (id: string) => call<Snapshot>("delete_limit", { id }),
+  /** Downloads a community list (the list hosts allow cross-origin requests) and stores it for a category. */
+  importCategorySource: async (id: string, url: string, name: string): Promise<Snapshot> => {
+    let text: string;
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      text = await res.text();
+    } catch (e) {
+      throw `Couldn't download the list (${e instanceof Error ? e.message : e}).`;
+    }
+    return call<Snapshot>("set_category_source", { id, url, name, text });
+  },
+  removeCategorySource: (id: string) => call<Snapshot>("remove_category_source", { id }),
   /** Text to type for an emergency reset; null when nothing is locked. */
   resetChallenge: () => call<string | null>("reset_challenge"),
   factoryReset: (answer?: string) => call<Snapshot>("factory_reset", { answer }),
