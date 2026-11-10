@@ -34,6 +34,20 @@ pub struct BlockList {
     /// Ids of [`Category`]s whose sites and apps are included in this list.
     #[serde(default)]
     pub categories: Vec<String>,
+    /// Block the listed sites, or (allowlist) allow *only* them in browsers.
+    #[serde(default)]
+    pub mode: ListMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ListMode {
+    /// The list's websites are blocked.
+    #[default]
+    Block,
+    /// Only the list's websites may be opened in browsers (needs the extension).
+    /// Apps in the list are still blocked.
+    Allow,
 }
 
 /// A reusable, editable group of sites and apps ("Social media", "Adult", …).
@@ -224,6 +238,9 @@ pub struct Settings {
     pub freeze_blocks_task_manager: bool,
     /// Characters required to unlock a text-locked block.
     pub unlock_text_length: u32,
+    /// While websites are blocked, close browsers in which the OpenBlocker
+    /// extension isn't running. (Always on while an allowlist is active.)
+    pub require_extension: bool,
 }
 
 impl Default for Settings {
@@ -235,6 +252,7 @@ impl Default for Settings {
             block_subdomains: true,
             freeze_blocks_task_manager: true,
             unlock_text_length: 120,
+            require_extension: false,
         }
     }
 }
@@ -279,6 +297,7 @@ impl Default for State {
                     sites: vec![],
                     apps: vec![],
                     categories: vec!["social".into()],
+                    mode: ListMode::Block,
                 },
                 BlockList {
                     id: "video".into(),
@@ -288,6 +307,7 @@ impl Default for State {
                     sites: vec![],
                     apps: vec![],
                     categories: vec!["video".into()],
+                    mode: ListMode::Block,
                 },
                 BlockList {
                     id: "games".into(),
@@ -297,6 +317,7 @@ impl Default for State {
                     sites: vec![],
                     apps: vec![],
                     categories: vec!["gaming".into()],
+                    mode: ListMode::Block,
                 },
             ],
             schedules: vec![],

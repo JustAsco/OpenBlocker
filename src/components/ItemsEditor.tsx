@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { AppWindow, Globe, Lock, Package, RotateCcw, Save, Trash2, Undo2, X } from "lucide-react";
+import { AppWindow, ChevronDown, Globe, Lock, Package, RotateCcw, Save, Trash2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { APPS, SITES, expandSite, score, siteName } from "../lib/catalog";
@@ -87,6 +87,14 @@ export function EditorShell({
   banner?: ReactNode;
   children: ReactNode;
 }) {
+  const [picker, setPicker] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!picker) return;
+    const h = (e: MouseEvent) => !pickerRef.current?.contains(e.target as Node) && setPicker(false);
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [picker]);
   const save = useRef(onSave);
   save.current = onSave;
   useEffect(() => {
@@ -103,9 +111,21 @@ export function EditorShell({
   return (
     <div className="card">
       <div className="sticky top-0 z-40 flex items-center gap-4 rounded-t-2xl border-b border-line bg-card/95 p-5 backdrop-blur">
-        <span className="grid size-12 shrink-0 place-items-center rounded-2xl text-2xl" style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}>
-          {icon}
-        </span>
+        <div ref={pickerRef} className="relative">
+          <button
+            className="grid size-12 shrink-0 place-items-center rounded-2xl text-2xl ring-line-strong transition hover:ring-2"
+            style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}
+            onClick={() => setPicker(!picker)}
+            title="Change icon & color"
+          >
+            {icon}
+          </button>
+          {picker && (
+            <div className="animate-fade-up absolute top-14 left-0 z-50 w-[420px] rounded-2xl border border-line-strong bg-panel p-4 shadow-2xl">
+              <IconColorPicker icon={icon} color={color} onIcon={onIcon} onColor={onColor} />
+            </div>
+          )}
+        </div>
         <div className="min-w-0 flex-1">
           <input
             className="font-display w-full rounded-lg bg-transparent px-1 py-0.5 text-xl font-semibold outline-none hover:bg-elevated/60 focus:bg-elevated"
@@ -139,12 +159,6 @@ export function EditorShell({
       </div>
       <div className="p-6">
         {banner}
-        <details className="mb-6 rounded-xl border border-line bg-panel/50 p-4">
-          <summary className="cursor-pointer text-sm text-muted select-none">Icon &amp; color</summary>
-          <div className="mt-4">
-            <IconColorPicker icon={icon} color={color} onIcon={onIcon} onColor={onColor} />
-          </div>
-        </details>
         {children}
       </div>
     </div>
@@ -165,6 +179,7 @@ export function ItemsEditor({
   extraSiteGroups,
   siteTitle = "Websites",
   appTitle = "Apps",
+  siteHint,
 }: {
   sites: string[];
   apps: AppEntry[];
@@ -177,9 +192,13 @@ export function ItemsEditor({
   extraSiteGroups?: (q: string) => SuggestionGroup[];
   siteTitle?: string;
   appTitle?: string;
+  siteHint?: ReactNode;
 }) {
   const { toast } = useStore();
   const [installed, setInstalled] = useState<InstalledApp[]>([]);
+  const [showAll, setShowAll] = useState(false);
+  const COLLAPSED = 14;
+  const visibleSites = showAll ? sites : sites.slice(0, COLLAPSED);
   useEffect(() => {
     installedCache ??= api.installedApps().catch(() => []);
     installedCache.then(setInstalled);
@@ -302,9 +321,10 @@ export function ItemsEditor({
           <Globe size={16} className="text-accent-2" /> {siteTitle}
           <span className="font-normal text-faint">{sites.length}</span>
         </h3>
+        {siteHint}
         <Autocomplete placeholder="Search or paste a URL — e.g. “youtube”, “https://reddit.com/r/all”" getGroups={siteGroups} />
         <div className="mt-3 flex flex-wrap gap-2">
-          {sites.map((d) => (
+          {visibleSites.map((d) => (
             <span key={d} className="chip py-1.5 pr-1.5 pl-2 text-sm">
               <SiteIcon domain={d} size={16} />
               <span>{d}</span>
@@ -318,6 +338,12 @@ export function ItemsEditor({
               )}
             </span>
           ))}
+          {sites.length > COLLAPSED && (
+            <button className="chip py-1.5 text-sm text-muted hover:text-fg" onClick={() => setShowAll(!showAll)}>
+              <ChevronDown size={14} className={clsx("transition", showAll && "rotate-180")} />
+              {showAll ? "Show less" : `Show all ${sites.length}`}
+            </button>
+          )}
           {!sites.length && <p className="text-sm text-faint">None yet — start typing above.</p>}
         </div>
       </section>

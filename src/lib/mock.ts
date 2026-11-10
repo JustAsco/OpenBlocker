@@ -24,9 +24,9 @@ function defaultState(): State {
     version: 1,
     categories: defaultCategories(),
     lists: [
-      { id: "social", name: "Social Media", color: "#8b5cf6", icon: "💬", sites: [], apps: [], categories: ["social"] },
-      { id: "video", name: "Video & Streaming", color: "#ef4444", icon: "📺", sites: [], apps: [], categories: ["video"] },
-      { id: "games", name: "Games", color: "#10b981", icon: "🎮", sites: [], apps: [], categories: ["gaming"] },
+      { id: "social", name: "Social Media", color: "#8b5cf6", icon: "💬", sites: [], apps: [], categories: ["social"], mode: "block" },
+      { id: "video", name: "Video & Streaming", color: "#ef4444", icon: "📺", sites: [], apps: [], categories: ["video"], mode: "block" },
+      { id: "games", name: "Games", color: "#10b981", icon: "🎮", sites: [], apps: [], categories: ["gaming"], mode: "block" },
     ],
     schedules: [
       { id: "s1", listId: "social", days: [0, 1, 2, 3, 4], start: 9 * 60, end: 17 * 60, locked: false, label: "Work hours" },
@@ -43,6 +43,7 @@ function defaultState(): State {
       blockSubdomains: true,
       freezeBlocksTaskManager: true,
       unlockTextLength: 120,
+      requireExtension: false,
     },
     stats,
   };
@@ -75,9 +76,13 @@ function snapshot(): Snapshot {
   const ids = new Set(active.map((a) => a.listId));
   const sites = new Set<string>();
   const apps = new Set<string>();
+  let allowed: Set<string> | null = null;
   for (const l of state.lists.filter((l) => ids.has(l.id))) {
     const t = listTargets(state, l);
-    t.sites.forEach((x) => sites.add(x));
+    if (l.mode === "allow") {
+      allowed ??= new Set();
+      t.sites.forEach((x) => allowed!.add(x));
+    } else t.sites.forEach((x) => sites.add(x));
     t.apps.forEach((_, k) => apps.add(k));
   }
   return {
@@ -90,6 +95,10 @@ function snapshot(): Snapshot {
       hostsError: null,
       elevated: true,
       platform: "browser-preview",
+      extension: [{ exe: "chrome.exe", name: "Google Chrome", lastSeen: Date.now(), extensionVersion: "0.1.0" }],
+      extensionRequired: allowed !== null || (state.settings.requireExtension && sites.size > 0),
+      allowlistSites: allowed ? (allowed as Set<string>).size : null,
+      bridgeError: null,
     },
   };
 }
@@ -214,9 +223,16 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       if (activeBlocks(state).find((b) => b.refId === a.id && b.locked)) fail("This schedule is locked and running.");
       state.schedules = state.schedules.filter((s) => s.id !== a.id);
       return commit();
-    case "start_session":
-      state.sessions.push({ id: uid(), listId: a.listId, startedAt: now, endsAt: now + a.minutes * MINUTE, lock: a.lock });
+    case "start_session": {
+      const ends = now + a.minutes * MINUTE;
+      const existing = state.sessions.find((s) => s.listId === a.listId && s.endsAt > now);
+      const rank = { none: 0, text: 1, timer: 2 } as const;
+      if (existing) {
+        existing.endsAt = Math.max(existing.endsAt, ends);
+        if (rank[a.lock as keyof typeof rank] > rank[existing.lock]) existing.lock = a.lock;
+      } else state.sessions.push({ id: uid(), listId: a.listId, startedAt: now, endsAt: ends, lock: a.lock });
       return commit();
+    }
     case "extend_session":
       state.sessions = state.sessions.map((s) => (s.id === a.id ? { ...s, endsAt: s.endsAt + a.minutes * MINUTE } : s));
       return commit();
@@ -270,6 +286,10 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     case "set_autostart":
       localStorage.setItem("mock-autostart", a.enabled ? "1" : "0");
       return a.enabled;
+    case "extension_path":
+      return "C:\\Program Files\\OpenBlocker\\extension";
+    case "open_extension_folder":
+      return;
     case "relaunch_as_admin":
       return;
   }

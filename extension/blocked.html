@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blocked · OpenBlocker</title>
+    <link rel="icon" href="icons/32.png" />
+    <link rel="stylesheet" href="page.css" />
+  </head>
+  <body>
+    <main>
+      <img src="icons/128.png" alt="" class="logo" />
+      <p class="eyebrow" id="eyebrow">Blocked by OpenBlocker</p>
+      <h1 id="host">This site</h1>
+      <p class="lead" id="why">is blocked right now.</p>
+      <div class="meta" id="meta"></div>
+      <div id="allowed" class="allowed" hidden>
+        <p>Allowed right now:</p>
+        <ul id="allowed-list"></ul>
+      </div>
+      <p class="quote" id="quote"></p>
+      <div class="actions">
+        <button id="back">Go back</button>
+        <button id="close" class="ghost">Close tab</button>
+      </div>
+    </main>
+    <script src="common.js"></script>
+    <script src="blocked.js"></script>
+  </body>
+</html>

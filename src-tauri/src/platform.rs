@@ -140,6 +140,27 @@ impl ProcessKiller {
         killed
     }
 
+    /// Closes browsers in which the extension isn't running. Browsers get a
+    /// 30 s grace period after starting so the extension can check in.
+    /// Returns friendly names of the browsers that were closed.
+    pub fn close_unprotected_browsers(&mut self, has_extension: impl Fn(&str) -> bool) -> Vec<String> {
+        let now_s = chrono::Utc::now().timestamp().max(0) as u64;
+        let own = std::process::id();
+        let Some(sys) = self.refresh() else { return vec![] };
+        let mut closed = BTreeSet::new();
+        for (pid, p) in sys.processes() {
+            let exe = p.name().to_string_lossy().to_lowercase();
+            let Some(name) = crate::bridge::browser_name(&exe) else { continue };
+            if pid.as_u32() == own || has_extension(&exe) || now_s.saturating_sub(p.start_time()) < 30 {
+                continue;
+            }
+            if p.kill() {
+                closed.insert(name.to_string());
+            }
+        }
+        closed.into_iter().collect()
+    }
+
     /// Running user programs, used for autosuggestions.
     pub fn running_apps(&mut self) -> Vec<InstalledApp> {
         let Some(sys) = self.refresh() else { return vec![] };

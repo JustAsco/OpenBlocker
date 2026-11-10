@@ -1,6 +1,7 @@
 //! OpenBlocker desktop app: wires the platform-independent core to Tauri,
 //! the OS (hosts file, processes) and the UI.
 
+mod bridge;
 mod platform;
 
 use chrono::{Local, NaiveDateTime};
@@ -32,6 +33,7 @@ struct Inner {
     last_tick: i64,
     focus_carry_ms: i64,
     last_save: i64,
+    bridge: Arc<bridge::Bridge>,
 }
 
 type Shared = Arc<Mutex<Inner>>;
@@ -46,6 +48,13 @@ struct Status {
     hosts_error: Option<String>,
     elevated: bool,
     platform: &'static str,
+    /// Browsers in which the extension is currently running.
+    extension: Vec<bridge::BrowserSeen>,
+    /// Browsers without the extension are being closed right now.
+    extension_required: bool,
+    /// Number of allowed sites while an allowlist is active.
+    allowlist_sites: Option<usize>,
+    bridge_error: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -74,7 +83,7 @@ fn fmt_until(ts: i64) -> String {
 }
 
 impl Inner {
-    fn load(path: PathBuf) -> Self {
+    fn load(path: PathBuf, bridge: Arc<bridge::Bridge>) -> Self {
         let state = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str::<State>(&s).ok())
@@ -89,6 +98,7 @@ impl Inner {
             last_tick: now_ms(),
             focus_carry_ms: 0,
             last_save: now_ms(),
+            bridge,
         }
     }
 
@@ -112,6 +122,8 @@ impl Inner {
     fn snapshot(&self) -> Snapshot {
         let active = self.blocks();
         let (sites, apps) = engine::enforced_targets(&self.state, &active);
+        let allowed = engine::allowed_sites(&self.state, &active);
+        let extension_required = self.extension_required(&active);
         Snapshot {
             state: self.state.clone(),
             status: Status {
@@ -122,7 +134,36 @@ impl Inner {
                 hosts_error: self.hosts_error.clone(),
                 elevated: platform::can_write_hosts(),
                 platform: std::env::consts::OS,
+                extension: self.bridge.connected(now_ms()),
+                extension_required,
+                allowlist_sites: allowed.map(|a| a.len()),
+                bridge_error: self.bridge.error.lock().unwrap().clone(),
             },
+        }
+    }
+
+    /// Allowlists can only be enforced by the extension, so browsers without
+    /// it are closed while one is active (or always, if the user opted in).
+    fn extension_required(&self, active: &[ActiveBlock]) -> bool {
+        engine::allowed_sites(&self.state, active).is_some()
+            || (self.state.settings.require_extension && !engine::enforced_targets(&self.state, active).0.is_empty())
+    }
+
+    fn extension_rules(&self) -> bridge::Rules {
+        let active = self.blocks();
+        let (sites, _) = engine::enforced_targets(&self.state, &active);
+        let allowed = engine::allowed_sites(&self.state, &active);
+        let mut lists: Vec<String> = active
+            .iter()
+            .filter_map(|b| self.state.list(&b.list_id).map(|l| l.name.clone()))
+            .collect();
+        lists.sort();
+        lists.dedup();
+        bridge::Rules {
+            blocked: sites.into_iter().collect(),
+            allow_only: allowed.map(|a| a.into_iter().collect()),
+            until: active.iter().map(|b| b.ends_at).max(),
+            lists,
         }
     }
 
@@ -327,13 +368,15 @@ fn start_session(shared: tauri::State<'_, Shared>, list_id: String, minutes: u32
             return Err("Choose between 1 minute and 30 days.".into());
         }
         let now = now_ms();
-        i.state.sessions.push(Session {
-            id: uuid::Uuid::new_v4().to_string(),
-            list_id,
-            started_at: now,
-            ends_at: now + minutes as i64 * engine::MINUTE_MS,
+        // Re-starting a list that is already running extends it instead of stacking.
+        engine::start_or_merge_session(
+            &mut i.state,
+            &list_id,
+            now,
+            now + minutes as i64 * engine::MINUTE_MS,
             lock,
-        });
+            uuid::Uuid::new_v4().to_string(),
+        );
         Ok(i.commit())
     })
 }
@@ -530,6 +573,35 @@ async fn set_autostart(enabled: bool) -> Res<bool> {
         .map_err(|e| e.to_string())?
 }
 
+fn extension_dir(app: &AppHandle) -> Option<PathBuf> {
+    let bundled = app.path().resource_dir().ok().map(|d| d.join("extension"));
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../extension");
+    [bundled, Some(dev)]
+        .into_iter()
+        .flatten()
+        .find(|p| p.join("manifest.json").exists())
+        .map(|p| p.canonicalize().unwrap_or(p))
+}
+
+#[tauri::command]
+fn extension_path(app: AppHandle) -> Option<String> {
+    // Strip the \\?\ prefix canonicalize adds on Windows; browsers don't accept it.
+    extension_dir(&app).map(|p| p.to_string_lossy().trim_start_matches(r"\\?\").to_string())
+}
+
+#[tauri::command]
+fn open_extension_folder(app: AppHandle) -> Res<()> {
+    let dir = extension_path(app).ok_or("Extension folder not found.")?;
+    #[cfg(windows)]
+    let cmd = "explorer";
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let cmd = "xdg-open";
+    std::process::Command::new(cmd).arg(dir).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn relaunch_as_admin(app: AppHandle) -> Res<()> {
     platform::relaunch_as_admin()?;
@@ -612,8 +684,9 @@ fn sync_freeze_windows(app: &AppHandle, frozen: bool) {
 
 fn engine_loop(app: AppHandle, shared: Shared) {
     let mut killer = platform::ProcessKiller::new();
+    let mut last_browser_note = 0i64;
     loop {
-        let (apps, snapshot, notes, settings, flush, frozen) = {
+        let (apps, snapshot, notes, settings, flush, frozen, require_ext, bridge) = {
             let mut i = shared.lock().unwrap();
             let now = now_ms();
             let elapsed = (now - i.last_tick).clamp(0, 5000);
@@ -667,7 +740,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             if dirty {
                 i.save();
             }
-            (apps, i.snapshot(), notes, i.state.settings.clone(), flush, frozen)
+            let require_ext = i.extension_required(&blocks);
+            (apps, i.snapshot(), notes, i.state.settings.clone(), flush, frozen, require_ext, i.bridge.clone())
         };
 
         if flush {
@@ -684,6 +758,19 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             }
             let _ = app.emit("app-blocked", &killed);
             notify(&app, settings.notifications, "Blocked 🚫", &format!("{} was closed.", killed.join(", ")));
+        }
+        if require_ext {
+            let now = now_ms();
+            let closed = killer.close_unprotected_browsers(|exe| bridge.is_connected(exe, now));
+            if !closed.is_empty() && now - last_browser_note > 60_000 {
+                last_browser_note = now;
+                notify(
+                    &app,
+                    settings.notifications,
+                    "Browser closed 🧩",
+                    &format!("{} doesn't have the OpenBlocker extension running.", closed.join(", ")),
+                );
+            }
         }
         sync_freeze_windows(&app, frozen);
         let _ = app.emit("snapshot", &snapshot);
@@ -723,8 +810,15 @@ pub fn run() {
         .manage(IconCache(Mutex::new(HashMap::new())))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
-            let shared: Shared = Arc::new(Mutex::new(Inner::load(dir.join("state.json"))));
+            let bridge = Arc::new(bridge::Bridge::default());
+            let shared: Shared = Arc::new(Mutex::new(Inner::load(dir.join("state.json"), bridge.clone())));
             app.manage(shared.clone());
+            {
+                let shared = shared.clone();
+                std::thread::spawn(move || {
+                    bridge::serve(bridge, move || shared.lock().unwrap().extension_rules());
+                });
+            }
 
             let open = MenuItem::with_id(app, "open", "Open OpenBlocker", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -804,6 +898,8 @@ pub fn run() {
             app_icon,
             get_autostart,
             set_autostart,
+            extension_path,
+            open_extension_folder,
             relaunch_as_admin,
         ])
         .run(tauri::generate_context!())
