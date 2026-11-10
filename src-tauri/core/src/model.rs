@@ -241,6 +241,9 @@ pub struct Settings {
     /// While websites are blocked, close browsers in which the OpenBlocker
     /// extension isn't running. (Always on while an allowlist is active.)
     pub require_extension: bool,
+    /// When a website block starts and no browser has the extension, suggest
+    /// installing it. Blocking via the hosts file works either way.
+    pub suggest_extension: bool,
 }
 
 impl Default for Settings {
@@ -253,6 +256,7 @@ impl Default for Settings {
             freeze_blocks_task_manager: true,
             unlock_text_length: 120,
             require_extension: false,
+            suggest_extension: true,
         }
     }
 }

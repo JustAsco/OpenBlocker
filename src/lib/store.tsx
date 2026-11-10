@@ -10,8 +10,8 @@ interface Toast {
 
 interface Ctx {
   snap: Snapshot | null;
-  /** Run a command that returns a fresh snapshot; errors become toasts. Returns true on success. */
-  run: (fn: () => Promise<Snapshot>, success?: string) => Promise<boolean>;
+  /** Run a command that returns a fresh snapshot (null = cancelled); errors become toasts. Returns true on success. */
+  run: (fn: () => Promise<Snapshot | null>, success?: string) => Promise<boolean>;
   toast: (text: string, kind?: Toast["kind"]) => void;
   toasts: Toast[];
   /** Ticks every second so countdowns re-render smoothly. */
@@ -43,9 +43,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const run = useCallback(
-    async (fn: () => Promise<Snapshot>, success?: string) => {
+    async (fn: () => Promise<Snapshot | null>, success?: string) => {
       try {
-        setSnap(await fn());
+        const next = await fn();
+        if (!next) return false;
+        setSnap(next);
         if (success) toast(success, "success");
         return true;
       } catch (e) {

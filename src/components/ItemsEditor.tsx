@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 import { APPS, SITES, expandSite, score, siteName } from "../lib/catalog";
 import { useStore } from "../lib/store";
 import type { AppEntry, InstalledApp } from "../lib/types";
-import { LIST_COLORS, LIST_EMOJIS, normalizeDomain } from "../lib/util";
+import { LIST_COLORS, LIST_EMOJIS, isPathSite, normalizeSite } from "../lib/util";
 import { Autocomplete, type SuggestionGroup } from "./Autocomplete";
 import { AppIcon, SiteIcon } from "./ui";
 
@@ -240,14 +240,19 @@ export function ItemsEditor({
         .filter((x) => x.sc > 0)
         .sort((a, b) => b.sc - a.sc)
         .slice(0, q ? 8 : 6);
-      const typed = normalizeDomain(q);
-      const typedGroup: SuggestionGroup | null =
-        typed && !hasSite(typed)
-          ? {
-              label: "Add website",
-              items: [{ key: "typed", icon: <SiteIcon domain={typed} />, title: typed, subtitle: "Also blocks www. and m. subdomains", onPick: () => addSites([typed]) }],
-            }
-          : null;
+      const site = normalizeSite(q);
+      // A pasted URL usually means the whole website; a path is offered as the second choice.
+      const typed = site && site.split("/")[0];
+      const typedItems = [typed, site]
+        .filter((x, i, all): x is string => !!x && !hasSite(x) && all.indexOf(x) === i)
+        .map((x) => ({
+          key: `typed-${x}`,
+          icon: <SiteIcon domain={x} />,
+          title: isPathSite(x) ? `Only ${x}` : x,
+          subtitle: isPathSite(x) ? "Just this part of the website and everything below it · needs the browser extension" : "The whole website, including www. and m.",
+          onPick: () => addSites([x]),
+        }));
+      const typedGroup: SuggestionGroup | null = typedItems.length ? { label: "Add website", items: typedItems } : null;
       // "chess.co" is probably the start of "chess.com": prefer the known site.
       const partial = !!typed && matches.some(({ s }) => s.domain !== typed && s.domain.startsWith(typed));
       if (typedGroup && !partial) groups.push(typedGroup);
@@ -322,13 +327,18 @@ export function ItemsEditor({
           <span className="font-normal text-faint">{sites.length}</span>
         </h3>
         {siteHint}
-        <Autocomplete placeholder="Search or paste a URL — e.g. “youtube”, “https://reddit.com/r/all”" getGroups={siteGroups} />
+        <Autocomplete placeholder="Search or paste a URL — e.g. “youtube”, “reddit.com” or “youtube.com/shorts”" getGroups={siteGroups} />
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleSites.map((d) => (
             <span key={d} className="chip py-1.5 pr-1.5 pl-2 text-sm">
               <SiteIcon domain={d} size={16} />
               <span>{d}</span>
               {siteName(d) && <span className="text-xs text-faint">{siteName(d)}</span>}
+              {isPathSite(d) && (
+                <span className="text-xs text-faint" title="Only this part of the website. Blocked by the browser extension; without it the page stays reachable.">
+                  part · needs extension
+                </span>
+              )}
               {lockedSites.has(d) ? (
                 <Lock size={12} className="mx-1 text-faint" />
               ) : (

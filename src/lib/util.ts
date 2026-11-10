@@ -110,6 +110,28 @@ export function normalizeDomain(input: string): string | null {
   return ok ? s : null;
 }
 
+/**
+ * Like normalizeDomain, but keeps the path so parts of a website can be
+ * blocked: "https://www.youtube.com/shorts/?x" → "youtube.com/shorts".
+ * Mirrors `normalize_site` in src-tauri/core/src/hosts.rs.
+ */
+export function normalizeSite(input: string): string | null {
+  const s = input.trim().toLowerCase();
+  const scheme = s.indexOf("://");
+  const rest = scheme >= 0 ? s.slice(scheme + 3) : s;
+  const slash = rest.indexOf("/");
+  const hasPath = slash >= 0 && !/[?#]/.test(rest.slice(0, slash));
+  const domain = normalizeDomain(hasPath ? rest.slice(0, slash) : rest);
+  if (!domain) return null;
+  const path = hasPath ? rest.slice(slash).split(/[?#]/)[0].replace(/\/+$/, "") : "";
+  if (!path) return domain;
+  if (/\s/.test(path) || path.includes("//")) return null;
+  return domain + path;
+}
+
+/** Is this site entry only part of a website ("youtube.com/shorts")? */
+export const isPathSite = (site: string) => site.includes("/");
+
 export function uid(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()

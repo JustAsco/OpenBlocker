@@ -88,6 +88,8 @@ export interface Settings {
   freezeBlocksTaskManager: boolean;
   unlockTextLength: number;
   requireExtension: boolean;
+  /** Suggest installing the extension when a website block starts without it. */
+  suggestExtension: boolean;
 }
 
 export interface DayStats {

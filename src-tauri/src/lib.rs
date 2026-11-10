@@ -6,6 +6,7 @@ mod platform;
 
 use chrono::{Local, NaiveDateTime};
 use openblocker_core::engine::{self, ActiveBlock, Event};
+use openblocker_core::hosts;
 use openblocker_core::model::*;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
@@ -20,6 +21,8 @@ use tauri_plugin_notification::NotificationExt;
 const TICK: Duration = Duration::from_millis(1000);
 const MAX_SESSION_MIN: u32 = 60 * 24 * 30;
 const MAX_FREEZE_MIN: u32 = 60 * 12;
+/// Key of the emergency-reset challenge in `Inner::challenges`.
+const RESET_CHALLENGE: &str = "__reset__";
 
 struct Inner {
     state: State,
@@ -153,6 +156,9 @@ impl Inner {
         let active = self.blocks();
         let (sites, _) = engine::enforced_targets(&self.state, &active);
         let allowed = engine::allowed_sites(&self.state, &active);
+        let (paths, domains): (Vec<String>, Vec<String>) = sites.into_iter().partition(|s| hosts::is_path_site(s));
+        // A path on a domain that is blocked anyway adds nothing.
+        let paths = paths.into_iter().filter(|p| !domains.iter().any(|d| d == hosts::site_domain(p))).collect();
         let mut lists: Vec<String> = active
             .iter()
             .filter_map(|b| self.state.list(&b.list_id).map(|l| l.name.clone()))
@@ -160,7 +166,8 @@ impl Inner {
         lists.sort();
         lists.dedup();
         bridge::Rules {
-            blocked: sites.into_iter().collect(),
+            blocked: domains,
+            blocked_paths: paths,
             allow_only: allowed.map(|a| a.into_iter().collect()),
             until: active.iter().map(|b| b.ends_at).max(),
             lists,
@@ -259,7 +266,7 @@ fn clean_items(sites: &mut Vec<String>, apps: &mut Vec<AppEntry>) {
     let mut seen = BTreeSet::new();
     *sites = sites
         .iter()
-        .filter_map(|s| openblocker_core::hosts::normalize_domain(s))
+        .filter_map(|s| hosts::normalize_site(s))
         .filter(|s| seen.insert(s.clone()))
         .collect();
     let mut seen_apps = BTreeSet::new();
@@ -525,6 +532,62 @@ fn start_freeze(shared: tauri::State<'_, Shared>, minutes: u32, message: String)
 fn save_settings(shared: tauri::State<'_, Shared>, settings: Settings) -> Res<Snapshot> {
     with(&shared, |i| {
         i.state.settings = settings;
+        Ok(i.commit())
+    })
+}
+
+#[tauri::command]
+fn export_settings(shared: tauri::State<'_, Shared>, path: String) -> Res<()> {
+    let backup = with(&shared, |i| Ok(engine::backup(&i.state, now_ms())))?;
+    let json = serde_json::to_string_pretty(&backup).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Couldn't save the file: {e}"))
+}
+
+#[tauri::command]
+fn import_settings(shared: tauri::State<'_, Shared>, path: String) -> Res<Snapshot> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("Couldn't read the file: {e}"))?;
+    let backup: engine::Backup = serde_json::from_str(&text).map_err(|_| "This isn't a valid OpenBlocker settings file.".to_string())?;
+    with(&shared, |i| {
+        let before = serde_json::to_string_pretty(&i.state).ok();
+        engine::restore(&mut i.state, backup, now_ms(), &local_now())?;
+        if let Some(json) = before {
+            let _ = std::fs::write(i.path.with_file_name("state.before-import.json"), json);
+        }
+        Ok(i.commit())
+    })
+}
+
+/// The text to type for an emergency reset, or `None` when nothing is locked
+/// and no typing is needed.
+#[tauri::command]
+fn reset_challenge(shared: tauri::State<'_, Shared>) -> Res<Option<String>> {
+    with(&shared, |i| {
+        if !i.any_lock() {
+            return Ok(None);
+        }
+        // Deliberately much longer than a normal unlock: this ends *every* lock.
+        let len = (i.state.settings.unlock_text_length as usize * 3).clamp(300, 1000);
+        Ok(Some(i.challenges.entry(RESET_CHALLENGE.into()).or_insert_with(|| random_text(len)).clone()))
+    })
+}
+
+/// Emergency reset: removes every block list, schedule, running block and
+/// setting, for when someone locked themselves out (e.g. a 24/7 locked
+/// schedule). The previous state is kept next to the data file.
+#[tauri::command]
+fn factory_reset(shared: tauri::State<'_, Shared>, answer: Option<String>) -> Res<Snapshot> {
+    with(&shared, |i| {
+        if i.any_lock() {
+            let expected = i.challenges.get(RESET_CHALLENGE).ok_or("Request the reset text first.")?;
+            if answer.as_deref() != Some(expected.as_str()) {
+                return Err("The text doesn't match.".into());
+            }
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&i.state) {
+            let _ = std::fs::write(i.path.with_file_name("state.before-reset.json"), json);
+        }
+        i.state = engine::factory_reset(&i.state);
+        i.challenges.clear();
         Ok(i.commit())
     })
 }
@@ -807,6 +870,7 @@ fn try_quit(app: &AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(IconCache(Mutex::new(HashMap::new())))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
@@ -894,6 +958,10 @@ pub fn run() {
             pomodoro_stop,
             start_freeze,
             save_settings,
+            export_settings,
+            import_settings,
+            reset_challenge,
+            factory_reset,
             installed_apps,
             app_icon,
             get_autostart,
