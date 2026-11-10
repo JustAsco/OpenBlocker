@@ -3,9 +3,10 @@
 // it does not block anything.
 
 import type { InstalledApp, PomodoroConfig, Pomodoro, Snapshot, State } from "./types";
-import { activeBlocks, dateKey, MINUTE, normalizeDomain, uid } from "./util";
+import { defaultCategories } from "./catalog";
+import { activeBlocks, dateKey, listTargets, MINUTE, normalizeDomain, uid } from "./util";
 
-const KEY = "openblocker-mock-state";
+const KEY = "openblocker-mock-state-v2";
 
 function defaultState(): State {
   const today = new Date();
@@ -21,10 +22,11 @@ function defaultState(): State {
   }
   return {
     version: 1,
+    categories: defaultCategories(),
     lists: [
-      { id: "social", name: "Social Media", color: "#8b5cf6", icon: "💬", sites: ["instagram.com", "tiktok.com", "facebook.com", "x.com", "reddit.com"], apps: [] },
-      { id: "video", name: "Video & Streaming", color: "#ef4444", icon: "📺", sites: ["youtube.com", "netflix.com", "twitch.tv"], apps: [] },
-      { id: "games", name: "Games", color: "#10b981", icon: "🎮", sites: [], apps: [{ name: "Steam", exe: "steam.exe" }, { name: "Epic Games Launcher", exe: "EpicGamesLauncher.exe" }] },
+      { id: "social", name: "Social Media", color: "#8b5cf6", icon: "💬", sites: [], apps: [], categories: ["social"] },
+      { id: "video", name: "Video & Streaming", color: "#ef4444", icon: "📺", sites: [], apps: [], categories: ["video"] },
+      { id: "games", name: "Games", color: "#10b981", icon: "🎮", sites: [], apps: [], categories: ["gaming"] },
     ],
     schedules: [
       { id: "s1", listId: "social", days: [0, 1, 2, 3, 4], start: 9 * 60, end: 17 * 60, locked: false, label: "Work hours" },
@@ -71,14 +73,20 @@ function persist() {
 function snapshot(): Snapshot {
   const active = activeBlocks(state);
   const ids = new Set(active.map((a) => a.listId));
-  const lists = state.lists.filter((l) => ids.has(l.id));
+  const sites = new Set<string>();
+  const apps = new Set<string>();
+  for (const l of state.lists.filter((l) => ids.has(l.id))) {
+    const t = listTargets(state, l);
+    t.sites.forEach((x) => sites.add(x));
+    t.apps.forEach((_, k) => apps.add(k));
+  }
   return {
     state: structuredClone(state),
     status: {
       now: Date.now(),
       active,
-      blockedSites: new Set(lists.flatMap((l) => l.sites)).size,
-      blockedApps: new Set(lists.flatMap((l) => l.apps.map((a) => a.exe.toLowerCase()))).size,
+      blockedSites: sites.size,
+      blockedApps: apps.size,
       hostsError: null,
       elevated: true,
       platform: "browser-preview",
@@ -164,7 +172,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       const old = state.lists.find((l) => l.id === list.id);
       if (old) {
         const until = lockedUntil(list.id);
-        if (until && !old.sites.every((s) => list.sites.includes(s)))
+        if (until && (!old.sites.every((s) => list.sites.includes(s)) || !old.categories.every((c) => list.categories.includes(c))))
           fail(`“${old.name}” is locked until ${new Date(until).toLocaleTimeString()}. You can add items, but not remove them.`);
         state.lists = state.lists.map((l) => (l.id === list.id ? list : l));
       } else state.lists.push({ ...list, id: list.id || uid() });
@@ -175,6 +183,22 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       state.lists = state.lists.filter((l) => l.id !== a.id);
       state.schedules = state.schedules.filter((s) => s.listId !== a.id);
       state.sessions = state.sessions.filter((s) => s.listId !== a.id);
+      return commit();
+    case "save_category": {
+      const c = { ...a.category, sites: [...new Set<string>(a.category.sites.map(normalizeDomain).filter(Boolean))] };
+      const old = state.categories.find((x) => x.id === c.id);
+      if (old) {
+        const until = state.lists.filter((l) => l.categories.includes(c.id)).map((l) => lockedUntil(l.id)).find(Boolean);
+        if (until && !old.sites.every((x) => c.sites.includes(x)))
+          fail(`“${old.name}” is used by a locked block. You can add items, but not remove them.`);
+        state.categories = state.categories.map((x) => (x.id === c.id ? c : x));
+      } else state.categories.push({ ...c, id: c.id || uid() });
+      return commit();
+    }
+    case "delete_category":
+      if (state.lists.some((l) => l.categories.includes(a.id) && lockedUntil(l.id))) fail("This category is used by a locked block.");
+      state.categories = state.categories.filter((c) => c.id !== a.id);
+      state.lists = state.lists.map((l) => ({ ...l, categories: l.categories.filter((c) => c !== a.id) }));
       return commit();
     case "save_schedule": {
       const s = { ...a.schedule, id: a.schedule.id || uid() };

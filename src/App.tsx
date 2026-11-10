@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { CalendarDays, LayoutDashboard, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Timer } from "lucide-react";
+import { CalendarDays, LayoutDashboard, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Toasts } from "./components/ui";
 import { api, isTauri } from "./lib/api";
 import { useStore } from "./lib/store";
+import { CategoriesPage } from "./pages/Categories";
 import { Dashboard } from "./pages/Dashboard";
 import { FocusPage } from "./pages/Focus";
 import { FreezePage } from "./pages/Freeze";
@@ -11,11 +12,12 @@ import { ListsPage } from "./pages/Lists";
 import { SchedulePage } from "./pages/Schedule";
 import { SettingsPage } from "./pages/Settings";
 
-export type Page = "today" | "lists" | "schedule" | "focus" | "freeze" | "settings";
+export type Page = "today" | "lists" | "categories" | "schedule" | "focus" | "freeze" | "settings";
 
 const NAV: { id: Page; label: string; icon: typeof Timer }[] = [
   { id: "today", label: "Today", icon: LayoutDashboard },
   { id: "lists", label: "Block lists", icon: ShieldBan },
+  { id: "categories", label: "Categories", icon: Tags },
   { id: "schedule", label: "Schedule", icon: CalendarDays },
   { id: "focus", label: "Focus timer", icon: Timer },
   { id: "freeze", label: "Freeze PC", icon: Snowflake },
@@ -89,7 +91,8 @@ export default function App() {
         )}
         <div key={page} className="animate-fade-up mx-auto max-w-6xl px-8 py-8">
           {page === "today" && <Dashboard go={setPage} />}
-          {page === "lists" && <ListsPage />}
+          {page === "lists" && <ListsPage go={setPage} />}
+          {page === "categories" && <CategoriesPage go={setPage} />}
           {page === "schedule" && <SchedulePage />}
           {page === "focus" && <FocusPage />}
           {page === "freeze" && <FreezePage />}

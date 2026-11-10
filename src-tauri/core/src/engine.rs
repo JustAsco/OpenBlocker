@@ -125,16 +125,39 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
     let mut apps = BTreeSet::new();
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str())) {
-        for s in &list.sites {
+        let cats = list.categories.iter().filter_map(|id| state.category(id));
+        let all_sites = list.sites.iter().chain(cats.clone().flat_map(|c| &c.sites));
+        let all_apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps));
+        for s in all_sites {
             if let Some(d) = crate::hosts::normalize_domain(s) {
                 sites.insert(d);
             }
         }
-        for a in &list.apps {
+        for a in all_apps {
             apps.insert(normalize_exe(&a.exe));
         }
     }
     (sites, apps)
+}
+
+/// If a category is used by a locked, running block, returns when that lock ends.
+pub fn category_locked_until(state: &State, category_id: &str, now_ms: i64, local: &NaiveDateTime) -> Option<i64> {
+    state
+        .lists
+        .iter()
+        .filter(|l| l.categories.iter().any(|c| c == category_id))
+        .filter_map(|l| list_locked_until(state, &l.id, now_ms, local))
+        .max()
+}
+
+/// While a category is locked you may add to it but never remove from it.
+pub fn category_is_superset(old: &Category, new: &Category) -> bool {
+    let sites_ok = old.sites.iter().all(|s| new.sites.iter().any(|n| n.eq_ignore_ascii_case(s)));
+    let apps_ok = old
+        .apps
+        .iter()
+        .all(|a| new.apps.iter().any(|n| exe_matches(&n.exe, &normalize_exe(&a.exe))));
+    sites_ok && apps_ok
 }
 
 /// Lowercase executable name without directory, always ending in `.exe` on Windows-style names.
@@ -166,7 +189,9 @@ pub fn is_strict_superset(old: &BlockList, new: &BlockList) -> bool {
         .apps
         .iter()
         .all(|a| new.apps.iter().any(|n| exe_matches(&n.exe, &normalize_exe(&a.exe))));
-    sites_ok && apps_ok
+    // Removing a whole category from a locked list is also a removal.
+    let cats_ok = old.categories.iter().all(|c| new.categories.contains(c));
+    sites_ok && apps_ok && cats_ok
 }
 
 fn phase_minutes(cfg: &PomodoroConfig, phase: PomodoroPhase) -> i64 {
@@ -301,13 +326,43 @@ mod tests {
 
     #[test]
     fn locked_lists_only_grow() {
-        let old = State::default().lists[0].clone();
+        let mut old = State::default().lists[0].clone();
+        old.sites = vec!["reddit.com".into(), "x.com".into()];
         let mut grown = old.clone();
         grown.sites.push("pinterest.com".into());
         assert!(is_strict_superset(&old, &grown));
         let mut shrunk = old.clone();
         shrunk.sites.pop();
         assert!(!is_strict_superset(&old, &shrunk));
+    }
+
+    #[test]
+    fn categories_are_enforced_and_locked() {
+        let mut st = State::default();
+        assert!(st.categories.iter().any(|c| c.id == "adult" && !c.sites.is_empty()));
+        st.sessions.push(Session {
+            id: "a".into(),
+            list_id: "social".into(),
+            started_at: 0,
+            ends_at: 1000,
+            lock: LockMode::Timer,
+        });
+        let local = at(9, 12, 0);
+        let blocks = active_blocks(&st, 500, &local);
+        let (sites, _) = enforced_targets(&st, &blocks);
+        assert!(sites.contains("instagram.com"));
+        // Editing the category changes what the list blocks.
+        st.categories.iter_mut().find(|c| c.id == "social").unwrap().sites.push("example.org".into());
+        let (sites, _) = enforced_targets(&st, &blocks);
+        assert!(sites.contains("example.org"));
+        // The category is locked because a locked list uses it.
+        assert_eq!(category_locked_until(&st, "social", 500, &local), Some(1000));
+        assert_eq!(category_locked_until(&st, "adult", 500, &local), None);
+        // Dropping the category from a locked list counts as removal.
+        let old = st.lists[0].clone();
+        let mut new = old.clone();
+        new.categories.clear();
+        assert!(!is_strict_superset(&old, &new));
     }
 
     #[test]

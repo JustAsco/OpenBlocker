@@ -9,7 +9,8 @@ Block websites and apps on a schedule, run Pomodoro focus sessions, or freeze yo
 
 | | |
 |---|---|
-| 🧱 **Block lists** | Group websites and apps ("Social media", "Games", …). Smart autosuggest: type `you` → YouTube (+ youtu.be, ytimg.com), paste any URL and it's normalised, add whole categories in one click, pick installed/running apps with their real icons. |
+| 🏷️ **Categories** | Reusable, editable groups of sites and apps (Social media, Adult, Gambling, …). Ten built-in ones you can customise or restore, plus your own. Edit a category once and every block list using it updates. |
+| 🧱 **Block lists** | What gets blocked together: tick the categories to include and add your own extras. Smart autosuggest: type `you` → YouTube (+ youtu.be, ytimg.com), paste any URL and it's normalised, pick installed/running apps with their real icons. |
 | ⚡ **Quick block** | Block a list right now for 25 min, 1 h, the rest of the day, or any custom duration. |
 | 📅 **Weekly schedule** | A real calendar: drag to create a block, click to edit, overnight blocks (22:00 → 07:00), templates (work hours, bedtime, weekend detox), hours-per-week summary. |
 | 🍅 **Focus timer** | Pomodoro with presets (25/5, 50/10, 90/20…), automatically blocks a list during focus rounds, optional auto-stop after N rounds. |
@@ -22,7 +23,7 @@ Everything stays on your machine. The only network request is for website icons 
 
 ## How blocking works
 
-- **Websites:** OpenBlocker writes a clearly marked section to the system `hosts` file (`C:\Windows\System32\drivers\etc\hosts`) that points blocked domains to `0.0.0.0`, then flushes the DNS cache. Nothing outside its own section is touched, and the section is removed when nothing is blocked. This works in every browser and app but **needs administrator rights**; the app shows a "Restart as administrator" button if it doesn't have them.
+- **Websites:** OpenBlocker writes a clearly marked section to the system `hosts` file (`C:\Windows\System32\drivers\etc\hosts`) that points blocked domains to `0.0.0.0`, then flushes the DNS cache. Nothing outside its own section is touched, and the section is removed when nothing is blocked. This works in every browser and app but **needs administrator rights**, so the installed app always starts as administrator (one UAC prompt, or none when started by the "Start with Windows" task).
 - **Apps:** a background loop checks running processes once per second and closes any blocked executable (`steam.exe`, …).
 - **Freeze:** always-on-top, full-screen, undecorated windows cover every monitor until the timer ends.
 
@@ -32,7 +33,8 @@ Requirements: [Node.js 20+](https://nodejs.org), [Rust](https://rustup.rs), and 
 
 ```bash
 npm install
-npm run tauri dev        # run the desktop app (run your terminal as admin for website blocking)
+npm run tauri dev        # run the desktop app (dev builds don't self-elevate: use an admin terminal
+                         # or the in-app "Restart as administrator" button for website blocking)
 npm run tauri build      # build the installer (src-tauri/target/release/bundle)
 ```
 
@@ -56,9 +58,10 @@ GitHub Actions builds the Windows installer (`.exe` + `.msi`) on every push to `
 src/                     React + TypeScript + Tailwind UI
   pages/                 Today, Block lists, Schedule, Focus, Freeze, Settings
   lib/api.ts             Tauri command bindings (falls back to lib/mock.ts in a browser)
-  lib/catalog.ts         Built-in site/app knowledge for autosuggest
+  lib/catalog.ts         Autosuggest helpers over the shared built-in catalog
 src-tauri/
   core/                  Pure Rust: data model, schedule/pomodoro engine, hosts rendering (unit-tested)
+  core/catalog.json      Built-in categories, shared by Rust and the UI
   src/lib.rs             Tauri commands, enforcement loop, tray, freeze windows
   src/platform.rs        OS integration: hosts file, processes, icons, elevation, autostart
 ```
@@ -70,7 +73,7 @@ src-tauri/
 - [ ] Uninstall/settings protection during locked blocks
 - [ ] Allow-list mode ("block everything except …") for websites and apps
 - [ ] Usage limits ("max 30 min of YouTube per day")
-- [ ] Importable community block lists (adult, gambling, news …)
+- [ ] Importable community category lists (large adult/gambling/news domain lists)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
 - [ ] Light theme, i18n
 - [ ] Export/import settings

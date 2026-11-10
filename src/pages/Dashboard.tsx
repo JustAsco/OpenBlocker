@@ -7,7 +7,7 @@ import { ListBadge, Segmented } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { ActiveBlock, LockMode, State } from "../lib/types";
-import { DAYS, dateKey, fmtClock, fmtDuration, fmtMinutes, fmtTime, minuteOfDay, weekday } from "../lib/util";
+import { DAYS, dateKey, fmtClock, fmtDuration, fmtMinutes, fmtTime, listTargets, minuteOfDay, weekday } from "../lib/util";
 
 function greeting() {
   const h = new Date().getHours();
@@ -94,7 +94,7 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
                 <div>
                   <div className="font-display text-2xl font-semibold tabular-nums">{fmtDuration(b.endsAt - now)}</div>
                   <div className="text-xs text-muted">
-                    until {fmtTime(b.endsAt)} · {list.sites.length} sites · {list.apps.length} apps
+                    until {fmtTime(b.endsAt)} · {listTargets(state, list).sites.size} sites · {listTargets(state, list).apps.size} apps
                   </div>
                 </div>
                 {session && (

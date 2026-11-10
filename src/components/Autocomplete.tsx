@@ -46,6 +46,9 @@ export function Autocomplete({
 
   const pick = (s: Suggestion) => {
     if (s.onPick() !== false) setQ("");
+    // Close after picking so the dropdown doesn't cover the rest of the page;
+    // clicking or typing in the box opens it again.
+    setOpen(false);
   };
 
   let idx = -1;
@@ -58,6 +61,7 @@ export function Autocomplete({
           placeholder={placeholder}
           value={q}
           onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
           onChange={(e) => {
             setQ(e.target.value);
             setOpen(true);
@@ -65,11 +69,12 @@ export function Autocomplete({
           onKeyDown={(e) => {
             if (e.key === "ArrowDown") {
               e.preventDefault();
+              setOpen(true);
               setActive((a) => Math.min(flat.length - 1, a + 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setActive((a) => Math.max(0, a - 1));
-            } else if (e.key === "Enter" && flat[active]) {
+            } else if (e.key === "Enter" && open && flat[active]) {
               e.preventDefault();
               pick(flat[active]);
             } else if (e.key === "Escape") setOpen(false);

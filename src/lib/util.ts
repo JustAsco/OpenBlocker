@@ -1,4 +1,4 @@
-import type { ActiveBlock, Schedule, State } from "./types";
+import type { ActiveBlock, AppEntry, BlockList, Schedule, State } from "./types";
 
 export const MINUTE = 60_000;
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -125,4 +125,17 @@ export function fmtMinutes(min: number): string {
   const h = Math.floor((min % 1440) / 60);
   const m = Math.round(min % 60);
   return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "0m";
+}
+
+/** Everything a list blocks: its own items plus those of its categories. */
+export function listTargets(state: State, list: BlockList): { sites: Set<string>; apps: Map<string, AppEntry> } {
+  const sites = new Set<string>(list.sites);
+  const apps = new Map<string, AppEntry>(list.apps.map((a) => [a.exe.toLowerCase(), a]));
+  for (const id of list.categories ?? []) {
+    const c = state.categories.find((x) => x.id === id);
+    if (!c) continue;
+    c.sites.forEach((x) => sites.add(x));
+    c.apps.forEach((a) => apps.set(a.exe.toLowerCase(), a));
+  }
+  return { sites, apps };
 }

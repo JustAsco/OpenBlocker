@@ -169,15 +169,10 @@ fn save_list(shared: tauri::State<'_, Shared>, mut list: BlockList) -> Res<Snaps
         if list.name.is_empty() {
             return Err("Give the list a name.".into());
         }
-        let mut seen = BTreeSet::new();
-        list.sites = list
-            .sites
-            .iter()
-            .filter_map(|s| openblocker_core::hosts::normalize_domain(s))
-            .filter(|s| seen.insert(s.clone()))
-            .collect();
-        let mut seen_apps = BTreeSet::new();
-        list.apps.retain(|a| !a.exe.trim().is_empty() && seen_apps.insert(engine::normalize_exe(&a.exe)));
+        clean_items(&mut list.sites, &mut list.apps);
+        let mut seen_cats = BTreeSet::new();
+        list.categories
+            .retain(|c| i.state.categories.iter().any(|x| &x.id == c) && seen_cats.insert(c.clone()));
         if let Some(old) = i.state.lists.iter().find(|l| l.id == list.id).cloned() {
             if let Some(until) = i.list_locked_until(&list.id) {
                 if !engine::is_strict_superset(&old, &list) {
@@ -214,6 +209,62 @@ fn delete_list(shared: tauri::State<'_, Shared>, id: String) -> Res<Snapshot> {
             if p.config.list_id.as_deref() == Some(&id) {
                 p.config.list_id = None;
             }
+        }
+        Ok(i.commit())
+    })
+}
+
+fn clean_items(sites: &mut Vec<String>, apps: &mut Vec<AppEntry>) {
+    let mut seen = BTreeSet::new();
+    *sites = sites
+        .iter()
+        .filter_map(|s| openblocker_core::hosts::normalize_domain(s))
+        .filter(|s| seen.insert(s.clone()))
+        .collect();
+    let mut seen_apps = BTreeSet::new();
+    apps.retain(|a| !a.exe.trim().is_empty() && seen_apps.insert(engine::normalize_exe(&a.exe)));
+}
+
+#[tauri::command]
+fn save_category(shared: tauri::State<'_, Shared>, mut category: Category) -> Res<Snapshot> {
+    with(&shared, |i| {
+        category.name = category.name.trim().to_string();
+        if category.name.is_empty() {
+            return Err("Give the category a name.".into());
+        }
+        clean_items(&mut category.sites, &mut category.apps);
+        if let Some(old) = i.state.category(&category.id).cloned() {
+            if let Some(until) = engine::category_locked_until(&i.state, &old.id, now_ms(), &local_now()) {
+                if !engine::category_is_superset(&old, &category) {
+                    return Err(format!(
+                        "“{}” is used by a locked block until {}. You can add items, but not remove them.",
+                        old.name,
+                        fmt_until(until)
+                    ));
+                }
+            }
+            if let Some(slot) = i.state.categories.iter_mut().find(|c| c.id == old.id) {
+                *slot = category;
+            }
+        } else {
+            if category.id.is_empty() {
+                category.id = uuid::Uuid::new_v4().to_string();
+            }
+            i.state.categories.push(category);
+        }
+        Ok(i.commit())
+    })
+}
+
+#[tauri::command]
+fn delete_category(shared: tauri::State<'_, Shared>, id: String) -> Res<Snapshot> {
+    with(&shared, |i| {
+        if let Some(until) = engine::category_locked_until(&i.state, &id, now_ms(), &local_now()) {
+            return Err(format!("This category is used by a locked block until {}.", fmt_until(until)));
+        }
+        i.state.categories.retain(|c| c.id != id);
+        for l in &mut i.state.lists {
+            l.categories.retain(|c| c != &id);
         }
         Ok(i.commit())
     })
@@ -734,6 +785,8 @@ pub fn run() {
             get_snapshot,
             save_list,
             delete_list,
+            save_category,
+            delete_category,
             save_schedule,
             delete_schedule,
             start_session,

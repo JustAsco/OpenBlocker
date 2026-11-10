@@ -13,6 +13,18 @@ export interface BlockList {
   icon: string;
   sites: string[];
   apps: AppEntry[];
+  /** Included category ids. */
+  categories: string[];
+}
+
+/** Reusable, editable group of sites/apps that block lists include by reference. */
+export interface Category {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  sites: string[];
+  apps: AppEntry[];
 }
 
 export interface Schedule {
@@ -81,6 +93,7 @@ export interface DayStats {
 
 export interface State {
   version: number;
+  categories: Category[];
   lists: BlockList[];
   schedules: Schedule[];
   sessions: Session[];
