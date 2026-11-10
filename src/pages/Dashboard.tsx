@@ -75,26 +75,35 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
         <h2 className="font-display text-lg font-semibold">Blocking now</h2>
       </div>
       <div className="flex flex-col gap-3">
-        {active.map((b) => {
-          const list = state.lists.find((l) => l.id === b.listId)!;
-          const session = b.source === "session" ? state.sessions.find((s) => s.id === b.refId) : undefined;
-          const schedule = b.source === "schedule" ? state.schedules.find((s) => s.id === b.refId) : undefined;
-          const start = session?.startedAt ?? (b.source === "pomodoro" ? state.pomodoro?.phaseStartedAt : undefined);
-          const pct = start ? Math.min(100, ((now - start) / (b.endsAt - start)) * 100) : null;
-          const what =
-            b.source === "session" ? "Quick block" : b.source === "pomodoro" ? "Focus timer" : schedule?.label || "Scheduled";
+        {groupByList(active).map(([listId, blocks]) => {
+          const list = state.lists.find((l) => l.id === listId)!;
+          // One card per list, even when a quick block, a schedule and the
+          // focus timer all enforce it: it stays blocked until the last one ends.
+          const endsAt = Math.max(...blocks.map((b) => b.endsAt));
+          const locked = blocks.some((b) => b.locked);
+          const sessionBlock = blocks.find((b) => b.source === "session");
+          const session = sessionBlock ? state.sessions.find((s) => s.id === sessionBlock.refId) : undefined;
+          const others = blocks.filter((b) => b.source !== "session");
+          const othersEnd = others.length ? Math.max(...others.map((b) => b.endsAt)) : 0;
+          const labels = blocks.map((b) =>
+            b.source === "session" ? "Quick block" : b.source === "pomodoro" ? "Focus timer" : state.schedules.find((s) => s.id === b.refId)?.label || "Scheduled",
+          );
+          const start = blocks.length === 1 ? (session?.startedAt ?? (blocks[0].source === "pomodoro" ? state.pomodoro?.phaseStartedAt : undefined)) : undefined;
+          const pct = start ? Math.min(100, ((now - start) / (endsAt - start)) * 100) : null;
+          const t = listTargets(state, list);
           return (
-            <div key={`${b.source}-${b.refId}`} className="rounded-xl border border-line bg-panel p-4">
+            <div key={listId} className="rounded-xl border border-line bg-panel p-4">
               <div className="flex items-center gap-3">
                 <ListBadge list={list} className="min-w-0 flex-1" />
-                <span className="text-xs text-muted">{what}</span>
-                {b.locked && <Lock size={14} className="text-amber-400" aria-label="Locked" />}
+                <span className="truncate text-xs text-muted">{[...new Set(labels)].join(" · ")}</span>
+                {locked && <Lock size={14} className="shrink-0 text-amber-400" aria-label="Locked" />}
               </div>
               <div className="mt-3 flex items-end justify-between gap-3">
                 <div>
-                  <div className="font-display text-2xl font-semibold tabular-nums">{fmtDuration(b.endsAt - now)}</div>
+                  <div className="font-display text-2xl font-semibold tabular-nums">{fmtDuration(endsAt - now)}</div>
                   <div className="text-xs text-muted">
-                    until {fmtTime(b.endsAt)} · {listTargets(state, list).sites.size} sites · {listTargets(state, list).apps.size} apps
+                    until {fmtTime(endsAt)} ·{" "}
+                    {list.mode === "allow" ? `only ${t.sites.size} sites allowed` : `${t.sites.size} sites`} · {t.apps.size} apps
                   </div>
                 </div>
                 {session && (
@@ -109,7 +118,8 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
                     ) : (
                       <button
                         className="btn-ghost px-3 py-1.5"
-                        onClick={() => (session.lock === "text" ? onUnlock(session.id) : run(() => api.stopSession(session.id), "Block stopped."))}
+                        title={othersEnd > now ? `The quick block stops; ${labels.filter((l) => l !== "Quick block").join(", ")} keeps it blocked until ${fmtTime(othersEnd)}.` : undefined}
+                        onClick={() => (session.lock === "text" ? onUnlock(session.id) : run(() => api.stopSession(session.id), "Quick block stopped."))}
                       >
                         <Square size={14} /> Stop
                       </button>
@@ -128,6 +138,12 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
       </div>
     </div>
   );
+}
+
+function groupByList(active: ActiveBlock[]): [string, ActiveBlock[]][] {
+  const m = new Map<string, ActiveBlock[]>();
+  for (const b of active) m.set(b.listId, [...(m.get(b.listId) ?? []), b]);
+  return [...m.entries()];
 }
 
 const PRESETS = [

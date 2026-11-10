@@ -72,5 +72,7 @@ export const api = {
   appIcon: (path: string) => call<string | null>("app_icon", { path }),
   getAutostart: () => call<boolean>("get_autostart"),
   setAutostart: (enabled: boolean) => call<boolean>("set_autostart", { enabled }),
+  extensionPath: () => call<string | null>("extension_path"),
+  openExtensionFolder: () => call<void>("open_extension_folder"),
   relaunchAsAdmin: () => call<void>("relaunch_as_admin"),
 };

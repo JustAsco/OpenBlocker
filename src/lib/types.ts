@@ -15,7 +15,11 @@ export interface BlockList {
   apps: AppEntry[];
   /** Included category ids. */
   categories: string[];
+  /** "block" the sites, or "allow" only them in browsers (apps are always blocked). */
+  mode: ListMode;
 }
+
+export type ListMode = "block" | "allow";
 
 /** Reusable, editable group of sites/apps that block lists include by reference. */
 export interface Category {
@@ -83,6 +87,7 @@ export interface Settings {
   blockSubdomains: boolean;
   freezeBlocksTaskManager: boolean;
   unlockTextLength: number;
+  requireExtension: boolean;
 }
 
 export interface DayStats {
@@ -121,6 +126,17 @@ export interface Status {
   hostsError: string | null;
   elevated: boolean;
   platform: string;
+  extension: BrowserSeen[];
+  extensionRequired: boolean;
+  allowlistSites: number | null;
+  bridgeError: string | null;
+}
+
+export interface BrowserSeen {
+  exe: string;
+  name: string;
+  lastSeen: number;
+  extensionVersion: string;
 }
 
 export interface Snapshot {

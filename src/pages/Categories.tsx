@@ -41,31 +41,37 @@ export function CategoriesPage({ go }: { go: (p: Page) => void }) {
         }
       />
       <div className="grid items-start gap-5 lg:grid-cols-[280px_1fr]">
-        <div className="flex flex-col gap-2">
-          {state.categories.map((c) => {
-            const usedBy = state.lists.filter((l) => l.categories.includes(c.id)).length;
-            return (
-              <button
-                key={c.id}
-                onClick={() => setSelected(c.id)}
-                className={clsx(
-                  "flex items-center gap-3 rounded-2xl border p-3 text-left transition",
-                  selected === c.id ? "border-line-strong bg-elevated" : "border-line bg-card hover:border-line-strong",
-                )}
-              >
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl text-lg" style={{ background: `color-mix(in srgb, ${c.color} 22%, transparent)` }}>
-                  {c.icon}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{c.name}</span>
-                  <span className="text-xs text-muted">
-                    {c.sites.length} sites · {c.apps.length} apps
-                  </span>
-                </span>
-                {usedBy > 0 && <span className="chip shrink-0 py-0.5 text-[11px] text-muted" title={`Used by ${usedBy} block list(s)`}>{usedBy}×</span>}
-              </button>
-            );
-          })}
+        <div className="card p-2">
+          {[
+            { label: "Built-in", items: state.categories.filter((c) => factoryCategory(c.id)) },
+            { label: "Your categories", items: state.categories.filter((c) => !factoryCategory(c.id)) },
+          ]
+            .filter((g) => g.items.length)
+            .map((g) => (
+              <div key={g.label} className="mb-1">
+                <div className="px-2.5 pt-2 pb-1 text-[11px] font-semibold tracking-wider text-faint uppercase">{g.label}</div>
+                {g.items.map((c) => {
+                  const usedBy = state.lists.filter((l) => l.categories.includes(c.id)).length;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelected(c.id)}
+                      className={clsx(
+                        "flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition",
+                        selected === c.id ? "bg-elevated text-fg" : "text-muted hover:bg-elevated/50 hover:text-fg",
+                      )}
+                    >
+                      <span className="grid size-7 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in srgb, ${c.color} 22%, transparent)` }}>
+                        {c.icon}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
+                      {usedBy > 0 && <span className="size-1.5 shrink-0 rounded-full bg-accent" title={`Used by ${usedBy} block list(s)`} />}
+                      <span className="w-7 shrink-0 text-right text-xs text-faint tabular-nums">{c.sites.length + c.apps.length}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
         </div>
         {category ? (
           <CategoryEditor key={category.id} category={category} state={state} go={go} />
@@ -96,7 +102,27 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
       icon={draft.icon}
       color={draft.color}
       name={draft.name}
-      subtitle={`${draft.sites.length} websites · ${draft.apps.length} apps${factory ? (isFactory ? " · built-in" : " · built-in, customised") : ""}`}
+      subtitle={
+        <>
+          {draft.sites.length} websites · {draft.apps.length} apps ·{" "}
+          {usedBy.length ? (
+            <>
+              used in{" "}
+              {usedBy.map((l, i) => (
+                <span key={l.id}>
+                  {i > 0 && ", "}
+                  <button className="text-fg/80 underline decoration-line-strong underline-offset-2 hover:text-fg" onClick={() => go("lists")}>
+                    {l.name}
+                  </button>
+                </span>
+              ))}
+            </>
+          ) : (
+            "not used by any list yet"
+          )}
+          {factory && !isFactory && " · customised"}
+        </>
+      }
       dirty={dirty}
       onName={(name) => setDraft({ ...draft, name })}
       onIcon={(icon) => setDraft({ ...draft, icon })}
@@ -114,18 +140,6 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
               Used by a locked block until {fmtTime(lockEnds)}. You can add more, but can't remove anything until then.
             </div>
           )}
-          <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted">Used in:</span>
-            {usedBy.length ? (
-              usedBy.map((l) => (
-                <button key={l.id} className="chip py-1 text-sm hover:border-line-strong" onClick={() => go("lists")}>
-                  {l.icon} {l.name}
-                </button>
-              ))
-            ) : (
-              <span className="text-faint">no block list yet — include it from the Block lists page</span>
-            )}
-          </div>
         </>
       }
     >

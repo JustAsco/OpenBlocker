@@ -15,6 +15,8 @@ Block websites and apps on a schedule, run Pomodoro focus sessions, or freeze yo
 | 📅 **Weekly schedule** | A real calendar: drag to create a block, click to edit, overnight blocks (22:00 → 07:00), templates (work hours, bedtime, weekend detox), hours-per-week summary. |
 | 🍅 **Focus timer** | Pomodoro with presets (25/5, 50/10, 90/20…), automatically blocks a list during focus rounds, optional auto-stop after N rounds. |
 | ❄️ **Freeze PC** | Full-screen lock on every monitor for a set time, with your own message. Task Manager is blocked while frozen. |
+| 🧩 **Browser extension** | Blocks instantly, including tabs that are already open, shows a friendly block page, and sends you back to the site when the block ends. Chrome, Edge, Brave, Opera, Vivaldi, Firefox. |
+| ✅ **Allowlists** | Switch any list to "allow only these websites": in browsers everything else is blocked (needs the extension; browsers without it are closed while the allowlist runs). |
 | 🔒 **Strictness levels** | *Flexible* (stop any time) · *Type to unlock* (type a long random text, paste disabled) · *Locked* (cannot be stopped). Locked lists can only grow, never shrink. Locked schedules can't be edited while running. |
 | 📊 **Stats** | Focus time, pomodoros and blocked app launches per day, weekly chart and streaks. |
 | 🛡️ **Robust** | State persists across restarts, closes to the tray, optional start-with-Windows (elevated scheduled task), refuses to quit while a locked block runs. |
@@ -24,6 +26,7 @@ Everything stays on your machine. The only network request is for website icons 
 ## How blocking works
 
 - **Websites:** OpenBlocker writes a clearly marked section to the system `hosts` file (`C:\Windows\System32\drivers\etc\hosts`) that points blocked domains to `0.0.0.0`, then flushes the DNS cache. Nothing outside its own section is touched, and the section is removed when nothing is blocked. This works in every browser and app but **needs administrator rights**, so the installed app always starts as administrator (one UAC prompt, or none when started by the "Start with Windows" task).
+- **Browser extension** (`extension/`): polls the app on `127.0.0.1:47613` every 2 s and enforces the rules with `declarativeNetRequest`. When rules change it redirects open tabs that are now blocked. The bridge only listens on localhost, sends no CORS headers and requires a custom header, so websites can't read your lists. On Windows the calling browser is identified from the TCP connection's owning process. Optionally (always, for allowlists), browsers in which the extension isn't running are closed.
 - **Apps:** a background loop checks running processes once per second and closes any blocked executable (`steam.exe`, …).
 - **Freeze:** always-on-top, full-screen, undecorated windows cover every monitor until the timer ends.
 
@@ -68,10 +71,12 @@ src-tauri/
 
 ## Roadmap
 
-- [ ] **Browser extension**: path-level blocking (`youtube.com/shorts`), a friendly block page, incognito coverage
+- [x] Browser extension with block page and open-tab enforcement
+- [ ] Extension: path-level blocking (`youtube.com/shorts`), store/AMO publishing, incognito enforcement
 - [ ] **Background Windows service + watchdog**: blocks survive killing the app, no admin prompt for the UI
 - [ ] Uninstall/settings protection during locked blocks
-- [ ] Allow-list mode ("block everything except …") for websites and apps
+- [x] Allowlist mode for websites
+- [ ] Allowlist mode for apps
 - [ ] Usage limits ("max 30 min of YouTube per day")
 - [ ] Importable community category lists (large adult/gambling/news domain lists)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
@@ -82,7 +87,8 @@ Contributions are very welcome. Open an issue to discuss bigger changes.
 
 ## Known limitations
 
-- Hosts-file blocking is domain-level. Already-open connections may keep working until the tab is reloaded or the browser restarted.
+- Without the extension, hosts-file blocking only affects new connections: already-open tabs can keep working for a while. Install the extension for instant, reliable blocking.
+- The extension is loaded unpacked (Developer mode) for now; Firefox only keeps it until restart until it's published on AMO. Incognito windows are covered only if you allow the extension in incognito.
 - Someone with admin rights who is determined enough can bypass it (e.g. by killing the process from an elevated shell). The planned service + watchdog will make this much harder.
 - Some antivirus tools warn about hosts-file changes. OpenBlocker only edits its own marked section.
 

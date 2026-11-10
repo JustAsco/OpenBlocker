@@ -36,6 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../extension/": "extension/"
+    },
     "windows": {
       "nsis": { "installMode": "perMachine" }
     }

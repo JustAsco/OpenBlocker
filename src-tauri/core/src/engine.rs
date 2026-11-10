@@ -125,19 +125,71 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
     let mut apps = BTreeSet::new();
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str())) {
-        let cats = list.categories.iter().filter_map(|id| state.category(id));
-        let all_sites = list.sites.iter().chain(cats.clone().flat_map(|c| &c.sites));
-        let all_apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps));
-        for s in all_sites {
-            if let Some(d) = crate::hosts::normalize_domain(s) {
-                sites.insert(d);
-            }
+        let (list_sites, list_apps) = list_items(state, list);
+        // Allowlist sites are *allowed*, not blocked; their apps are still blocked.
+        if list.mode == ListMode::Block {
+            sites.extend(list_sites);
         }
-        for a in all_apps {
-            apps.insert(normalize_exe(&a.exe));
-        }
+        apps.extend(list_apps);
     }
     (sites, apps)
+}
+
+/// A list's own items plus those of its categories (normalised).
+pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSet<String>) {
+    let cats = list.categories.iter().filter_map(|id| state.category(id));
+    let sites = list
+        .sites
+        .iter()
+        .chain(cats.clone().flat_map(|c| &c.sites))
+        .filter_map(|s| crate::hosts::normalize_domain(s))
+        .collect();
+    let apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
+    (sites, apps)
+}
+
+/// If an allowlist is active: the only sites browsers may open (union of all
+/// active allowlists). `None` when no allowlist is active.
+pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<String>> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let mut allowed: Option<BTreeSet<String>> = None;
+    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && l.mode == ListMode::Allow) {
+        allowed.get_or_insert_with(BTreeSet::new).extend(list_items(state, list).0);
+    }
+    allowed
+}
+
+fn strictness(l: LockMode) -> u8 {
+    match l {
+        LockMode::None => 0,
+        LockMode::Text => 1,
+        LockMode::Timer => 2,
+    }
+}
+
+/// Starting a block on a list that already has a running quick block merges
+/// into it: the later end time and the stricter lock win. Returns the id of
+/// the session that now covers the request.
+pub fn start_or_merge_session(state: &mut State, list_id: &str, now_ms: i64, ends_at: i64, lock: LockMode, new_id: String) -> String {
+    if let Some(s) = state
+        .sessions
+        .iter_mut()
+        .find(|s| s.list_id == list_id && s.started_at <= now_ms && now_ms < s.ends_at)
+    {
+        s.ends_at = s.ends_at.max(ends_at);
+        if strictness(lock) > strictness(s.lock) {
+            s.lock = lock;
+        }
+        return s.id.clone();
+    }
+    state.sessions.push(Session {
+        id: new_id.clone(),
+        list_id: list_id.into(),
+        started_at: now_ms,
+        ends_at,
+        lock,
+    });
+    new_id
 }
 
 /// If a category is used by a locked, running block, returns when that lock ends.
@@ -363,6 +415,43 @@ mod tests {
         let mut new = old.clone();
         new.categories.clear();
         assert!(!is_strict_superset(&old, &new));
+    }
+
+    #[test]
+    fn sessions_on_same_list_merge() {
+        let mut st = State::default();
+        st.sessions.clear();
+        let a = start_or_merge_session(&mut st, "social", 0, 1000, LockMode::None, "a".into());
+        let b = start_or_merge_session(&mut st, "social", 10, 500, LockMode::Timer, "b".into());
+        assert_eq!(a, b);
+        assert_eq!(st.sessions.len(), 1);
+        assert_eq!(st.sessions[0].ends_at, 1000); // later end wins
+        assert_eq!(st.sessions[0].lock, LockMode::Timer); // stricter lock wins
+        start_or_merge_session(&mut st, "video", 10, 500, LockMode::None, "c".into());
+        assert_eq!(st.sessions.len(), 2);
+    }
+
+    #[test]
+    fn allowlists_allow_instead_of_block() {
+        let mut st = State::default();
+        st.lists.push(BlockList {
+            id: "work".into(),
+            name: "Work only".into(),
+            color: "#fff".into(),
+            icon: "x".into(),
+            sites: vec!["github.com".into()],
+            apps: vec![AppEntry { name: "Steam".into(), exe: "steam.exe".into(), path: None }],
+            categories: vec![],
+            mode: ListMode::Allow,
+        });
+        let local = at(9, 12, 0);
+        assert_eq!(allowed_sites(&st, &active_blocks(&st, 0, &local)), None);
+        start_or_merge_session(&mut st, "work", 0, 1000, LockMode::None, "w".into());
+        let blocks = active_blocks(&st, 500, &local);
+        let (sites, apps) = enforced_targets(&st, &blocks);
+        assert!(!sites.contains("github.com"));
+        assert!(apps.contains("steam.exe"));
+        assert_eq!(allowed_sites(&st, &blocks), Some(["github.com".to_string()].into()));
     }
 
     #[test]

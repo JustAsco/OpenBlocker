@@ -1,4 +1,4 @@
-import { Heart, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Copy, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PageHeader, Toggle, usePref } from "../components/ui";
 import { api, isTauri } from "../lib/api";
@@ -12,6 +12,10 @@ export function SettingsPage() {
   const [siteIcons, setSiteIcons] = usePref("site-icons", true);
   const { toast } = useStore();
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [extPath, setExtPath] = useState<string | null>(null);
+  useEffect(() => {
+    api.extensionPath().then(setExtPath).catch(() => {});
+  }, []);
   useEffect(() => {
     api.getAutostart().then(setAutostart).catch(() => setAutostart(false));
   }, []);
@@ -25,7 +29,7 @@ export function SettingsPage() {
           <h2 className="mb-2 font-semibold">Blocking</h2>
           <div className="divide-y divide-line">
             <Toggle label="Block subdomains" hint="Also block www., m. and mobile. versions of every website." checked={settings.blockSubdomains} onChange={(blockSubdomains) => save({ blockSubdomains })} />
-            <Toggle label="Flush DNS cache" hint="Makes website blocks apply immediately. Already-open tabs may need a refresh." checked={settings.flushDns} onChange={(flushDns) => save({ flushDns })} />
+            <Toggle label="Flush DNS cache" hint="Helps new blocks apply sooner. Browsers can keep open connections alive; the extension below fixes that." checked={settings.flushDns} onChange={(flushDns) => save({ flushDns })} />
             <Toggle label="Block Task Manager while frozen" checked={settings.freezeBlocksTaskManager} onChange={(freezeBlocksTaskManager) => save({ freezeBlocksTaskManager })} />
             <div className="py-3">
               <div className="mb-2 flex justify-between text-sm">
@@ -43,6 +47,73 @@ export function SettingsPage() {
               />
               <p className="mt-1 text-xs text-muted">How much you must type to stop a “Type to unlock” block early.</p>
             </div>
+          </div>
+        </section>
+
+        <section className="card p-6 lg:row-span-2">
+          <h2 className="mb-1 flex items-center gap-2 font-semibold">
+            <Puzzle size={18} className="text-accent-2" /> Browser extension
+          </h2>
+          <p className="mb-4 text-sm text-muted">
+            Blocks websites instantly, including tabs that are already open, and enables allowlists. Strongly recommended in every browser you use.
+          </p>
+          <div className="mb-5 rounded-xl bg-panel p-3">
+            {status.extension.length ? (
+              <div className="flex flex-wrap gap-2">
+                {status.extension.map((b) => (
+                  <span key={b.exe} className="chip border-emerald-500/30 bg-emerald-500/10 py-1 text-sm text-emerald-200">
+                    <span className="size-2 rounded-full bg-good" /> {b.name}
+                    {b.extensionVersion && <span className="text-xs text-emerald-200/60">v{b.extensionVersion}</span>}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-amber-200">Not connected in any browser yet.</p>
+            )}
+            {status.bridgeError && <p className="mt-2 text-xs text-red-300">{status.bridgeError}</p>}
+          </div>
+
+          <h3 className="mb-2 text-sm font-medium">Install in Chrome, Edge, Brave, Opera or Vivaldi</h3>
+          <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-sm text-muted">
+            <li>
+              Open <code className="rounded bg-elevated px-1.5 py-0.5 text-fg">chrome://extensions</code> (Edge: <code className="rounded bg-elevated px-1.5 py-0.5 text-fg">edge://extensions</code>).
+            </li>
+            <li>Turn on <span className="text-fg">Developer mode</span>.</li>
+            <li>
+              Click <span className="text-fg">Load unpacked</span> and choose this folder:
+            </li>
+          </ol>
+          <div className="mb-5 flex gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-xl border border-line bg-panel px-3 py-2 text-xs leading-5 text-fg select-all" title={extPath ?? ""}>
+              {extPath ?? "Extension folder not found"}
+            </code>
+            <button
+              className="btn-ghost px-3"
+              disabled={!extPath}
+              title="Copy path"
+              onClick={() => navigator.clipboard.writeText(extPath!).then(() => toast("Path copied.", "success"))}
+            >
+              <Copy size={15} />
+            </button>
+            {isTauri && (
+              <button className="btn-ghost px-3" disabled={!extPath} title="Open folder" onClick={() => api.openExtensionFolder().catch((e) => toast(String(e), "error"))}>
+                <FolderOpen size={15} />
+              </button>
+            )}
+          </div>
+          <h3 className="mb-2 text-sm font-medium">Firefox</h3>
+          <p className="mb-4 text-sm text-muted">
+            Open <code className="rounded bg-elevated px-1.5 py-0.5 text-fg">about:debugging</code> → This Firefox → Load Temporary Add-on → pick{" "}
+            <code className="rounded bg-elevated px-1.5 py-0.5 text-fg">manifest.json</code> in the folder above. Firefox removes it on restart until the add-on is
+            published.
+          </p>
+          <div className="border-t border-line">
+            <Toggle
+              label="Close browsers without the extension"
+              hint="While websites are blocked, browsers in which the extension isn't running are closed after 30 seconds. Always on while an allowlist is active."
+              checked={settings.requireExtension}
+              onChange={(requireExtension) => save({ requireExtension })}
+            />
           </div>
         </section>
 

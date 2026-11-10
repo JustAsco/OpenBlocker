@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CalendarDays, LayoutDashboard, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
+import { CalendarDays, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Toasts } from "./components/ui";
 import { api, isTauri } from "./lib/api";
@@ -87,6 +87,18 @@ export default function App() {
                 Restart as administrator
               </button>
             )}
+          </div>
+        )}
+        {status.extensionRequired && status.extension.length === 0 && (
+          <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-cyan-500/30 bg-cyan-500/10 px-8 py-2.5 text-sm text-cyan-100 backdrop-blur">
+            <Puzzle size={18} className="shrink-0" />
+            <span className="flex-1">
+              {status.allowlistSites !== null ? "An allowlist is active." : "Website blocking requires the extension."} Browsers without the OpenBlocker
+              extension are closed until it's installed.
+            </span>
+            <button className="btn-ghost py-1" onClick={() => setPage("settings")}>
+              Set up extension
+            </button>
           </div>
         )}
         <div key={page} className="animate-fade-up mx-auto max-w-6xl px-8 py-8">
