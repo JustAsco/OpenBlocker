@@ -21,6 +21,42 @@
   --color-bad: #ef4444;
 }
 
+/* Light theme: the same tokens with light values. Text tints that were made
+   for dark backgrounds (amber-200, cyan-100, …) become darker shades. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f4f4f8;
+  --color-panel: #ffffff;
+  --color-card: #ffffff;
+  --color-elevated: #ececf3;
+  --color-line: #e0e0ea;
+  --color-line-strong: #c9c9d8;
+  --color-fg: #16161f;
+  --color-muted: #555569;
+  --color-faint: #85859a;
+  --color-accent: #7c3aed;
+  --color-accent-2: #0891b2;
+  --color-amber-200: #92400e;
+  --color-amber-300: #b45309;
+  --color-amber-400: #d97706;
+  --color-cyan-100: #164e63;
+  --color-cyan-200: #155e75;
+  --color-cyan-300: #0e7490;
+  --color-emerald-200: #065f46;
+  --color-emerald-300: #047857;
+  --color-emerald-400: #059669;
+  --color-red-200: #991b1b;
+  --color-red-300: #b91c1c;
+  --color-red-400: #dc2626;
+  --color-orange-200: #9a3412;
+  --color-orange-300: #c2410c;
+  --color-orange-400: #ea580c;
+  --color-violet-100: #4c1d95;
+  --color-violet-200: #5b21b6;
+  --gradient-text-from: #7c3aed;
+  --gradient-text-to: #0891b2;
+}
+
 @layer base {
   html,
   body,
@@ -101,7 +137,7 @@
 }
 
 @utility gradient-text {
-  background: linear-gradient(135deg, #c4b5fd, #67e8f9);
+  background: linear-gradient(135deg, var(--gradient-text-from, #c4b5fd), var(--gradient-text-to, #67e8f9));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;

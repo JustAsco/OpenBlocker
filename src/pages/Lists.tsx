@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Ban, Check, CircleCheck, Lock, Pencil, Plus, Puzzle, Tags } from "lucide-react";
+import { Ban, Check, CircleCheck, CircleMinus, ExternalLink, Lock, Pencil, Plus, Puzzle, Tags, MonitorPlay, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import type { SuggestionGroup } from "../components/Autocomplete";
@@ -9,7 +9,7 @@ import { api } from "../lib/api";
 import { score } from "../lib/catalog";
 import { useStore } from "../lib/store";
 import type { BlockList, Category, ListMode, State } from "../lib/types";
-import { LIST_COLORS, fmtTime, listTargets, uid } from "../lib/util";
+import { LIST_COLORS, fmtTime, isPathSite, listTargets, normalizeChannel, uid } from "../lib/util";
 
 /** Remember which category to open when jumping to the Categories page. */
 export const openCategory = (id: string, go: (p: Page) => void) => {
@@ -117,6 +117,30 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
   const { snap, run } = useStore();
   const [draft, setDraft, dirty, discard] = useDraft(list);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tab, setTab] = useState<"items" | "exceptions" | "youtube">("items");
+  const exceptSites = draft.exceptSites ?? [];
+  const exceptApps = draft.exceptApps ?? [];
+  const channels = draft.youtubeChannels ?? [];
+  // What the list would block without its exceptions (suggestions for the Exceptions tab).
+  const beforeExceptions = useMemo(() => listTargets(state, { ...draft, exceptSites: [], exceptApps: [] }), [state, draft]);
+  const exceptionGroups = useCallback(
+    (q: string): SuggestionGroup[] => [
+      {
+        label: "In this list",
+        items: [...beforeExceptions.sites]
+          .filter((d) => !exceptSites.includes(d) && (!q || score(q, d) > 0))
+          .slice(0, q ? 8 : 6)
+          .map((d) => ({
+            key: `in-${d}`,
+            icon: <CircleMinus size={16} className="text-muted" />,
+            title: d,
+            subtitle: "Leave it out of this list",
+            onPick: () => setDraft((x) => ({ ...x, exceptSites: [...(x.exceptSites ?? []), d] })),
+          })),
+      },
+    ],
+    [beforeExceptions, exceptSites, setDraft],
+  );
 
   const lockBlock = snap!.status.active.filter((a) => a.listId === list.id && a.locked).sort((a, b) => b.endsAt - a.endsAt)[0];
   const lockedSites = useMemo(() => new Set(lockBlock ? list.sites : []), [lockBlock, list.sites]);
@@ -203,6 +227,57 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
         )}
       </section>
 
+      <Segmented
+        className="mb-6 w-full"
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "items", label: <><Tags size={14} /> {draft.mode === "allow" ? "Allowed" : "Blocked"}</> },
+          { value: "exceptions", label: <><CircleMinus size={14} /> Exceptions{exceptSites.length + exceptApps.length ? ` · ${exceptSites.length + exceptApps.length}` : ""}</> },
+          { value: "youtube", label: <><MonitorPlay size={14} /> YouTube channels{channels.length ? ` · ${channels.length}` : ""}</> },
+        ]}
+      />
+
+      {tab === "exceptions" && (
+        <>
+          <p className="mb-5 text-sm text-muted">
+            Leave websites and apps out of this list without changing its categories, e.g. all social media except Facebook. Works with community lists too.
+            Add part of a site (like <span className="text-fg">reddit.com/r/rust</span>) to keep just that reachable while the rest stays blocked; that part needs the
+            browser extension, and the site is then blocked by the extension only.
+          </p>
+          {lockBlock && (
+            <p className="mb-4 flex items-center gap-2 text-sm text-amber-200">
+              <Lock size={14} /> Locked: you can remove exceptions, but not add new ones until it ends.
+            </p>
+          )}
+          <ItemsEditor
+            siteTitle="Websites to leave out"
+            appTitle="Apps to leave out"
+            sites={exceptSites}
+            apps={exceptApps}
+            onSites={(exceptSites) => setDraft({ ...draft, exceptSites })}
+            onApps={(exceptApps) => setDraft({ ...draft, exceptApps })}
+            extraSiteGroups={exceptionGroups}
+          />
+          {exceptSites.some(isPathSite) && (
+            <p className="-mt-3 flex items-center gap-2 text-xs text-cyan-200">
+              <Puzzle size={13} /> Exceptions for parts of a site only work in browsers with the extension.
+            </p>
+          )}
+        </>
+      )}
+
+      {tab === "youtube" && (
+        <ChannelsEditor
+          channels={channels}
+          locked={!!lockBlock}
+          blocksYoutube={[...total.sites].some((d) => d === "youtube.com")}
+          onChange={(youtubeChannels) => setDraft({ ...draft, youtubeChannels })}
+        />
+      )}
+
+      {tab === "items" && (
+      <>
       <section className="mb-7">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -238,6 +313,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
         covered={covered}
         extraSiteGroups={categoryGroups}
       />
+      </>
+      )}
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete “${list.name}”?`}>
         <p className="text-sm text-muted">This also removes its schedules and running quick blocks. Categories are kept.</p>
@@ -307,5 +384,73 @@ function NewListModal({ open, categories, onClose, onCreate }: { open: boolean; 
         </button>
       </div>
     </Modal>
+  );
+}
+
+/** "Only these YouTube channels" for a block list. */
+function ChannelsEditor({
+  channels,
+  locked,
+  blocksYoutube,
+  onChange,
+}: {
+  channels: string[];
+  locked: boolean;
+  blocksYoutube: boolean;
+  onChange: (c: string[]) => void;
+}) {
+  const { toast } = useStore();
+  const [input, setInput] = useState("");
+  const add = () => {
+    const c = normalizeChannel(input);
+    if (!c) return toast("That doesn't look like a channel. Paste its link or @handle.", "error");
+    if (channels.includes(c)) return toast("Already on the list.");
+    onChange([...channels, c]);
+    setInput("");
+  };
+  const link = (c: string) => `https://www.youtube.com/${c.startsWith("UC") ? "channel/" + c : c}`;
+
+  return (
+    <section className="mb-2">
+      <p className="mb-4 text-sm text-muted">
+        While this list is active, YouTube videos only play if they're from one of these channels; everything else shows the block page. Search and the home
+        page stay usable. Leave it empty for no restriction. Needs the browser extension (browsers without it are closed while the restriction runs).
+      </p>
+      {blocksYoutube && (
+        <p className="mb-4 text-sm text-amber-200">This list blocks youtube.com completely, so channels here have no effect. Remove YouTube (or add it as an exception) to use them.</p>
+      )}
+      {locked && channels.length > 0 && (
+        <p className="mb-4 flex items-center gap-2 text-sm text-amber-200">
+          <Lock size={14} /> Locked: you can remove channels, but not add any until it ends.
+        </p>
+      )}
+      <div className="mb-3 flex gap-2">
+        <input
+          className="input"
+          placeholder="Paste a channel link or @handle, e.g. https://www.youtube.com/@veritasium"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+        />
+        <button className="btn-ghost shrink-0" disabled={!input.trim()} onClick={add}>
+          <Plus size={15} /> Add
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {channels.map((c) => (
+          <span key={c} className="chip py-1.5 pr-1.5 pl-2.5 text-sm">
+            {c}
+            <a className="rounded p-0.5 text-faint hover:bg-line hover:text-fg" href={link(c)} target="_blank" rel="noreferrer" aria-label={`Open ${c}`}>
+              <ExternalLink size={12} />
+            </a>
+            <button className="rounded p-0.5 text-faint hover:bg-line hover:text-fg" onClick={() => onChange(channels.filter((x) => x !== c))} aria-label={`Remove ${c}`}>
+              <X size={13} />
+            </button>
+          </span>
+        ))}
+        {!channels.length && <p className="text-sm text-faint">No restriction: videos from every channel play.</p>}
+      </div>
+      <p className="mt-5 text-xs text-faint">Tip: to block only Shorts and keep normal videos, include the “Short videos” category instead.</p>
+    </section>
   );
 }

@@ -1,5 +1,7 @@
 import { Snowflake } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ResetModal } from "../components/ResetModal";
+import { Toasts, useSecretClicks } from "../components/ui";
 import { useStore } from "../lib/store";
 import { fmtTimer } from "../lib/util";
 
@@ -13,6 +15,10 @@ export function FreezeScreen() {
   const total = freeze ? freeze.endsAt - freeze.startedAt : 1;
   const left = freeze ? freeze.endsAt - now : 0;
   const pct = Math.max(0, Math.min(100, (1 - left / total) * 100));
+  // The emergency reset stays reachable even while frozen (7 clicks on the
+  // unlock time), so no configuration can lock someone out for good.
+  const [resetOpen, setResetOpen] = useState(false);
+  const secret = useSecretClicks(() => setResetOpen(true));
 
   return (
     <div
@@ -32,8 +38,14 @@ export function FreezeScreen() {
         <p className="mt-6 text-sm text-muted">
           Idea: <span className="text-fg/80">{idea}</span>
         </p>
-        <p className="mt-16 text-xs text-faint">Unlocks at {freeze ? new Date(freeze.endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now"}</p>
+        <p className="mt-16 cursor-default text-xs text-faint select-none" onClick={secret}>
+          Unlocks at {freeze ? new Date(freeze.endsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now"}
+        </p>
       </div>
+      <div className="text-left">
+        <ResetModal open={resetOpen} onClose={() => setResetOpen(false)} />
+      </div>
+      <Toasts />
     </div>
   );
 }

@@ -4,7 +4,7 @@
 
 import type { InstalledApp, PomodoroConfig, Pomodoro, Snapshot, State } from "./types";
 import { defaultCategories } from "./catalog";
-import { activeBlocks, dateKey, listTargets, MINUTE, normalizeSite, uid } from "./util";
+import { activeBlocks, dateKey, listTargets, MINUTE, normalizeChannel, normalizeSite, uid } from "./util";
 
 const KEY = "openblocker-mock-state-v2";
 
@@ -21,7 +21,7 @@ function defaultState(): State {
     };
   }
   return {
-    version: 1,
+    version: 2,
     categories: defaultCategories(),
     lists: [
       { id: "social", name: "Social Media", color: "#8b5cf6", icon: "💬", sites: [], apps: [], categories: ["social"], mode: "block" },
@@ -46,6 +46,8 @@ function defaultState(): State {
       unlockTextLength: 120,
       requireExtension: false,
       suggestExtension: true,
+      hideShortVideoFeeds: true,
+      unlockTextStyle: "random",
     },
     stats,
   };
@@ -58,6 +60,11 @@ function load(): State {
       const s = JSON.parse(raw) as State;
       s.settings = { ...defaultState().settings, ...s.settings };
       s.limits ??= [];
+      // Mirrors the core's migration: new built-in categories appear once.
+      if ((s.version ?? 1) < 2) {
+        for (const c of defaultCategories()) if (c.id === "shorts" && !s.categories.some((x) => x.id === c.id)) s.categories.push(c);
+        s.version = 2;
+      }
       return s;
     }
   } catch {
@@ -67,6 +74,7 @@ function load(): State {
 }
 
 let state = load();
+const mockPassword = () => localStorage.getItem("mock-password");
 /** Seconds used today per limit (the real app measures this; the mock fakes some). */
 const usage: Record<string, number> = { l1: 31 * 60 };
 const challenges = new Map<string, string>();
@@ -112,6 +120,7 @@ function snapshot(): Snapshot {
       allowlistSites: allowed ? (allowed as Set<string>).size : null,
       bridgeError: null,
       usageToday: { ...usage },
+      passwordSet: !!mockPassword(),
     },
   };
 }
@@ -190,7 +199,12 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     case "get_snapshot":
       return snapshot();
     case "save_list": {
-      const list = { ...a.list, sites: [...new Set<string>(a.list.sites.map(normalizeSite).filter(Boolean))] };
+      const list = {
+        ...a.list,
+        sites: [...new Set<string>(a.list.sites.map(normalizeSite).filter(Boolean))],
+        exceptSites: [...new Set<string>((a.list.exceptSites ?? []).map(normalizeSite).filter(Boolean))],
+        youtubeChannels: [...new Set<string>((a.list.youtubeChannels ?? []).map(normalizeChannel).filter(Boolean))],
+      };
       const old = state.lists.find((l) => l.id === list.id);
       if (old) {
         const until = lockedUntil(list.id);
@@ -239,7 +253,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     case "start_session": {
       const ends = now + a.minutes * MINUTE;
       const existing = state.sessions.find((s) => s.listId === a.listId && s.endsAt > now);
-      const rank = { none: 0, text: 1, timer: 2 } as const;
+      const rank = { none: 0, text: 1, password: 2, timer: 3 } as const;
       if (existing) {
         existing.endsAt = Math.max(existing.endsAt, ends);
         if (rank[a.lock as keyof typeof rank] > rank[existing.lock]) existing.lock = a.lock;
@@ -250,6 +264,16 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       state.sessions = state.sessions.map((s) => (s.id === a.id ? { ...s, endsAt: s.endsAt + a.minutes * MINUTE } : s));
       return commit();
     case "unlock_challenge": {
+      if (!challenges.has(a.id) && state.settings.unlockTextStyle === "reflection") {
+        // The real texts live in the core (texts.rs); the mock shows a sample.
+        const s = state.sessions.find((x) => x.id === a.id);
+        const list = state.lists.find((l) => l.id === s?.listId)?.name ?? "this list";
+        const left = Math.max(1, Math.round(((s?.endsAt ?? now) - now) / MINUTE));
+        challenges.set(
+          a.id,
+          `I am about to unlock ${list} with ${left} minutes left. Nothing in there is urgent. It will all still be there later, and so will the reasons I blocked it. This urge feels important, but urges fade in a few minutes if I wait. I could just let it pass.`,
+        );
+      }
       if (!challenges.has(a.id)) {
         const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         challenges.set(a.id, Array.from({ length: state.settings.unlockTextLength }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
@@ -260,6 +284,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       const s = state.sessions.find((x) => x.id === a.id) ?? fail("Session not found.");
       if (s.lock === "timer") fail(`Locked until ${new Date(s.endsAt).toLocaleTimeString()}. Stay strong 💪`);
       if (s.lock === "text" && a.answer !== challenges.get(a.id)) fail("The text doesn't match.");
+      if (s.lock === "password" && a.answer !== mockPassword()) fail("Wrong password.");
       state.sessions = state.sessions.filter((x) => x.id !== a.id);
       return commit();
     }
@@ -305,6 +330,16 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       return;
     case "relaunch_as_admin":
       return;
+    case "set_password": {
+      const cur = mockPassword();
+      if (cur && a.current !== cur) fail("Wrong password.");
+      if (!a.new && state.sessions.some((s) => s.lock === "password" && s.endsAt > now)) fail("A password-locked block is running. You can remove the password once it ends.");
+      if (a.new && a.new.length < 4) fail("Use at least 4 characters.");
+      // The mock keeps it in plain text; the real app stores an Argon2 hash.
+      if (a.new) localStorage.setItem("mock-password", a.new);
+      else localStorage.removeItem("mock-password");
+      return commit();
+    }
     case "save_limit": {
       const l = { ...a.limit, id: a.limit.id || uid() };
       if (!l.days.length) fail("Pick at least one day.");

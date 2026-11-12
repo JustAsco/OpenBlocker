@@ -38,6 +38,19 @@ pub struct BlockList {
     /// Block the listed sites, or (allowlist) allow *only* them in browsers.
     #[serde(default)]
     pub mode: ListMode,
+    /// If not empty: while this list is active, YouTube videos only play from
+    /// these channels (normalised with [`crate::hosts::normalize_channel`]).
+    #[serde(default)]
+    pub youtube_channels: Vec<String>,
+    /// Websites left out of this list even though a category includes them,
+    /// e.g. `facebook.com` in "all social media except Facebook". A path
+    /// (`reddit.com/r/rust`) stays reachable while the rest of its site is
+    /// blocked (needs the browser extension).
+    #[serde(default)]
+    pub except_sites: Vec<String>,
+    /// Apps left out of this list even though a category includes them.
+    #[serde(default)]
+    pub except_apps: Vec<AppEntry>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -158,6 +171,8 @@ pub enum LockMode {
     None,
     /// Requires typing a long random string to stop.
     Text,
+    /// Requires the account password (often set by someone you trust).
+    Password,
     /// Cannot be stopped until the timer runs out.
     Timer,
 }
@@ -279,6 +294,20 @@ pub struct Settings {
     /// When a website block starts and no browser has the extension, suggest
     /// installing it. Blocking via the hosts file works either way.
     pub suggest_extension: bool,
+    /// While Shorts/Reels are blocked, also hide them in feeds (extension).
+    pub hide_short_video_feeds: bool,
+    /// What to type for "Type to unlock".
+    pub unlock_text_style: UnlockTextStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum UnlockTextStyle {
+    /// Random letters and digits.
+    #[default]
+    Random,
+    /// Sentences that make you think about why you want to stop early.
+    Reflection,
 }
 
 impl Default for Settings {
@@ -292,6 +321,8 @@ impl Default for Settings {
             unlock_text_length: 120,
             require_extension: false,
             suggest_extension: true,
+            hide_short_video_feeds: true,
+            unlock_text_style: UnlockTextStyle::Random,
         }
     }
 }
@@ -323,6 +354,9 @@ pub struct State {
     pub limits: Vec<UsageLimit>,
     /// Seconds used per limit id, keyed by local date `YYYY-MM-DD`.
     pub usage: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Hash (Argon2 PHC string) of the unlock password, if one is set. Only
+    /// changed through its own command, which checks the current password.
+    pub password: Option<String>,
     /// Domains of each category's community list (normalised), loaded from
     /// their own files. Never serialised.
     #[serde(skip)]
@@ -332,7 +366,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: STATE_VERSION,
             categories: default_categories(),
             lists: vec![
                 BlockList {
@@ -344,6 +378,9 @@ impl Default for State {
                     apps: vec![],
                     categories: vec!["social".into()],
                     mode: ListMode::Block,
+                    youtube_channels: vec![],
+                    except_sites: vec![],
+                    except_apps: vec![],
                 },
                 BlockList {
                     id: "video".into(),
@@ -354,6 +391,9 @@ impl Default for State {
                     apps: vec![],
                     categories: vec!["video".into()],
                     mode: ListMode::Block,
+                    youtube_channels: vec![],
+                    except_sites: vec![],
+                    except_apps: vec![],
                 },
                 BlockList {
                     id: "games".into(),
@@ -364,6 +404,9 @@ impl Default for State {
                     apps: vec![],
                     categories: vec!["gaming".into()],
                     mode: ListMode::Block,
+                    youtube_channels: vec![],
+                    except_sites: vec![],
+                    except_apps: vec![],
                 },
             ],
             schedules: vec![],
@@ -374,12 +417,34 @@ impl Default for State {
             stats: BTreeMap::new(),
             limits: vec![],
             usage: BTreeMap::new(),
+            password: None,
             source_sites: BTreeMap::new(),
         }
     }
 }
 
+/// Current data version, see [`State::migrate`].
+pub const STATE_VERSION: u32 = 2;
+
+/// Built-in categories added after the first release, with the data version
+/// that introduced them. Existing installs get them once.
+const ADDED_CATEGORIES: &[(u32, &str)] = &[(2, "shorts")];
+
 impl State {
+    /// Upgrades data saved by an older version. Safe to call repeatedly.
+    pub fn migrate(&mut self) {
+        if self.version < STATE_VERSION {
+            for (since, id) in ADDED_CATEGORIES {
+                if self.version < *since && self.category(id).is_none() {
+                    if let Some(c) = default_categories().into_iter().find(|c| c.id == *id) {
+                        self.categories.push(c);
+                    }
+                }
+            }
+            self.version = STATE_VERSION;
+        }
+    }
+
     pub fn list(&self, id: &str) -> Option<&BlockList> {
         self.lists.iter().find(|l| l.id == id)
     }

@@ -5,3 +5,5 @@ src-tauri/gen/schemas/
 *.log
 .DS_Store
 *.tsbuildinfo
+dev/service-harness/target/
+dist-extension/

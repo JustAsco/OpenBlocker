@@ -25,6 +25,13 @@ pub fn normalize_domain(input: &str) -> Option<String> {
     }
     let s = s.trim_start_matches("*.").trim_start_matches('.').trim_end_matches('.');
     let s = s.strip_prefix("www.").unwrap_or(s);
+    // Never block addresses of this computer: IP literals (127.0.0.1, the
+    // app's own bridge), `*.localhost` (WebView2 serves OpenBlocker's window
+    // from tauri.localhost) and `*.local` network names.
+    let numeric = s.split('.').all(|l| !l.is_empty() && l.chars().all(|c| c.is_ascii_digit()));
+    if numeric || s == "localhost" || s.ends_with(".localhost") || s.ends_with(".local") {
+        return None;
+    }
     let valid = !s.is_empty()
         && s.len() <= 253
         && s.contains('.')
@@ -131,6 +138,36 @@ pub fn parse_domain_list(text: &str) -> BTreeSet<String> {
         }
     }
     out
+}
+
+/// Turns what people paste for a YouTube channel into one canonical form:
+/// `@handle` (lowercase), a channel id `UC…` (22 more characters, case kept),
+/// or a legacy `c/name` / `user/name`. Accepts full URLs
+/// (`https://www.youtube.com/@Name/videos`), `@Name`, a bare handle, or an id.
+/// Mirrored in `src/lib/util.ts` and `extension/common.js`.
+pub fn normalize_channel(input: &str) -> Option<String> {
+    let s = input.trim();
+    let s = s.split_once("://").map(|(_, r)| r).unwrap_or(s);
+    let lower = s.to_ascii_lowercase();
+    let host = ["www.youtube.com/", "m.youtube.com/", "youtube.com/", "music.youtube.com/"]
+        .iter()
+        .find(|p| lower.starts_with(*p));
+    let was_url = host.is_some() || input.contains("://") || s.contains(['?', '#']);
+    let s = host.map(|p| &s[p.len()..]).unwrap_or(s);
+    let s = s.split(['?', '#']).next().unwrap_or("").trim_matches('/');
+    let mut parts = s.split('/');
+    let first = parts.next().unwrap_or("");
+    let ok = |t: &str| !t.is_empty() && t.len() <= 100 && t.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    let is_id = |t: &str| t.len() == 24 && t.starts_with("UC") && ok(t);
+    match first {
+        "channel" => parts.next().filter(|id| is_id(id)).map(str::to_string),
+        "c" | "user" => parts.next().filter(|n| ok(n)).map(|n| format!("{first}/{}", n.to_ascii_lowercase())),
+        h if h.starts_with('@') && ok(&h[1..]) => Some(h.to_ascii_lowercase()),
+        id if is_id(id) => Some(id.to_string()),
+        // A bare name is taken as a handle, but not when it was a URL path.
+        h if !was_url && !s.contains('/') && ok(h) && !h.contains('.') => Some(format!("@{}", h.to_ascii_lowercase())),
+        _ => None,
+    }
 }
 
 /// Host names written for one blocked domain.
@@ -306,5 +343,29 @@ mod tests {
                     plain.example.net\n||adblock.example.com^\n||skip.example.com/path^\n! adblock comment\n::1 ip6-localhost\n";
         let got: Vec<String> = parse_domain_list(text).into_iter().collect();
         assert_eq!(got, ["adblock.example.com", "ads.example.com", "plain.example.net", "tracker.example.org"]);
+    }
+
+    #[test]
+    fn normalizes_channels() {
+        assert_eq!(normalize_channel("https://www.youtube.com/@Veritasium/videos").as_deref(), Some("@veritasium"));
+        assert_eq!(normalize_channel("@3Blue1Brown").as_deref(), Some("@3blue1brown"));
+        assert_eq!(normalize_channel("kurzgesagt").as_deref(), Some("@kurzgesagt"));
+        assert_eq!(normalize_channel("youtube.com/channel/UCsXVk37bltHxD1rDPwtNM8Q").as_deref(), Some("UCsXVk37bltHxD1rDPwtNM8Q"));
+        assert_eq!(normalize_channel("UCsXVk37bltHxD1rDPwtNM8Q").as_deref(), Some("UCsXVk37bltHxD1rDPwtNM8Q"));
+        assert_eq!(normalize_channel("https://m.youtube.com/c/SomeName").as_deref(), Some("c/somename"));
+        assert_eq!(normalize_channel("https://youtube.com/user/Old?x=1").as_deref(), Some("user/old"));
+        assert_eq!(normalize_channel("https://youtube.com/watch?v=abc"), None);
+        assert_eq!(normalize_channel("example.com"), None);
+        assert_eq!(normalize_channel(""), None);
+    }
+
+    #[test]
+    fn local_addresses_are_never_blocked() {
+        for d in ["127.0.0.1", "http://127.0.0.1:47613/v1/rules", "tauri.localhost", "ipc.localhost", "localhost", "nas.local", "192.168.1.1"] {
+            assert_eq!(normalize_domain(d), None, "{d}");
+            assert_eq!(normalize_site(d), None, "{d}");
+        }
+        assert_eq!(normalize_domain("1password.com").as_deref(), Some("1password.com"));
+        assert!(parse_domain_list("0.0.0.0 tauri.localhost\n0.0.0.0 127.0.0.1\n").is_empty());
     }
 }

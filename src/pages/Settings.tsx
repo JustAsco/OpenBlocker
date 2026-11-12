@@ -1,7 +1,8 @@
 import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Upload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
-import { PageHeader, Toggle, usePref } from "../components/ui";
+import { PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
@@ -11,6 +12,7 @@ export function SettingsPage() {
   const { settings } = snap!.state;
   const status = snap!.status;
   const [siteIcons, setSiteIcons] = usePref("site-icons", true);
+  const [theme, setTheme] = usePref<"dark" | "light" | "system">("theme", "dark");
   const { toast } = useStore();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [extPath, setExtPath] = useState<string | null>(null);
@@ -24,15 +26,7 @@ export function SettingsPage() {
   const locked = status.active.some((b) => b.locked);
   // Hidden emergency reset: click the version number 7 times in a row.
   const [resetOpen, setResetOpen] = useState(false);
-  const clicks = useRef<number[]>([]);
-  const versionClick = () => {
-    const now = Date.now();
-    clicks.current = [...clicks.current.filter((t) => now - t < 3000), now];
-    if (clicks.current.length >= 7) {
-      clicks.current = [];
-      setResetOpen(true);
-    }
-  };
+  const versionClick = useSecretClicks(() => setResetOpen(true));
 
   return (
     <>
@@ -42,6 +36,13 @@ export function SettingsPage() {
           <h2 className="mb-2 font-semibold">Blocking</h2>
           <div className="divide-y divide-line">
             <Toggle label="Block subdomains" hint="Also block www., m. and mobile. versions of every website." checked={settings.blockSubdomains} lockedOn={locked} onChange={(blockSubdomains) => save({ blockSubdomains })} />
+            <Toggle
+              label="Hide Shorts and Reels in feeds"
+              hint="While Shorts or Reels are blocked (e.g. with the “Short videos” category), also hide their shelves and buttons on YouTube, Instagram and Facebook. Needs the extension."
+              checked={settings.hideShortVideoFeeds}
+              lockedOn={locked}
+              onChange={(hideShortVideoFeeds) => save({ hideShortVideoFeeds })}
+            />
             <Toggle label="Flush DNS cache" hint="Helps new blocks apply sooner. Browsers can keep open connections alive; the extension below fixes that." checked={settings.flushDns} onChange={(flushDns) => save({ flushDns })} />
             <Toggle label="Block Task Manager while frozen" checked={settings.freezeBlocksTaskManager} onChange={(freezeBlocksTaskManager) => save({ freezeBlocksTaskManager })} />
             <div className="py-3">
@@ -62,12 +63,24 @@ export function SettingsPage() {
                 }}
                 className="w-full accent-violet-500"
               />
-              <p className="mt-1 text-xs text-muted">
-                How much you must type to stop a “Type to unlock” block early.{locked && " Can only be made longer while a locked block is running."}
+              <Segmented
+                className="mt-3 w-full"
+                value={settings.unlockTextStyle}
+                onChange={(unlockTextStyle) => save({ unlockTextStyle })}
+                options={[
+                  { value: "random", label: "Random characters", title: "Mindless but tedious" },
+                  { value: "reflection", label: "Reflection", title: "Sentences about why you want to stop early" },
+                ]}
+              />
+              <p className="mt-2 text-xs text-muted">
+                How much you must type to stop a “Type to unlock” block early. “Reflection” has you type sentences about what you're about to give up instead of
+                random characters.{locked && " Can only be made longer while a locked block is running."}
               </p>
             </div>
           </div>
         </section>
+
+        <PasswordCard />
 
         <section className="card p-6 lg:row-span-2">
           <h2 className="mb-1 flex items-center gap-2 font-semibold">
@@ -83,11 +96,23 @@ export function SettingsPage() {
                   <span key={b.exe} className="chip border-emerald-500/30 bg-emerald-500/10 py-1 text-sm text-emerald-200">
                     <span className="size-2 rounded-full bg-good" /> {b.name}
                     {b.extensionVersion && <span className="text-xs text-emerald-200/60">v{b.extensionVersion}</span>}
+                    {b.incognito === false && <span className="text-xs text-amber-300">· not in private windows</span>}
                   </span>
                 ))}
               </div>
             ) : (
               <p className="text-sm text-amber-200">Not connected in any browser yet.</p>
+            )}
+            {status.extension.some((b) => b.incognito === false) && (
+              <p className="mt-2 text-xs text-amber-200">
+                Private/incognito windows aren't blocked in{" "}
+                {status.extension
+                  .filter((b) => b.incognito === false)
+                  .map((b) => b.name)
+                  .join(", ")}
+                . Open the extension's details and turn on “Allow in Incognito” (Firefox: “Run in Private Windows”). While the extension is required, such
+                browsers are closed.
+              </p>
             )}
             {status.bridgeError && <p className="mt-2 text-xs text-red-300">{status.bridgeError}</p>}
           </div>
@@ -170,6 +195,18 @@ export function SettingsPage() {
             <Toggle label="Notifications" hint="Pomodoro phases, finished blocks and closed apps." checked={settings.notifications} onChange={(notifications) => save({ notifications })} />
             <Toggle label="Keep running in the tray" hint="Closing the window keeps your blocks active." checked={settings.closeToTray} onChange={(closeToTray) => save({ closeToTray })} />
             <Toggle label="Show website icons" hint="Icons are loaded from Google's favicon service." checked={siteIcons} onChange={setSiteIcons} />
+            <div className="flex items-center justify-between gap-6 py-3">
+              <span className="text-sm font-medium">Theme</span>
+              <Segmented
+                value={theme}
+                onChange={setTheme}
+                options={[
+                  { value: "dark", label: "Dark" },
+                  { value: "light", label: "Light" },
+                  { value: "system", label: "System" },
+                ]}
+              />
+            </div>
           </div>
         </section>
 

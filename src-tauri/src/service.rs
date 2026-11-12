@@ -16,7 +16,8 @@
 //! it restarts the app in the user's session if the app was killed (the app
 //! shows the freeze screen and notifications).
 
-use crate::{bridge, enforce, http, platform};
+use crate::{bridge, enforce, http, password, platform};
+use openblocker_core::model::LockMode;
 use chrono::{Local, NaiveDateTime};
 use openblocker_core::engine;
 use openblocker_core::model::State;
@@ -31,6 +32,8 @@ pub const NAME: &str = "OpenBlocker";
 pub const PORT: u16 = 47614;
 const HEADER: &str = "X-OpenBlocker-Service";
 const RESET_KEY: &str = "__reset__";
+/// Largest request body the service reads.
+const MAX_BODY: usize = 32 * 1024 * 1024;
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -72,6 +75,18 @@ struct KeyAnswer {
     key: String,
     #[serde(default)]
     answer: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PasswordChange {
+    current: Option<String>,
+    new: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PasswordSet {
+    generation: u64,
+    password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -162,6 +177,18 @@ pub mod client {
         }
     }
 
+    /// Sets, changes or removes the unlock password; returns the new
+    /// generation and the hash to store.
+    pub fn set_password(current: Option<String>, new: Option<String>) -> Result<(u64, Option<String>), String> {
+        let req = serde_json::to_vec(&PasswordChange { current, new }).unwrap();
+        let (code, body) = call("POST", "/svc/v1/password", Some(&req))?;
+        if code != 200 {
+            return Err(error_of(&body));
+        }
+        let r: PasswordSet = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        Ok((r.generation, r.password))
+    }
+
     pub fn reset_key() -> &'static str {
         RESET_KEY
     }
@@ -193,6 +220,7 @@ struct Svc {
     has_state: bool,
     /// Bumped whenever the service itself ends a lock (see [`Publish`]).
     generation: u64,
+    throttle: password::Throttle,
     dir: PathBuf,
     challenges: HashMap<String, String>,
     killed: VecDeque<(u64, String)>,
@@ -218,6 +246,31 @@ fn random_text(len: usize) -> String {
     out
 }
 
+/// The text to type to end a text-locked quick block early: random
+/// characters or reflection sentences, depending on the settings.
+pub fn unlock_text(state: &State, session_id: &str) -> String {
+    use openblocker_core::model::UnlockTextStyle;
+    let len = state.settings.unlock_text_length.clamp(10, 1000) as usize;
+    match state.settings.unlock_text_style {
+        UnlockTextStyle::Random => random_text(len),
+        UnlockTextStyle::Reflection => {
+            let session = state.sessions.iter().find(|s| s.id == session_id);
+            let list = session.and_then(|s| state.list(&s.list_id)).map(|l| l.name.as_str()).unwrap_or("");
+            let ends = session.map(|s| s.ends_at).unwrap_or_else(now_ms);
+            let until = chrono::DateTime::from_timestamp_millis(ends)
+                .map(|d| d.with_timezone(&Local).format("%H:%M").to_string())
+                .unwrap_or_default();
+            let ctx = openblocker_core::texts::Context {
+                list,
+                minutes_left: (ends - now_ms()) / 60_000,
+                until: &until,
+            };
+            let seed = u64::from_le_bytes(uuid::Uuid::new_v4().as_bytes()[..8].try_into().unwrap());
+            openblocker_core::texts::reflection(seed, &ctx, len)
+        }
+    }
+}
+
 impl Svc {
     fn load(dir: PathBuf, bridge: Arc<bridge::Bridge>) -> Self {
         let _ = std::fs::create_dir_all(dir.join("sources"));
@@ -225,10 +278,15 @@ impl Svc {
         let loaded = std::fs::read_to_string(dir.join("state.json"))
             .ok()
             .and_then(|s| serde_json::from_str::<State>(&s).ok());
+        let loaded = loaded.map(|mut s| {
+            s.migrate();
+            s
+        });
         let mut svc = Self {
             has_state: loaded.is_some(),
             // Unique per run, so an app that talked to a previous run resyncs.
             generation: now_ms().max(0) as u64,
+            throttle: password::Throttle::default(),
             state: loaded.unwrap_or_default(),
             dir,
             challenges: HashMap::new(),
@@ -294,22 +352,35 @@ impl Svc {
     }
 
     fn challenge(&mut self, key: &str) -> Result<String, String> {
-        let len = if key == RESET_KEY {
-            (self.state.settings.unlock_text_length as usize * 3).clamp(300, 1000)
+        let text = if key == RESET_KEY {
+            // The emergency reset is a way out, not a temptation: plain random text.
+            let len = (self.state.settings.unlock_text_length as usize * 3).clamp(300, 1000);
+            random_text(len)
         } else {
             let s = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?;
-            if s.lock != openblocker_core::model::LockMode::Text {
+            if s.lock != LockMode::Text {
                 return Err("This block can't be unlocked with a text.".into());
             }
-            self.state.settings.unlock_text_length.clamp(10, 1000) as usize
+            unlock_text(&self.state, key)
         };
-        Ok(self.challenges.entry(key.into()).or_insert_with(|| random_text(len)).clone())
+        Ok(self.challenges.entry(key.into()).or_insert(text).clone())
     }
 
     fn unlock(&mut self, key: &str, answer: Option<&str>) -> Result<u64, String> {
-        let needs_text = key != RESET_KEY || self.any_lock();
-        if needs_text && (answer.is_none() || self.challenges.get(key).map(String::as_str) != answer) {
-            return Err("The text doesn't match.".into());
+        let typed_ok = || answer.is_some() && self.challenges.get(key).map(String::as_str) == answer;
+        if key == RESET_KEY {
+            if self.any_lock() && !typed_ok() {
+                return Err("The text doesn't match.".into());
+            }
+        } else {
+            let lock = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?.lock;
+            match lock {
+                LockMode::Text if !typed_ok() => return Err("The text doesn't match.".into()),
+                LockMode::Text => {}
+                LockMode::Password => self.throttle.check(answer, self.state.password.as_deref(), now_ms())?,
+                LockMode::Timer => return Err("This block can't be stopped before it ends.".into()),
+                LockMode::None => {}
+            }
         }
         self.challenges.remove(key);
         if key == RESET_KEY {
@@ -324,6 +395,19 @@ impl Svc {
         self.generation += 1;
         self.save();
         Ok(self.generation)
+    }
+
+    /// Sets, changes or removes the unlock password. Returns the new
+    /// generation and hash.
+    fn set_password(&mut self, current: Option<&str>, new: Option<&str>) -> Result<(u64, Option<String>), String> {
+        if new.is_none() && self.state.sessions.iter().any(|s| s.lock == LockMode::Password && s.ends_at > now_ms()) {
+            return Err("A password-locked block is running. You can remove the password once it ends.".into());
+        }
+        let hash = password::change(&mut self.throttle, self.state.password.as_deref(), current, new, now_ms())?;
+        self.state.password = hash.clone();
+        self.generation += 1;
+        self.save();
+        Ok((self.generation, hash))
     }
 
     fn set_source(&mut self, id: &str, text: &str) -> Result<(), String> {
@@ -369,9 +453,15 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
     }
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or("").to_string();
+    // Bounded body: a community list of 250,000 domains is about 6 MB.
+    if req.body_length().unwrap_or(0) > MAX_BODY {
+        let _ = req.respond(tiny_http::Response::empty(413));
+        return;
+    }
     let mut body = String::new();
-    if std::io::Read::read_to_string(&mut req.as_reader(), &mut body).is_err() {
-        let _ = req.respond(tiny_http::Response::empty(400));
+    let mut reader = std::io::Read::take(req.as_reader(), MAX_BODY as u64 + 1);
+    if std::io::Read::read_to_string(&mut reader, &mut body).is_err() || body.len() > MAX_BODY {
+        let _ = req.respond(tiny_http::Response::empty(413));
         return;
     }
     let mut s = svc.lock().unwrap();
@@ -407,6 +497,13 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
             .and_then(|k| s.unlock(&k.key, k.answer.as_deref()))
         {
             Ok(generation) => respond(req, 200, &Generation { generation }),
+            Err(e) => respond(req, 403, &err(e)),
+        },
+        ("POST", "/svc/v1/password") => match serde_json::from_str::<PasswordChange>(&body)
+            .map_err(|e| e.to_string())
+            .and_then(|p| s.set_password(p.current.as_deref(), p.new.as_deref()))
+        {
+            Ok((generation, password)) => respond(req, 200, &PasswordSet { generation, password }),
             Err(e) => respond(req, 403, &err(e)),
         },
         ("PUT", "/svc/v1/source") => {

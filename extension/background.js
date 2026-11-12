@@ -10,7 +10,8 @@ const BLOCK_PAGE = api.runtime.getURL("blocked.html");
 const POLL_MS = 2000;
 const EMPTY = { blocked: [], blockedPaths: [], allowOnly: null, until: null, lists: [] };
 // Browsers cap regex rules (Chrome: 1000); leave room for the other rules.
-const MAX_PATH_RULES = 900;
+const MAX_PATH_RULES = 700;
+const MAX_EXCEPTION_RULES = 200;
 
 let current = null; // rules currently installed
 let currentKey = null;
@@ -47,7 +48,8 @@ let lastRules = null; // last full rules (with rev), to reuse when unchanged
 
 async function fetchRules() {
   try {
-    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl() });
+    const incognito = await api.extension.isAllowedIncognitoAccess().catch(() => false);
+    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl(), i: incognito ? "1" : "0" });
     if (lastRules?.rev) params.set("r", lastRules.rev);
     const res = await fetch(`${ENDPOINT}?${params}`, {
       headers: { "X-OpenBlocker": "1" },
@@ -101,6 +103,20 @@ function buildRules(rules) {
       },
     });
   });
+  // List exceptions such as reddit.com/r/rust: reachable although the site is blocked.
+  (rules.allowedPaths || []).slice(0, MAX_EXCEPTION_RULES).forEach((p, i) => {
+    const slash = p.indexOf("/");
+    out.push({
+      id: 5000 + i,
+      priority: 3,
+      action: { type: "allow" },
+      condition: {
+        regexFilter: `^https?://([^/?#]*\\.)?${escape(p.slice(0, slash))}(:[0-9]+)?${escape(p.slice(slash))}([/?#].*)?$`,
+        isUrlFilterCaseSensitive: false,
+        resourceTypes: ["main_frame", "sub_frame"],
+      },
+    });
+  });
   if (rules.allowOnly) {
     out.push({
       id: 2,
@@ -121,12 +137,100 @@ async function sweepTabs(rules) {
   for (const tab of tabs) {
     if (tab.url && isBlocked(tab.url, rules)) {
       api.tabs.update(tab.id, { url: BLOCK_PAGE + "#" + tab.url }).catch(() => {});
+    } else if (tab.url) {
+      checkVideo(tab.id, tab.url);
     }
   }
 }
 
+// ───────────── YouTube channel allowlist ─────────────
+//
+// A video's address doesn't say who uploaded it, so each video is looked up
+// once through YouTube's public oEmbed endpoint. If that fails (e.g. the
+// video doesn't allow embedding), the content script reports the channel
+// shown on the page. Videos embedded on other websites aren't checked yet
+// (see the roadmap).
+
+const videoChannels = new Map(); // video id -> channel (oEmbed)
+const pageChannels = new Map(); // video id -> channel (reported by the page)
+const channelIds = new Map(); // "@handle" / "c/name" / "user/name" -> "UC…" id (or null)
+
+function remember(map, key, value) {
+  map.set(key, value);
+  if (map.size > 2000) map.delete(map.keys().next().value);
+}
+
+async function lookupVideo(videoId) {
+  if (videoChannels.has(videoId)) return videoChannels.get(videoId);
+  try {
+    const watch = `https://www.youtube.com/watch?v=${videoId}`;
+    const res = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watch)}`);
+    if (res.ok) {
+      const channel = normalizeChannel((await res.json()).author_url);
+      if (channel) remember(videoChannels, videoId, channel);
+      return channel;
+    }
+  } catch {
+    /* offline or blocked: fall back to the page */
+  }
+  return null;
+}
+
+/** "UC…" id of a channel given as @handle (or legacy name), via its page. */
+async function channelIdOf(ref) {
+  if (ref.startsWith("UC")) return ref;
+  if (channelIds.has(ref)) return channelIds.get(ref);
+  let id = null;
+  try {
+    const html = await (await fetch(`https://www.youtube.com/${ref}`, { credentials: "include" })).text();
+    id =
+      html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/)?.[1] ??
+      html.match(/"externalId":"(UC[\w-]{22})"/)?.[1] ??
+      null;
+  } catch {
+    /* unknown */
+  }
+  remember(channelIds, ref, id);
+  return id;
+}
+
+async function channelAllowed(channel, allowed) {
+  if (allowed.includes(channel)) return true;
+  // The same channel can be named by @handle or by id: compare ids.
+  const want = allowed.filter((a) => a.startsWith("UC"));
+  if (channel.startsWith("UC")) {
+    for (const a of allowed.filter((a) => !a.startsWith("UC"))) if ((await channelIdOf(a)) === channel) return true;
+    return false;
+  }
+  if (!want.length) return false;
+  const id = await channelIdOf(channel);
+  return !!id && want.includes(id);
+}
+
+async function checkVideo(tabId, url) {
+  const allowed = current?.youtubeChannels;
+  const videoId = allowed && videoIdOf(url);
+  if (!videoId) return;
+  const channel = (await lookupVideo(videoId)) ?? pageChannels.get(videoId);
+  // Unknown yet: the content script reports it once the page shows it.
+  if (!channel || (await channelAllowed(channel, allowed))) return;
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab || videoIdOf(tab.url) !== videoId || !current?.youtubeChannels) return;
+  api.tabs.update(tabId, { url: `${BLOCK_PAGE}?r=channel&c=${encodeURIComponent(channel)}#${tab.url}` }).catch(() => {});
+}
+
+api.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type === "yt-channel" && sender.tab?.id !== undefined) {
+    const channel = normalizeChannel(msg.channel);
+    if (channel && typeof msg.videoId === "string") {
+      remember(pageChannels, msg.videoId, channel);
+      checkVideo(sender.tab.id, sender.tab.url);
+    }
+  }
+});
+
 async function apply(rules) {
-  const key = rules.rev ?? JSON.stringify([rules.blocked, rules.blockedPaths, rules.allowOnly]);
+  const key = rules.rev ?? JSON.stringify([rules.blocked, rules.blockedPaths, rules.allowedPaths, rules.allowOnly]);
   if (key === currentKey) return;
   const existing = await api.declarativeNetRequest.getDynamicRules();
   await api.declarativeNetRequest.updateDynamicRules({
@@ -160,6 +264,8 @@ async function tick() {
 api.tabs.onUpdated.addListener((tabId, info) => {
   if (info.url && current && isBlocked(info.url, current)) {
     api.tabs.update(tabId, { url: BLOCK_PAGE + "#" + info.url }).catch(() => {});
+  } else if (info.url) {
+    checkVideo(tabId, info.url);
   }
 });
 

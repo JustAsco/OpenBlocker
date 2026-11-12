@@ -19,6 +19,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test -p openblocker-core
         working-directory: src-tauri
+      # The service's local API: request hardening, locks, unlocks, password, reset.
+      - run: python3 dev/service_api_test.py
 
   frontend:
     name: Frontend build

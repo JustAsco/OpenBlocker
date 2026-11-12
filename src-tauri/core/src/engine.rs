@@ -176,6 +176,7 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
         }
         apps.extend(list_apps);
     }
+    apps.retain(|a| !is_protected_exe(a));
     (sites, apps)
 }
 
@@ -194,8 +195,61 @@ pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSe
             sites.extend(extra.iter().cloned());
         }
     }
-    let apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
+    // Exceptions: a domain leaves out the whole site, a path just that part.
+    for e in list.except_sites.iter().filter_map(|e| crate::hosts::normalize_site(e)) {
+        if crate::hosts::is_path_site(&e) {
+            sites.retain(|s| s != &e && !s.starts_with(&format!("{e}/")));
+        } else {
+            sites.retain(|s| {
+                let d = crate::hosts::site_domain(s);
+                d != e && !d.ends_with(&format!(".{e}"))
+            });
+        }
+    }
+    let mut apps: BTreeSet<String> = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
+    apps.retain(|a| !list.except_apps.iter().any(|e| exe_matches(&e.exe, a)));
     (sites, apps)
+}
+
+/// Does a set of site entries block the whole domain a path belongs to?
+fn covers_domain(sites: &BTreeSet<String>, path: &str) -> bool {
+    let d = crate::hosts::site_domain(path);
+    sites
+        .iter()
+        .any(|s| !crate::hosts::is_path_site(s) && (d == s || d.ends_with(&format!(".{s}"))))
+}
+
+/// A list's path exceptions that open up part of a site it blocks
+/// (`reddit.com/r/rust` while `reddit.com` is blocked).
+pub fn list_excepted_paths(state: &State, list: &BlockList) -> BTreeSet<String> {
+    if list.mode != ListMode::Block {
+        return BTreeSet::new();
+    }
+    let (sites, _) = list_items(state, list);
+    list.except_sites
+        .iter()
+        .filter_map(|e| crate::hosts::normalize_site(e))
+        .filter(|e| crate::hosts::is_path_site(e) && covers_domain(&sites, e))
+        .collect()
+}
+
+/// Paths that stay reachable although their site is blocked: excepted by
+/// every active list that blocks their site (one list's exception doesn't
+/// override another list that blocks the whole site).
+pub fn excepted_paths(state: &State, blocks: &[ActiveBlock]) -> BTreeSet<String> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let active: Vec<(BTreeSet<String>, BTreeSet<String>)> = state
+        .lists
+        .iter()
+        .filter(|l| ids.contains(l.id.as_str()) && l.mode == ListMode::Block)
+        .map(|l| (list_items(state, l).0, list_excepted_paths(state, l)))
+        .collect();
+    let candidates: BTreeSet<&String> = active.iter().flat_map(|(_, ex)| ex).collect();
+    candidates
+        .into_iter()
+        .filter(|p| active.iter().all(|(sites, ex)| !covers_domain(sites, p) || ex.contains(*p)))
+        .cloned()
+        .collect()
 }
 
 /// If an allowlist is active: the only sites browsers may open (union of all
@@ -213,11 +267,23 @@ pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<S
     allowed
 }
 
+/// If an active list restricts YouTube to chosen channels: the channels
+/// whose videos may play (union of all such lists). `None` = no restriction.
+pub fn youtube_channels(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<String>> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let mut out: Option<BTreeSet<String>> = None;
+    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && !l.youtube_channels.is_empty()) {
+        out.get_or_insert_with(BTreeSet::new).extend(list.youtube_channels.iter().cloned());
+    }
+    out
+}
+
 fn strictness(l: LockMode) -> u8 {
     match l {
         LockMode::None => 0,
         LockMode::Text => 1,
-        LockMode::Timer => 2,
+        LockMode::Password => 2,
+        LockMode::Timer => 3,
     }
 }
 
@@ -264,6 +330,54 @@ pub fn category_is_superset(old: &Category, new: &Category) -> bool {
         .iter()
         .all(|a| new.apps.iter().any(|n| exe_matches(&n.exe, &normalize_exe(&a.exe))));
     sites_ok && apps_ok
+}
+
+/// Programs OpenBlocker never closes, whatever a list says: Windows itself
+/// (closing these can crash or lock up the PC), the shell that shows the tray
+/// icon, WebView2 (which draws OpenBlocker's window), and OpenBlocker. This
+/// keeps the app, and with it the emergency reset, reachable in any
+/// configuration. Task Manager is deliberately not here (frozen PCs block it).
+pub const PROTECTED_EXES: &[&str] = &[
+    "openblocker.exe",
+    "msedgewebview2.exe",
+    "system",
+    "registry",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "winlogon.exe",
+    "services.exe",
+    "lsass.exe",
+    "lsaiso.exe",
+    "svchost.exe",
+    "dwm.exe",
+    "explorer.exe",
+    "sihost.exe",
+    "fontdrvhost.exe",
+    "ctfmon.exe",
+    "conhost.exe",
+    "taskhostw.exe",
+    "runtimebroker.exe",
+    "dllhost.exe",
+    "audiodg.exe",
+    "spoolsv.exe",
+    "logonui.exe",
+    "lockapp.exe",
+    "userinit.exe",
+    "consent.exe",
+    "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe",
+    "searchhost.exe",
+    "textinputhost.exe",
+    "securityhealthservice.exe",
+    "msmpeng.exe",
+    "smartscreen.exe",
+    "werfault.exe",
+];
+
+/// Is this executable on the [`PROTECTED_EXES`] list?
+pub fn is_protected_exe(exe: &str) -> bool {
+    PROTECTED_EXES.iter().any(|p| exe_matches(exe, p))
 }
 
 /// Lowercase executable name without directory, always ending in `.exe` on Windows-style names.
@@ -470,6 +584,15 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
             ListMode::Block => os.is_subset(&ns),
             ListMode::Allow => ns.is_subset(&os),
         };
+        // A channel restriction may get stricter (fewer channels), never looser.
+        let channels_ok = o.youtube_channels.is_empty()
+            || (!n.youtube_channels.is_empty() && n.youtube_channels.iter().all(|c| o.youtube_channels.contains(c)));
+        if !channels_ok {
+            return Some(format!("“{}” is locked. You can remove YouTube channels, but not add any.", o.name));
+        }
+        if !list_excepted_paths(new, n).is_subset(&list_excepted_paths(old, o)) {
+            return Some(format!("“{}” is locked: no new exceptions until it ends.", o.name));
+        }
         if !apps_ok || !sites_ok {
             return Some(match o.mode {
                 ListMode::Block => format!("“{}” is locked. You can add items, but not remove them.", o.name),
@@ -488,11 +611,15 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
     if !locked.is_empty() {
         let (o, n) = (&old.settings, &new.settings);
         if (o.block_subdomains && !n.block_subdomains)
+            || (o.hide_short_video_feeds && !n.hide_short_video_feeds)
             || (o.require_extension && !n.require_extension)
             || n.unlock_text_length < o.unlock_text_length
         {
             return Some("Settings that loosen blocking can't be changed while a locked block is running.".into());
         }
+    }
+    if old.password.is_some() && new.password != old.password {
+        return Some("The password can only be changed with the current password.".into());
     }
     let today = date_key(local);
     for l in old.limits.iter().filter(|l| l.locked) {
@@ -710,6 +837,9 @@ mod tests {
             apps: vec![AppEntry { name: "Steam".into(), exe: "steam.exe".into(), path: None }],
             categories: vec![],
             mode: ListMode::Allow,
+            youtube_channels: vec![],
+            except_sites: vec![],
+            except_apps: vec![],
         });
         let local = at(9, 12, 0);
         assert_eq!(allowed_sites(&st, &active_blocks(&st, 0, &local)), None);
@@ -921,5 +1051,120 @@ mod tests {
         state.source_sites.insert("social".into(), std::sync::Arc::new(["huge-list-domain.com".to_string()].into()));
         let (sites, _) = list_items(&state, &state.lists[0]);
         assert!(sites.contains("huge-list-domain.com"));
+    }
+
+    #[test]
+    fn youtube_channel_restrictions() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.lists[1].youtube_channels = vec!["@a".into(), "@b".into()];
+        old.sessions.push(Session { id: "s".into(), list_id: "video".into(), started_at: 0, ends_at: now + 60 * MINUTE_MS, lock: LockMode::Timer });
+        let blocks = active_blocks(&old, now, &local);
+        assert_eq!(youtube_channels(&old, &blocks), Some(["@a".to_string(), "@b".to_string()].into()));
+        let mut new = old.clone();
+        new.lists[1].youtube_channels = vec!["@a".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_none(), "fewer channels is stricter");
+        new.lists[1].youtube_channels.push("@c".into());
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "adding a channel");
+        new.lists[1].youtube_channels.clear();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "dropping the restriction");
+    }
+
+    #[test]
+    fn migration_adds_new_builtin_categories_once() {
+        let mut old = State::default();
+        old.version = 1;
+        old.categories.retain(|c| c.id != "shorts");
+        old.migrate();
+        assert!(old.category("shorts").is_some_and(|c| c.sites.contains(&"youtube.com/shorts".to_string())));
+        assert_eq!(old.version, STATE_VERSION);
+        // Deleted again by the user: stays deleted.
+        old.categories.retain(|c| c.id != "shorts");
+        old.migrate();
+        assert!(old.category("shorts").is_none());
+    }
+
+    #[test]
+    fn exceptions_leave_sites_and_apps_out() {
+        let mut state = State::default();
+        // Social media except Facebook (also covers its subdomains).
+        state.lists[0].except_sites = vec!["facebook.com".into()];
+        let (sites, _) = list_items(&state, &state.lists[0]);
+        assert!(sites.contains("instagram.com") && !sites.contains("facebook.com"));
+        // Games except Steam.
+        state.lists[2].except_apps = vec![AppEntry { name: "Steam".into(), exe: "steam.exe".into(), path: None }];
+        let (_, apps) = list_items(&state, &state.lists[2]);
+        assert!(!apps.contains("steam.exe"));
+    }
+
+    #[test]
+    fn path_exceptions_open_part_of_a_blocked_site() {
+        let local = at(4, 12, 0);
+        let mut state = State::default();
+        state.lists[0].categories.clear();
+        state.lists[0].sites = vec!["reddit.com".into()];
+        state.lists[0].except_sites = vec!["reddit.com/r/rust".into(), "example.org/x".into()];
+        state.sessions.push(Session { id: "a".into(), list_id: "social".into(), started_at: 0, ends_at: 10, lock: LockMode::None });
+        let blocks = active_blocks(&state, 0, &local);
+        // Only exceptions inside a blocked site count.
+        assert_eq!(excepted_paths(&state, &blocks), ["reddit.com/r/rust".to_string()].into());
+        // Another active list blocking all of reddit wins.
+        state.lists[1].categories.clear();
+        state.lists[1].sites = vec!["reddit.com".into()];
+        state.sessions.push(Session { id: "b".into(), list_id: "video".into(), started_at: 0, ends_at: 10, lock: LockMode::None });
+        let blocks = active_blocks(&state, 0, &local);
+        assert!(excepted_paths(&state, &blocks).is_empty());
+    }
+
+    #[test]
+    fn locked_lists_get_no_new_exceptions() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.sessions.push(Session { id: "s".into(), list_id: "social".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Timer });
+        let mut new = old.clone();
+        new.lists[0].except_sites = vec!["facebook.com".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        let mut new = old.clone();
+        new.lists[0].sites.push("reddit.com".into());
+        new.lists[0].except_sites = vec!["reddit.com/r/rust".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "path exception");
+    }
+
+    #[test]
+    fn password_locks() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.password = Some("hash".into());
+        old.sessions.push(Session { id: "p".into(), list_id: "social".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Password });
+        assert!(active_blocks(&old, now, &local)[0].locked);
+        let mut new = old.clone();
+        new.sessions.clear();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "password-locked blocks need the password");
+        let mut new = old.clone();
+        new.password = None;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "removing the password");
+        // Stricter wins when merging: password beats text, timer beats password.
+        let mut st = State::default();
+        start_or_merge_session(&mut st, "social", 0, 10, LockMode::Text, "a".into());
+        start_or_merge_session(&mut st, "social", 0, 10, LockMode::Password, "b".into());
+        assert_eq!(st.sessions[0].lock, LockMode::Password);
+        start_or_merge_session(&mut st, "social", 0, 10, LockMode::Timer, "c".into());
+        assert_eq!(st.sessions[0].lock, LockMode::Timer);
+    }
+
+    #[test]
+    fn protected_programs_are_never_enforced() {
+        let mut state = State::default();
+        state.lists[0].apps = ["explorer.exe", "OpenBlocker.exe", "msedgewebview2.exe", "csrss", "steam.exe", "Taskmgr.exe"]
+            .iter()
+            .map(|e| AppEntry { name: e.to_string(), exe: e.to_string(), path: None })
+            .collect();
+        let blocks = vec![ActiveBlock { list_id: "social".into(), source: Source::Session, ref_id: "x".into(), ends_at: 1, locked: false }];
+        let (_, apps) = enforced_targets(&state, &blocks);
+        assert_eq!(apps, ["steam.exe".to_string(), "taskmgr.exe".to_string()].into());
+        assert!(is_protected_exe("C:\\Windows\\explorer.exe"));
     }
 }

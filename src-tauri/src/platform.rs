@@ -126,14 +126,14 @@ impl ProcessKiller {
         if blocked.is_empty() {
             return vec![];
         }
-        let own = std::process::id();
+        let own_exe = std::env::current_exe().ok();
         let Some(sys) = self.refresh() else { return vec![] };
         let mut killed = Vec::new();
         for (pid, proc_) in sys.processes() {
-            if pid.as_u32() == own {
+            let name = proc_.name().to_string_lossy();
+            if !may_close(pid.as_u32(), &name, proc_.exe(), own_exe.as_deref()) {
                 continue;
             }
-            let name = proc_.name().to_string_lossy();
             if blocked.iter().any(|b| engine::exe_matches(&name, b)) && proc_.kill() {
                 killed.push(name.to_string());
             }
@@ -141,18 +141,19 @@ impl ProcessKiller {
         killed
     }
 
-    /// Closes browsers in which the extension isn't running. Browsers get a
+    /// Closes browsers in which the extension isn't running (or isn't allowed
+    /// in private windows). Browsers get a
     /// 30 s grace period after starting so the extension can check in.
     /// Returns friendly names of the browsers that were closed.
     pub fn close_unprotected_browsers(&mut self, has_extension: impl Fn(&str) -> bool) -> Vec<String> {
         let now_s = chrono::Utc::now().timestamp().max(0) as u64;
-        let own = std::process::id();
+        let own_exe = std::env::current_exe().ok();
         let Some(sys) = self.refresh() else { return vec![] };
         let mut closed = BTreeSet::new();
         for (pid, p) in sys.processes() {
             let exe = p.name().to_string_lossy().to_lowercase();
             let Some(name) = crate::bridge::browser_name(&exe) else { continue };
-            if pid.as_u32() == own || has_extension(&exe) || now_s.saturating_sub(p.start_time()) < 30 {
+            if !may_close(pid.as_u32(), &exe, p.exe(), own_exe.as_deref()) || has_extension(&exe) || now_s.saturating_sub(p.start_time()) < 30 {
                 continue;
             }
             if p.kill() {
@@ -184,6 +185,31 @@ impl ProcessKiller {
         }
         out.into_values().collect()
     }
+}
+
+/// Safety net before closing any process: never this process or another
+/// copy of OpenBlocker (even renamed), never a protected Windows program, and
+/// never anything outside a user's desktop session. The service runs as
+/// SYSTEM, so without the last rule a list could close system services.
+fn may_close(pid: u32, name: &str, path: Option<&std::path::Path>, own_exe: Option<&std::path::Path>) -> bool {
+    if pid == std::process::id() || engine::is_protected_exe(name) {
+        return false;
+    }
+    if let (Some(p), Some(own)) = (path, own_exe) {
+        if p == own {
+            return false;
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+        let mut session = 0u32;
+        // Session 0 holds services; unknown sessions are left alone too.
+        if unsafe { ProcessIdToSessionId(pid, &mut session) }.is_err() || session == 0 {
+            return false;
+        }
+    }
+    true
 }
 
 fn pretty_name(exe: &str) -> String {
