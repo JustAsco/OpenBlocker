@@ -324,7 +324,8 @@ fn save_list(shared: tauri::State<'_, Shared>, mut list: BlockList) -> Res<Snaps
             .retain(|c| i.state.categories.iter().any(|x| &x.id == c) && seen_cats.insert(c.clone()));
         if let Some(old) = i.state.lists.iter().find(|l| l.id == list.id).cloned() {
             if let Some(until) = i.list_locked_until(&list.id) {
-                if !engine::is_strict_superset(&old, &list) {
+                // Allowlists get stricter by shrinking; the general lock check covers them.
+                if old.mode == ListMode::Block && old.app_mode == ListMode::Block && !engine::is_strict_superset(&old, &list) {
                     return Err(format!(
                         "“{}” is locked until {}. You can add items, but not remove them.",
                         old.name,
@@ -1183,6 +1184,18 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
             killed = out.killed;
             closed = out.closed_browsers;
+        }
+
+        // 4. App allowlist: the service can't see the user's windows, so the
+        //    app closes programs that aren't allowed when they come to the front.
+        let allowed = {
+            let i = shared.lock().unwrap();
+            engine::allowed_apps(&i.state, &i.blocks())
+        };
+        if let Some(allowed) = allowed {
+            if let Some(name) = platform::close_foreground_unless(|exe| engine::app_allowed(&allowed, exe)) {
+                killed.push(name);
+            }
         }
 
         if !killed.is_empty() {

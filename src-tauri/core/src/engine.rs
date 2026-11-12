@@ -199,11 +199,13 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str())) {
         let (list_sites, list_apps) = list_items(state, list);
-        // Allowlist sites are *allowed*, not blocked; their apps are still blocked.
+        // Allowlist items are *allowed*, not blocked.
         if list.mode == ListMode::Block {
             sites.extend(list_sites);
         }
-        apps.extend(list_apps);
+        if list.app_mode == ListMode::Block {
+            apps.extend(list_apps);
+        }
     }
     apps.retain(|a| !is_protected_exe(a));
     (sites, apps)
@@ -294,6 +296,23 @@ pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<S
             .extend(sites.iter().map(|s| crate::hosts::site_domain(s).to_string()));
     }
     allowed
+}
+
+/// If an app allowlist is active: the only programs that may be used
+/// (normalised exe names, union of all active app allowlists; protected
+/// Windows programs are always allowed on top). `None` = no app allowlist.
+pub fn allowed_apps(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<String>> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let mut allowed: Option<BTreeSet<String>> = None;
+    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && l.app_mode == ListMode::Allow) {
+        allowed.get_or_insert_with(BTreeSet::new).extend(list_items(state, list).1);
+    }
+    allowed
+}
+
+/// May `exe` be used while `allowed` (from [`allowed_apps`]) is in force?
+pub fn app_allowed(allowed: &BTreeSet<String>, exe: &str) -> bool {
+    is_protected_exe(exe) || allowed.iter().any(|a| exe_matches(exe, a))
 }
 
 /// If an active list restricts YouTube to chosen channels: the channels
@@ -604,12 +623,15 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
         let (Some(o), Some(n)) = (old.list(id), new.list(id)) else {
             return Some("A locked list can't be deleted.".into());
         };
-        if o.mode != n.mode {
+        if o.mode != n.mode || o.app_mode != n.app_mode {
             return Some(format!("“{}” is locked: its mode can't change.", o.name));
         }
         let (os, oa) = list_items(old, o);
         let (ns, na) = list_items(new, n);
-        let apps_ok = oa.iter().all(|a| na.iter().any(|x| exe_matches(x, a)));
+        let apps_ok = match o.app_mode {
+            ListMode::Block => oa.iter().all(|a| na.iter().any(|x| exe_matches(x, a))),
+            ListMode::Allow => na.iter().all(|a| oa.iter().any(|x| exe_matches(x, a))),
+        };
         let sites_ok = match o.mode {
             ListMode::Block => os.is_subset(&ns),
             ListMode::Allow => ns.is_subset(&os),
@@ -622,6 +644,9 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
         }
         if !list_excepted_paths(new, n).is_subset(&list_excepted_paths(old, o)) {
             return Some(format!("“{}” is locked: no new exceptions until it ends.", o.name));
+        }
+        if !apps_ok && o.app_mode == ListMode::Allow {
+            return Some(format!("“{}” is locked: you can remove allowed apps, but not add any.", o.name));
         }
         if !apps_ok || !sites_ok {
             return Some(match o.mode {
@@ -871,6 +896,7 @@ mod tests {
             youtube_channels: vec![],
             except_sites: vec![],
             except_apps: vec![],
+            app_mode: ListMode::Block,
         });
         let local = at(9, 12, 0);
         assert_eq!(allowed_sites(&st, &active_blocks(&st, 0, &local)), None);
@@ -1239,5 +1265,37 @@ mod tests {
         let mut st = new.clone();
         tick(&mut st, now + 24 * 60 * MINUTE_MS);
         assert!(st.skips.is_empty());
+    }
+
+    #[test]
+    fn app_allowlist() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        let app = |exe: &str| AppEntry { name: exe.into(), exe: exe.into(), path: None };
+        old.lists[2].app_mode = ListMode::Allow;
+        old.lists[2].categories.clear();
+        old.lists[2].apps = vec![app("code.exe"), app("firefox.exe")];
+        old.sessions.push(Session { id: "s".into(), list_id: "games".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Timer });
+        let blocks = active_blocks(&old, now, &local);
+        // Allowed apps aren't blocked, and only they (plus Windows) may run.
+        assert!(enforced_targets(&old, &blocks).1.is_empty());
+        let allowed = allowed_apps(&old, &blocks).unwrap();
+        assert!(app_allowed(&allowed, "Code.exe"));
+        assert!(app_allowed(&allowed, "explorer.exe"));
+        assert!(app_allowed(&allowed, "openblocker.exe"));
+        assert!(!app_allowed(&allowed, "steam.exe"));
+        assert_eq!(allowed_apps(&State::default(), &blocks), None);
+
+        // Locked: allowed apps can be removed, not added; the mode is fixed.
+        let mut new = old.clone();
+        new.lists[2].apps.pop();
+        assert!(lock_violation(&old, &new, now, &local).is_none());
+        let mut new = old.clone();
+        new.lists[2].apps.push(app("steam.exe"));
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        let mut new = old.clone();
+        new.lists[2].app_mode = ListMode::Block;
+        assert!(lock_violation(&old, &new, now, &local).is_some());
     }
 }

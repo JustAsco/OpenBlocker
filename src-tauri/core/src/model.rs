@@ -51,6 +51,10 @@ pub struct BlockList {
     /// Apps left out of this list even though a category includes them.
     #[serde(default)]
     pub except_apps: Vec<AppEntry>,
+    /// Block the listed apps, or (allowlist) allow *only* them: any other
+    /// program brought to the front is closed while the list is active.
+    #[serde(default)]
+    pub app_mode: ListMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -404,6 +408,7 @@ impl Default for State {
                     youtube_channels: vec![],
                     except_sites: vec![],
                     except_apps: vec![],
+                    app_mode: ListMode::Block,
                 },
                 BlockList {
                     id: "video".into(),
@@ -417,6 +422,7 @@ impl Default for State {
                     youtube_channels: vec![],
                     except_sites: vec![],
                     except_apps: vec![],
+                    app_mode: ListMode::Block,
                 },
                 BlockList {
                     id: "games".into(),
@@ -430,6 +436,7 @@ impl Default for State {
                     youtube_channels: vec![],
                     except_sites: vec![],
                     except_apps: vec![],
+                    app_mode: ListMode::Block,
                 },
             ],
             schedules: vec![],

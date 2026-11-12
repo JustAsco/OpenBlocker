@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Ban, Check, CircleCheck, CircleMinus, ExternalLink, Lock, Pencil, Plus, Puzzle, Tags, MonitorPlay, X } from "lucide-react";
+import { AppWindow, Ban, Check, CircleCheck, CircleMinus, ExternalLink, Lock, Pencil, Plus, Puzzle, Tags, MonitorPlay, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import type { SuggestionGroup } from "../components/Autocomplete";
@@ -120,6 +120,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
   const [tab, setTab] = useState<"items" | "exceptions" | "youtube">("items");
   const exceptSites = draft.exceptSites ?? [];
   const exceptApps = draft.exceptApps ?? [];
+  const appAllow = draft.appMode === "allow";
   const channels = draft.youtubeChannels ?? [];
   // What the list would block without its exceptions (suggestions for the Exceptions tab).
   const beforeExceptions = useMemo(() => listTargets(state, { ...draft, exceptSites: [], exceptApps: [] }), [state, draft]);
@@ -180,9 +181,10 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
       color={draft.color}
       name={draft.name}
       subtitle={
-        draft.mode === "allow"
-          ? `Allowlist · only ${total.sites.size} websites allowed · ${total.apps.size} apps blocked`
-          : `${total.sites.size} websites · ${total.apps.size} apps blocked in total`
+        [
+          draft.mode === "allow" ? `only ${total.sites.size} websites allowed` : `${total.sites.size} websites blocked`,
+          appAllow ? `only ${total.apps.size} apps allowed` : `${total.apps.size} apps blocked`,
+        ].join(" · ")
       }
       dirty={dirty}
       onName={(name) => setDraft({ ...draft, name })}
@@ -196,12 +198,14 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
         lockBlock && (
           <div className="mb-5 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
             <Lock size={16} className="shrink-0" />
-            Locked until {fmtTime(lockBlock.endsAt)}. You can add more, but can't remove anything until then.
+            {draft.mode === "allow" || appAllow
+              ? `Locked until ${fmtTime(lockBlock.endsAt)}. It can only get stricter until then.`
+              : `Locked until ${fmtTime(lockBlock.endsAt)}. You can add more, but can't remove anything until then.`}
           </div>
         )
       }
     >
-      <section className="mb-7">
+      <section className="mb-7 space-y-2">
         <Segmented<ListMode>
           className="w-full"
           value={draft.mode}
@@ -211,17 +215,36 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
             { value: "allow", label: <><CircleCheck size={14} /> Allow only these websites</> },
           ]}
         />
+        <Segmented<ListMode>
+          className="w-full"
+          value={draft.appMode ?? "block"}
+          onChange={(appMode) => setDraft({ ...draft, appMode })}
+          options={[
+            { value: "block", label: <><Ban size={14} /> Block these apps</> },
+            { value: "allow", label: <><CircleCheck size={14} /> Allow only these apps</> },
+          ]}
+        />
         {draft.mode === "allow" && (
           <div className="mt-3 flex items-start gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
             <Puzzle size={16} className="mt-0.5 shrink-0" />
             <div>
-              While this list is active, browsers can only open the websites below; everything else is blocked. Apps listed here are still blocked. This needs
+              While this list is active, browsers can only open the websites below; everything else is blocked. This needs
               the OpenBlocker browser extension, and browsers without it are closed while the allowlist runs.{" "}
               <span className="text-cyan-300">
                 {snap!.status.extension.length
                   ? `Extension active in ${snap!.status.extension.map((b) => b.name).join(", ")}.`
                   : "The extension isn't connected yet; see Settings → Browser extension."}
               </span>
+            </div>
+          </div>
+        )}
+        {appAllow && (
+          <div className="mt-3 flex items-start gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+            <AppWindow size={16} className="mt-0.5 shrink-0" />
+            <div>
+              While this list is active, only the apps below can be used: any other program you bring to the front is closed. Windows itself (desktop, taskbar,
+              Settings, File Explorer) and OpenBlocker always keep working.{" "}
+              <span className="text-cyan-300">Add your browser if you need websites.</span>
             </div>
           </div>
         )}
@@ -232,7 +255,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
         value={tab}
         onChange={setTab}
         options={[
-          { value: "items", label: <><Tags size={14} /> {draft.mode === "allow" ? "Allowed" : "Blocked"}</> },
+          { value: "items", label: <><Tags size={14} /> {draft.mode === "allow" && appAllow ? "Allowed" : draft.mode === "allow" || appAllow ? "Items" : "Blocked"}</> },
           { value: "exceptions", label: <><CircleMinus size={14} /> Exceptions{exceptSites.length + exceptApps.length ? ` · ${exceptSites.length + exceptApps.length}` : ""}</> },
           { value: "youtube", label: <><MonitorPlay size={14} /> YouTube channels{channels.length ? ` · ${channels.length}` : ""}</> },
         ]}
@@ -303,7 +326,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
 
       <ItemsEditor
         siteTitle={draft.mode === "allow" ? "Allowed websites" : "Extra websites"}
-        appTitle={draft.mode === "allow" ? "Blocked apps" : "Extra apps"}
+        appTitle={appAllow ? "Allowed apps" : "Extra apps"}
         sites={draft.sites}
         apps={draft.apps}
         onSites={(sites) => setDraft({ ...draft, sites })}
@@ -379,7 +402,7 @@ function NewListModal({ open, categories, onClose, onCreate }: { open: boolean; 
         <button className="btn-ghost" onClick={onClose}>
           Cancel
         </button>
-        <button className="btn-primary" disabled={!name.trim()} onClick={() => onCreate({ id: uid(), name: name.trim(), icon, color, sites: [], apps: [], categories: cats, mode: "block" })}>
+        <button className="btn-primary" disabled={!name.trim()} onClick={() => onCreate({ id: uid(), name: name.trim(), icon, color, sites: [], apps: [], categories: cats, mode: "block", appMode: "block" })}>
           Create list
         </button>
       </div>

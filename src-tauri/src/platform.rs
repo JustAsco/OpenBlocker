@@ -462,6 +462,12 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 
 /// Executable name of the window the user is looking at.
 pub fn foreground_exe() -> Option<String> {
+    let (_, path) = foreground_process()?;
+    path.rsplit(['\\', '/']).next().map(str::to_string)
+}
+
+/// Process id and full executable path of the foreground window.
+fn foreground_process() -> Option<(u32, String)> {
     #[cfg(windows)]
     unsafe {
         use windows::core::PWSTR;
@@ -485,8 +491,39 @@ pub fn foreground_exe() -> Option<String> {
         if !ok {
             return None;
         }
-        let path = String::from_utf16_lossy(&buf[..len as usize]);
-        path.rsplit('\\').next().map(str::to_string)
+        Some((pid, String::from_utf16_lossy(&buf[..len as usize])))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// App allowlist: closes the program in front unless `allowed(exe)` says it
+/// may be used. Only the foreground program is ever touched, so background
+/// helpers (drivers' tray tools, accessibility tools, sync clients) keep
+/// running. Programs from the Windows folder and everything [`may_close`]
+/// protects are always left alone. Returns the closed program's name.
+pub fn close_foreground_unless(allowed: impl Fn(&str) -> bool) -> Option<String> {
+    let (pid, path) = foreground_process()?;
+    let exe = path.rsplit(['\\', '/']).next()?.to_string();
+    let windows_dir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_lowercase();
+    let lower = path.to_lowercase();
+    if lower.starts_with(&format!("{windows_dir}\\")) || allowed(&exe) {
+        return None;
+    }
+    let own_exe = std::env::current_exe().ok();
+    if !may_close(pid, &exe, Some(std::path::Path::new(&path)), own_exe.as_deref()) {
+        return None;
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+        let handle = OpenProcess(PROCESS_TERMINATE, false, pid).ok()?;
+        let ok = TerminateProcess(handle, 1).is_ok();
+        let _ = CloseHandle(handle);
+        ok.then(|| pretty_name(&exe))
     }
     #[cfg(not(windows))]
     {

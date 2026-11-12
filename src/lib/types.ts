@@ -15,8 +15,10 @@ export interface BlockList {
   apps: AppEntry[];
   /** Included category ids. */
   categories: string[];
-  /** "block" the sites, or "allow" only them in browsers (apps are always blocked). */
+  /** "block" the sites, or "allow" only them in browsers. */
   mode: ListMode;
+  /** "block" the apps, or "allow" only them (any other program in front is closed). */
+  appMode?: ListMode;
   /** If not empty: while active, YouTube videos only play from these channels ("@handle", "UC…" id). */
   youtubeChannels?: string[];
   /** Websites left out although a category includes them; a path stays reachable inside a blocked site. */
