@@ -300,3 +300,16 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
     </div>
   );
 }
+
+/** Calls `onTrigger` after 7 clicks within 3 seconds (opens the hidden emergency reset). */
+export function useSecretClicks(onTrigger: () => void): () => void {
+  const clicks = useRef<number[]>([]);
+  return () => {
+    const now = Date.now();
+    clicks.current = [...clicks.current.filter((t) => now - t < 3000), now];
+    if (clicks.current.length >= 7) {
+      clicks.current = [];
+      onTrigger();
+    }
+  };
+}

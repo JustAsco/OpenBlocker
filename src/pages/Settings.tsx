@@ -1,8 +1,8 @@
 import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Upload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
-import { PageHeader, Toggle, usePref } from "../components/ui";
+import { PageHeader, Toggle, usePref, useSecretClicks } from "../components/ui";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
@@ -25,15 +25,7 @@ export function SettingsPage() {
   const locked = status.active.some((b) => b.locked);
   // Hidden emergency reset: click the version number 7 times in a row.
   const [resetOpen, setResetOpen] = useState(false);
-  const clicks = useRef<number[]>([]);
-  const versionClick = () => {
-    const now = Date.now();
-    clicks.current = [...clicks.current.filter((t) => now - t < 3000), now];
-    if (clicks.current.length >= 7) {
-      clicks.current = [];
-      setResetOpen(true);
-    }
-  };
+  const versionClick = useSecretClicks(() => setResetOpen(true));
 
   return (
     <>

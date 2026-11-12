@@ -306,6 +306,7 @@ fn save_list(shared: tauri::State<'_, Shared>, mut list: BlockList) -> Res<Snaps
             return Err("Give the list a name.".into());
         }
         clean_items(&mut list.sites, &mut list.apps);
+        refuse_protected(&list.apps)?;
         let mut no_apps = vec![];
         clean_items(&mut list.except_sites, &mut no_apps);
         let mut seen_apps = BTreeSet::new();
@@ -362,6 +363,14 @@ fn delete_list(shared: tauri::State<'_, Shared>, id: String) -> Res<Snapshot> {
     })
 }
 
+/// Refuses programs OpenBlocker never closes (Windows, WebView2, itself).
+fn refuse_protected(apps: &[AppEntry]) -> Res<()> {
+    match apps.iter().find(|a| engine::is_protected_exe(&a.exe)) {
+        Some(a) => Err(format!("{} is part of Windows or OpenBlocker and can't be blocked.", a.exe)),
+        None => Ok(()),
+    }
+}
+
 fn clean_items(sites: &mut Vec<String>, apps: &mut Vec<AppEntry>) {
     let mut seen = BTreeSet::new();
     *sites = sites
@@ -381,6 +390,7 @@ fn save_category(shared: tauri::State<'_, Shared>, mut category: Category) -> Re
             return Err("Give the category a name.".into());
         }
         clean_items(&mut category.sites, &mut category.apps);
+        refuse_protected(&category.apps)?;
         if let Some(old) = i.state.category(&category.id).cloned() {
             if let Some(until) = engine::category_locked_until(&i.state, &old.id, now_ms(), &local_now()) {
                 if !engine::category_is_superset(&old, &category) {

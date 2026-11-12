@@ -176,6 +176,7 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
         }
         apps.extend(list_apps);
     }
+    apps.retain(|a| !is_protected_exe(a));
     (sites, apps)
 }
 
@@ -329,6 +330,54 @@ pub fn category_is_superset(old: &Category, new: &Category) -> bool {
         .iter()
         .all(|a| new.apps.iter().any(|n| exe_matches(&n.exe, &normalize_exe(&a.exe))));
     sites_ok && apps_ok
+}
+
+/// Programs OpenBlocker never closes, whatever a list says: Windows itself
+/// (closing these can crash or lock up the PC), the shell that shows the tray
+/// icon, WebView2 (which draws OpenBlocker's window), and OpenBlocker. This
+/// keeps the app, and with it the emergency reset, reachable in any
+/// configuration. Task Manager is deliberately not here (frozen PCs block it).
+pub const PROTECTED_EXES: &[&str] = &[
+    "openblocker.exe",
+    "msedgewebview2.exe",
+    "system",
+    "registry",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "winlogon.exe",
+    "services.exe",
+    "lsass.exe",
+    "lsaiso.exe",
+    "svchost.exe",
+    "dwm.exe",
+    "explorer.exe",
+    "sihost.exe",
+    "fontdrvhost.exe",
+    "ctfmon.exe",
+    "conhost.exe",
+    "taskhostw.exe",
+    "runtimebroker.exe",
+    "dllhost.exe",
+    "audiodg.exe",
+    "spoolsv.exe",
+    "logonui.exe",
+    "lockapp.exe",
+    "userinit.exe",
+    "consent.exe",
+    "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe",
+    "searchhost.exe",
+    "textinputhost.exe",
+    "securityhealthservice.exe",
+    "msmpeng.exe",
+    "smartscreen.exe",
+    "werfault.exe",
+];
+
+/// Is this executable on the [`PROTECTED_EXES`] list?
+pub fn is_protected_exe(exe: &str) -> bool {
+    PROTECTED_EXES.iter().any(|p| exe_matches(exe, p))
 }
 
 /// Lowercase executable name without directory, always ending in `.exe` on Windows-style names.
@@ -1104,5 +1153,18 @@ mod tests {
         assert_eq!(st.sessions[0].lock, LockMode::Password);
         start_or_merge_session(&mut st, "social", 0, 10, LockMode::Timer, "c".into());
         assert_eq!(st.sessions[0].lock, LockMode::Timer);
+    }
+
+    #[test]
+    fn protected_programs_are_never_enforced() {
+        let mut state = State::default();
+        state.lists[0].apps = ["explorer.exe", "OpenBlocker.exe", "msedgewebview2.exe", "csrss", "steam.exe", "Taskmgr.exe"]
+            .iter()
+            .map(|e| AppEntry { name: e.to_string(), exe: e.to_string(), path: None })
+            .collect();
+        let blocks = vec![ActiveBlock { list_id: "social".into(), source: Source::Session, ref_id: "x".into(), ends_at: 1, locked: false }];
+        let (_, apps) = enforced_targets(&state, &blocks);
+        assert_eq!(apps, ["steam.exe".to_string(), "taskmgr.exe".to_string()].into());
+        assert!(is_protected_exe("C:\\Windows\\explorer.exe"));
     }
 }

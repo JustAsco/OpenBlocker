@@ -25,6 +25,13 @@ pub fn normalize_domain(input: &str) -> Option<String> {
     }
     let s = s.trim_start_matches("*.").trim_start_matches('.').trim_end_matches('.');
     let s = s.strip_prefix("www.").unwrap_or(s);
+    // Never block addresses of this computer: IP literals (127.0.0.1, the
+    // app's own bridge), `*.localhost` (WebView2 serves OpenBlocker's window
+    // from tauri.localhost) and `*.local` network names.
+    let numeric = s.split('.').all(|l| !l.is_empty() && l.chars().all(|c| c.is_ascii_digit()));
+    if numeric || s == "localhost" || s.ends_with(".localhost") || s.ends_with(".local") {
+        return None;
+    }
     let valid = !s.is_empty()
         && s.len() <= 253
         && s.contains('.')
@@ -350,5 +357,15 @@ mod tests {
         assert_eq!(normalize_channel("https://youtube.com/watch?v=abc"), None);
         assert_eq!(normalize_channel("example.com"), None);
         assert_eq!(normalize_channel(""), None);
+    }
+
+    #[test]
+    fn local_addresses_are_never_blocked() {
+        for d in ["127.0.0.1", "http://127.0.0.1:47613/v1/rules", "tauri.localhost", "ipc.localhost", "localhost", "nas.local", "192.168.1.1"] {
+            assert_eq!(normalize_domain(d), None, "{d}");
+            assert_eq!(normalize_site(d), None, "{d}");
+        }
+        assert_eq!(normalize_domain("1password.com").as_deref(), Some("1password.com"));
+        assert!(parse_domain_list("0.0.0.0 tauri.localhost\n0.0.0.0 127.0.0.1\n").is_empty());
     }
 }

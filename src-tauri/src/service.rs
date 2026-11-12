@@ -32,6 +32,8 @@ pub const NAME: &str = "OpenBlocker";
 pub const PORT: u16 = 47614;
 const HEADER: &str = "X-OpenBlocker-Service";
 const RESET_KEY: &str = "__reset__";
+/// Largest request body the service reads.
+const MAX_BODY: usize = 32 * 1024 * 1024;
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -424,9 +426,15 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
     }
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or("").to_string();
+    // Bounded body: a community list of 250,000 domains is about 6 MB.
+    if req.body_length().unwrap_or(0) > MAX_BODY {
+        let _ = req.respond(tiny_http::Response::empty(413));
+        return;
+    }
     let mut body = String::new();
-    if std::io::Read::read_to_string(&mut req.as_reader(), &mut body).is_err() {
-        let _ = req.respond(tiny_http::Response::empty(400));
+    let mut reader = std::io::Read::take(req.as_reader(), MAX_BODY as u64 + 1);
+    if std::io::Read::read_to_string(&mut reader, &mut body).is_err() || body.len() > MAX_BODY {
+        let _ = req.respond(tiny_http::Response::empty(413));
         return;
     }
     let mut s = svc.lock().unwrap();
