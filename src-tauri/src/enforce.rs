@@ -119,7 +119,7 @@ impl Enforcer {
             ..Default::default()
         };
         if extension_required(state, &blocks) {
-            out.closed_browsers = self.killer.close_unprotected_browsers(|exe| bridge.is_connected(exe, now_ms));
+            out.closed_browsers = self.killer.close_unprotected_browsers(|exe| bridge.is_protected(exe, now_ms));
         }
         out
     }

@@ -58,6 +58,10 @@ pub struct BrowserSeen {
     /// isn't idle (reported by the extension; used for usage limits).
     #[serde(default)]
     pub active_url: Option<String>,
+    /// Whether the extension may run in private/incognito windows (None =
+    /// an older extension that doesn't say).
+    #[serde(default)]
+    pub incognito: Option<bool>,
 }
 
 /// What the extension should enforce right now.
@@ -110,12 +114,14 @@ impl Bridge {
         v
     }
 
-    pub fn is_connected(&self, exe: &str, now_ms: i64) -> bool {
+    /// Does this browser have the extension running, including in private
+    /// windows? (Otherwise a private window would get around the blocks.)
+    pub fn is_protected(&self, exe: &str, now_ms: i64) -> bool {
         self.seen
             .lock()
             .unwrap()
             .get(&exe.to_lowercase())
-            .is_some_and(|b| now_ms - b.last_seen < HEARTBEAT_TIMEOUT_MS)
+            .is_some_and(|b| now_ms - b.last_seen < HEARTBEAT_TIMEOUT_MS && b.incognito != Some(false))
     }
 
     /// Publishes new rules. Serialising once here keeps big community lists
@@ -213,6 +219,7 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
                 last_seen: chrono::Utc::now().timestamp_millis(),
                 extension_version: version,
                 active_url,
+                incognito: http::query_param(&url, "i").map(|v| v == "1"),
             },
         );
     }

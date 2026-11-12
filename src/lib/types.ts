@@ -176,6 +176,8 @@ export interface BrowserSeen {
   name: string;
   lastSeen: number;
   extensionVersion: string;
+  /** The extension may run in private/incognito windows (null = unknown, older extension). */
+  incognito?: boolean | null;
 }
 
 export interface Snapshot {

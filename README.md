@@ -91,7 +91,8 @@ src-tauri/
 
 - [x] Browser extension with block page and open-tab enforcement
 - [x] Extension: path-level blocking (`youtube.com/shorts`)
-- [ ] Extension: store/AMO publishing, incognito enforcement
+- [x] Extension: incognito enforcement (shows whether private windows are covered; while the extension is required, browsers where they aren't are closed)
+- [ ] Extension: publish to the Chrome Web Store and Firefox Add-ons (`python3 dev/package_extension.py` builds the zip; needs developer accounts)
 - [x] **Short videos**: built-in "Short videos" category plus hiding Shorts/Reels in feeds
 - [x] **YouTube channel allowlist** per block list
 - [ ] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`): the extension needs to check the channel inside those frames too; today only youtube.com itself is checked
@@ -120,7 +121,7 @@ Contributions are very welcome. Open an issue to discuss bigger changes.
 - Parts of websites (`youtube.com/shorts`), exceptions for parts of a site and the YouTube channel allowlist only work in browsers with the extension. A site with a path exception (`reddit.com/r/rust`) is then blocked by the extension only, not the hosts file.
 - Reels that play inside Instagram's normal feed have ordinary post addresses, so they can't be told apart from other posts. Hiding Shorts/Reels in feeds depends on those sites' page structure and can break when they change it.
 - The channel allowlist doesn't check YouTube videos embedded on other websites yet (see the roadmap). The YouTube apps on phones and TVs aren't covered at all.
-- The extension is loaded unpacked (Developer mode) for now; Firefox only keeps it until restart until it's published on AMO. Incognito windows are covered only if you allow the extension in incognito.
+- The extension is loaded unpacked (Developer mode) for now; Firefox only keeps it until restart until it's published on AMO. Private/incognito windows are only covered if you allow the extension there; Settings shows which browsers don't, and while the extension is required those browsers are closed.
 - An administrator who is determined enough can still get around it (e.g. disable the service and reboot). The service makes it much harder, not impossible.
 - Daily limits are counted by the app, so time only counts while it runs (it starts with Windows if you enable that, and the service restarts it during locks). Websites only count in browsers with the extension.
 - The service keeps one shared copy of the blocks, so OpenBlocker assumes one Windows user per PC for now.

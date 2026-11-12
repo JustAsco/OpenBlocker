@@ -122,6 +122,9 @@ def run_tests():
     check("unchanged rules aren't resent", again.get("unchanged") is True)
     code, st = call("GET", "/svc/v1/status?since=0")
     check("heartbeat reported", any(b["exe"] == "chrome.exe" for b in st["browsers"]))
+    bridge("/v1/rules?b=firefox&v=9&i=0")
+    code, st = call("GET", "/svc/v1/status?since=0")
+    check("private-window permission reported", next(b for b in st["browsers"] if b["exe"] == "firefox.exe")["incognito"] is False)
     nosrc = clone(withsrc)
     nosrc["categories"][0]["source"] = None
     check("dropping a locked category's community list refused", call("POST", "/svc/v1/state", nosrc)[0] == 409)

@@ -141,7 +141,8 @@ impl ProcessKiller {
         killed
     }
 
-    /// Closes browsers in which the extension isn't running. Browsers get a
+    /// Closes browsers in which the extension isn't running (or isn't allowed
+    /// in private windows). Browsers get a
     /// 30 s grace period after starting so the extension can check in.
     /// Returns friendly names of the browsers that were closed.
     pub fn close_unprotected_browsers(&mut self, has_extension: impl Fn(&str) -> bool) -> Vec<String> {

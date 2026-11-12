@@ -48,7 +48,8 @@ let lastRules = null; // last full rules (with rev), to reuse when unchanged
 
 async function fetchRules() {
   try {
-    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl() });
+    const incognito = await api.extension.isAllowedIncognitoAccess().catch(() => false);
+    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl(), i: incognito ? "1" : "0" });
     if (lastRules?.rev) params.set("r", lastRules.rev);
     const res = await fetch(`${ENDPOINT}?${params}`, {
       headers: { "X-OpenBlocker": "1" },

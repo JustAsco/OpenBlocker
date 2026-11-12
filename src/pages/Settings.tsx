@@ -95,11 +95,23 @@ export function SettingsPage() {
                   <span key={b.exe} className="chip border-emerald-500/30 bg-emerald-500/10 py-1 text-sm text-emerald-200">
                     <span className="size-2 rounded-full bg-good" /> {b.name}
                     {b.extensionVersion && <span className="text-xs text-emerald-200/60">v{b.extensionVersion}</span>}
+                    {b.incognito === false && <span className="text-xs text-amber-300">· not in private windows</span>}
                   </span>
                 ))}
               </div>
             ) : (
               <p className="text-sm text-amber-200">Not connected in any browser yet.</p>
+            )}
+            {status.extension.some((b) => b.incognito === false) && (
+              <p className="mt-2 text-xs text-amber-200">
+                Private/incognito windows aren't blocked in{" "}
+                {status.extension
+                  .filter((b) => b.incognito === false)
+                  .map((b) => b.name)
+                  .join(", ")}
+                . Open the extension's details and turn on “Allow in Incognito” (Firefox: “Run in Private Windows”). While the extension is required, such
+                browsers are closed.
+              </p>
             )}
             {status.bridgeError && <p className="mt-2 text-xs text-red-300">{status.bridgeError}</p>}
           </div>
