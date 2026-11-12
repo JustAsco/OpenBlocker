@@ -671,3 +671,61 @@ pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
         Err("not supported on this platform".into())
     }
 }
+
+// ───────────────────────────── freeze: system keys ─────────────────────────────
+
+#[cfg(windows)]
+static SWALLOW_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While frozen, swallow the keys that would leave the freeze screen: the
+/// Windows keys (Start menu, Win+D, Win+Tab…), Alt+Tab, Alt+Esc, Ctrl+Esc and
+/// Alt+F4. Ctrl+Alt+Del can't be blocked by any program, which is intended.
+/// The hook lives on its own thread and is installed on first use.
+pub fn swallow_system_keys(on: bool) {
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::Ordering;
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        SWALLOW_KEYS.store(on, Ordering::Relaxed);
+        if on {
+            STARTED.call_once(|| {
+                std::thread::spawn(|| unsafe {
+                    use windows::Win32::Foundation::HINSTANCE;
+                    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+                    use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, SetWindowsHookExW, MSG, WH_KEYBOARD_LL};
+                    let module = GetModuleHandleW(None).ok().map(|m| HINSTANCE(m.0));
+                    if SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), module, 0).is_err() {
+                        return;
+                    }
+                    // Low-level hooks are called through this thread's message loop.
+                    let mut msg = MSG::default();
+                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+                });
+            });
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = on;
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn key_hook(code: i32, wparam: windows::Win32::Foundation::WPARAM, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_APPS, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_TAB};
+    use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN};
+    if code == HC_ACTION as i32 && SWALLOW_KEYS.load(std::sync::atomic::Ordering::Relaxed) {
+        let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        let vk = kb.vkCode as u16;
+        let alt = kb.flags.0 & LLKHF_ALTDOWN.0 != 0;
+        let ctrl = GetAsyncKeyState(VK_CONTROL.0 as i32) < 0;
+        let swallow = vk == VK_LWIN.0
+            || vk == VK_RWIN.0
+            || vk == VK_APPS.0
+            || (alt && (vk == VK_TAB.0 || vk == VK_ESCAPE.0 || vk == VK_F4.0))
+            || (ctrl && vk == VK_ESCAPE.0);
+        if swallow {
+            return LRESULT(1);
+        }
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}

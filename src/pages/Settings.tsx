@@ -7,11 +7,13 @@ import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
 import { LANGUAGES, t, tx } from "../lib/i18n";
+import { olderVersion } from "../lib/util";
 
 export function SettingsPage() {
   const { snap, run } = useStore();
   const { settings } = snap!.state;
   const status = snap!.status;
+  const outdated = (b: { extensionVersion: string }) => !!b.extensionVersion && !!status.extensionLatest && olderVersion(b.extensionVersion, status.extensionLatest);
   const [siteIcons, setSiteIcons] = usePref("site-icons", true);
   const [theme, setTheme] = usePref<"dark" | "light" | "system">("theme", "dark");
   const { toast } = useStore();
@@ -49,7 +51,7 @@ export function SettingsPage() {
             <div className="py-3">
               <div className="mb-2 flex justify-between text-sm">
                 <span className="font-medium">{t("Unlock text length")}</span>
-                <span className="text-muted tabular-nums">{t("{n} characters", { n: settings.unlockTextLength })}</span>
+                <span className="text-muted tabular-nums">{settings.unlockTextStyle === "reflection" ? t("at least {n} characters", { n: settings.unlockTextLength }) : t("{n} characters", { n: settings.unlockTextLength })}</span>
               </div>
               <input
                 type="range"
@@ -74,7 +76,7 @@ export function SettingsPage() {
                 ]}
               />
               <p className="mt-2 text-xs text-muted">
-                {t("How much you must type to stop a “Type to unlock” block early. “Reflection” has you type sentences about what you're about to give up instead of random characters.")}{" "}
+                {t("How much you must type to stop a “Type to unlock” block early. “Reflection” has you type sentences about what you're about to give up instead of random characters: whole sentences are added until the length is reached.")}{" "}
                 {locked && t("Can only be made longer while a locked block is running.")}
               </p>
             </div>
@@ -98,11 +100,17 @@ export function SettingsPage() {
                     <span className="size-2 rounded-full bg-good" /> {b.name}
                     {b.extensionVersion && <span className="text-xs text-emerald-200/60">v{b.extensionVersion}</span>}
                     {b.incognito === false && <span className="text-xs text-amber-300">{t("· not in private windows")}</span>}
+                    {outdated(b) && <span className="text-xs text-amber-300">{t("· outdated")}</span>}
                   </span>
                 ))}
               </div>
             ) : (
               <p className="text-sm text-amber-200">{t("Not connected in any browser yet.")}</p>
+            )}
+            {status.extension.some(outdated) && (
+              <p className="mt-2 text-xs text-amber-200">
+                {t("A newer extension ({version}) comes with this version of OpenBlocker. It updates itself when it's loaded from the folder below; otherwise open the browser's extensions page and click the reload button ↻ on OpenBlocker, or load the folder below again.", { version: status.extensionLatest ?? "" })}
+              </p>
             )}
             {status.extension.some((b) => b.incognito === false) && (
               <p className="mt-2 text-xs text-amber-200">

@@ -261,6 +261,7 @@ pub fn unlock_text(state: &State, session_id: &str) -> String {
                 .map(|d| d.with_timezone(&Local).format("%H:%M").to_string())
                 .unwrap_or_default();
             let ctx = openblocker_core::texts::Context {
+                lang: crate::i18n::language(&state.settings.language),
                 list,
                 minutes_left: (ends - now_ms()) / 60_000,
                 until: &until,

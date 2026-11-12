@@ -57,6 +57,7 @@ async function fetchRules() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     let rules = await res.json();
+    maybeUpdate(rules.latestVersion);
     if (rules.unchanged && lastRules?.rev === rules.rev) {
       // Big community lists aren't resent every two seconds.
       rules = lastRules;
@@ -75,6 +76,39 @@ async function fetchRules() {
     return rules && rules.until && rules.until > Date.now() ? rules : EMPTY;
   }
 }
+
+/** Is version a older than b ("0.2.0" < "0.10.0")? */
+function older(a, b) {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  }
+  return false;
+}
+
+/**
+ * The app ships a newer extension: update. A store install asks the store;
+ * an unpacked one reloads itself, which re-reads its folder (the installer
+ * has put the new files there). Tried once per version, so an extension
+ * loaded from some other folder doesn't reload forever; the app then shows
+ * that it's outdated.
+ */
+let updateChecked = null;
+async function maybeUpdate(latest) {
+  if (!latest || !older(VERSION, latest) || updateChecked === latest) return;
+  updateChecked = latest;
+  const { reloadedFor } = await api.storage.local.get("reloadedFor");
+  if (reloadedFor === latest) return;
+  await api.storage.local.set({ reloadedFor: latest });
+  if (api.runtime.getManifest().update_url && api.runtime.requestUpdateCheck) {
+    // Installed from a store: Chrome downloads it and onUpdateAvailable reloads.
+    api.runtime.requestUpdateCheck().catch(() => {});
+    return;
+  }
+  api.runtime.reload();
+}
+api.runtime.onUpdateAvailable?.addListener(() => api.runtime.reload());
 
 function buildRules(rules) {
   const redirect = { type: "redirect", redirect: { regexSubstitution: BLOCK_PAGE + "#\\0" } };
@@ -153,45 +187,69 @@ async function sweepTabs(rules) {
 
 const videoChannels = new Map(); // video id -> channel (oEmbed)
 const pageChannels = new Map(); // video id -> channel (reported by the page)
-const channelIds = new Map(); // "@handle" / "c/name" / "user/name" -> "UC…" id (or null)
+const channelIds = new Map(); // "@handle" / "c/name" / "user/name" -> "UC…" id
+const inflight = new Map(); // running lookups, so each is only fetched once
 
 function remember(map, key, value) {
   map.set(key, value);
-  if (map.size > 2000) map.delete(map.keys().next().value);
+  if (map.size > 3000) map.delete(map.keys().next().value);
 }
 
-async function lookupVideo(videoId) {
-  if (videoChannels.has(videoId)) return videoChannels.get(videoId);
-  try {
-    const watch = `https://www.youtube.com/watch?v=${videoId}`;
-    const res = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watch)}`);
-    if (res.ok) {
+// At most a few lookups at a time: a feed full of thumbnails must not turn
+// into a flood of requests.
+let active = 0;
+const queue = [];
+function limited(fn) {
+  return new Promise((resolve) => {
+    queue.push(() => fn().then(resolve, () => resolve(null)));
+    pump();
+  });
+}
+function pump() {
+  while (active < 4 && queue.length) {
+    active++;
+    queue.shift()().finally(() => {
+      active--;
+      pump();
+    });
+  }
+}
+
+function once(key, fn) {
+  if (!inflight.has(key)) inflight.set(key, fn().finally(() => inflight.delete(key)));
+  return inflight.get(key);
+}
+
+function lookupVideo(videoId) {
+  if (videoChannels.has(videoId)) return Promise.resolve(videoChannels.get(videoId));
+  return once("v" + videoId, () =>
+    limited(async () => {
+      const watch = `https://www.youtube.com/watch?v=${videoId}`;
+      const res = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watch)}`);
+      if (!res.ok) return null; // e.g. embedding disabled: the page reports it
       const channel = normalizeChannel((await res.json()).author_url);
       if (channel) remember(videoChannels, videoId, channel);
       return channel;
-    }
-  } catch {
-    /* offline or blocked: fall back to the page */
-  }
-  return null;
+    }),
+  );
 }
 
 /** "UC…" id of a channel given as @handle (or legacy name), via its page. */
-async function channelIdOf(ref) {
-  if (ref.startsWith("UC")) return ref;
-  if (channelIds.has(ref)) return channelIds.get(ref);
-  let id = null;
-  try {
-    const html = await (await fetch(`https://www.youtube.com/${ref}`, { credentials: "include" })).text();
-    id =
-      html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/)?.[1] ??
-      html.match(/"externalId":"(UC[\w-]{22})"/)?.[1] ??
-      null;
-  } catch {
-    /* unknown */
-  }
-  remember(channelIds, ref, id);
-  return id;
+function channelIdOf(ref) {
+  if (ref.startsWith("UC")) return Promise.resolve(ref);
+  if (channelIds.has(ref)) return Promise.resolve(channelIds.get(ref));
+  return once("c" + ref, () =>
+    limited(async () => {
+      const html = await (await fetch(`https://www.youtube.com/${ref}`, { credentials: "include" })).text();
+      const id =
+        html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/)?.[1] ??
+        html.match(/"externalId":"(UC[\w-]{22})"/)?.[1] ??
+        null;
+      // Only answers are cached; a failed request is tried again next time.
+      if (id) remember(channelIds, ref, id);
+      return id;
+    }),
+  );
 }
 
 async function channelAllowed(channel, allowed) {
@@ -207,6 +265,8 @@ async function channelAllowed(channel, allowed) {
   return !!id && want.includes(id);
 }
 
+const lastRedirect = new Map(); // tab id -> { videoId, at }
+
 async function checkVideo(tabId, url) {
   const allowed = current?.youtubeChannels;
   const videoId = allowed && videoIdOf(url);
@@ -216,16 +276,39 @@ async function checkVideo(tabId, url) {
   if (!channel || (await channelAllowed(channel, allowed))) return;
   const tab = await api.tabs.get(tabId).catch(() => null);
   if (!tab || videoIdOf(tab.url) !== videoId || !current?.youtubeChannels) return;
+  // Several checks can finish for the same navigation: redirect once.
+  const last = lastRedirect.get(tabId);
+  if (last && last.videoId === videoId && Date.now() - last.at < 5000) return;
+  lastRedirect.set(tabId, { videoId, at: Date.now() });
   api.tabs.update(tabId, { url: `${BLOCK_PAGE}?r=channel&c=${encodeURIComponent(channel)}#${tab.url}` }).catch(() => {});
 }
 
-api.runtime.onMessage.addListener((msg, sender) => {
+/** For the content script: which thumbnails may be shown ("c:<channel>" or "v:<video id>" keys). */
+async function tilesAllowed(keys) {
+  const allowed = current?.youtubeChannels;
+  const out = {};
+  await Promise.all(
+    keys.slice(0, 200).map(async (key) => {
+      if (!allowed) return (out[key] = true);
+      const channel = key.startsWith("c:") ? key.slice(2) : ((await lookupVideo(key.slice(2))) ?? pageChannels.get(key.slice(2)));
+      out[key] = !!channel && (await channelAllowed(channel, allowed));
+    }),
+  );
+  return out;
+}
+
+api.tabs.onRemoved.addListener((tabId) => lastRedirect.delete(tabId));
+
+api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "yt-channel" && sender.tab?.id !== undefined) {
     const channel = normalizeChannel(msg.channel);
     if (channel && typeof msg.videoId === "string") {
       remember(pageChannels, msg.videoId, channel);
       checkVideo(sender.tab.id, sender.tab.url);
     }
+  } else if (msg?.type === "yt-tiles" && Array.isArray(msg.keys)) {
+    tilesAllowed(msg.keys.filter((k) => typeof k === "string")).then(sendResponse, () => sendResponse({}));
+    return true; // answers asynchronously
   }
 });
 

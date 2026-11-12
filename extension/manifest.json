@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OpenBlocker",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Enforces your OpenBlocker blocks and allowlists in this browser, including tabs that are already open.",
   "icons": {
     "32": "icons/32.png",

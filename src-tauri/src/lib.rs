@@ -94,6 +94,9 @@ struct Status {
     usage_today: BTreeMap<String, u64>,
     /// An unlock password is set (the hash itself never goes to the UI).
     password_set: bool,
+    /// Version of the extension shipped with this app; browsers reporting an
+    /// older one are shown as outdated.
+    extension_latest: &'static str,
 }
 
 #[derive(Clone, Serialize)]
@@ -222,6 +225,7 @@ impl Inner {
                 },
                 usage_today: self.state.usage.get(&today_key()).cloned().unwrap_or_default(),
                 password_set: self.state.password.is_some(),
+                extension_latest: bridge::extension_version(),
                 active,
             },
         }
@@ -999,6 +1003,7 @@ fn describe(event: &Event, state: &State) -> Option<(String, String)> {
 }
 
 fn sync_freeze_windows(app: &AppHandle, frozen: bool) {
+    platform::swallow_system_keys(frozen);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         let existing: Vec<_> = app2
@@ -1216,10 +1221,23 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         if !closed.is_empty() && now - last_browser_note > 60_000 {
             last_browser_note = now;
             let lang = i18n::language(&settings.language);
-            notes.push((
-                i18n::tr(lang, "Browser closed 🧩", &[]),
-                i18n::tr(lang, "{browsers} doesn't have the OpenBlocker extension running.", &[("browsers", &closed.join(", "))]),
-            ));
+            // Running, but not allowed in private windows, is a different fix.
+            let (private, missing): (Vec<_>, Vec<_>) = closed
+                .iter()
+                .partition(|name| browsers.iter().any(|b| &&b.name == name && b.incognito == Some(false)));
+            let join = |v: &[&String]| v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            if !missing.is_empty() {
+                notes.push((
+                    i18n::tr(lang, "Browser closed 🧩", &[]),
+                    i18n::tr(lang, "{browsers} doesn't have the OpenBlocker extension running.", &[("browsers", &join(&missing))]),
+                ));
+            }
+            if !private.is_empty() {
+                notes.push((
+                    i18n::tr(lang, "Browser closed 🧩", &[]),
+                    i18n::tr(lang, "{browsers}: the OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[("browsers", &join(&private))]),
+                ));
+            }
         }
         for (title, body) in notes {
             notify(&app, settings.notifications, &title, &body);

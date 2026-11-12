@@ -123,6 +123,7 @@ function snapshot(): Snapshot {
       bridgeError: null,
       usageToday: { ...usage },
       passwordSet: !!mockPassword(),
+      extensionLatest: "0.4.0",
     },
   };
 }

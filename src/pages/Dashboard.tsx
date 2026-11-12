@@ -3,8 +3,9 @@ import { CalendarClock, Flame, KeyRound, Lock, LockKeyhole, Play, Plus, ShieldCh
 import { useMemo, useState } from "react";
 import type { Page } from "../App";
 import { LockWarning, fmtWhen, lockedWord } from "../components/LockWarning";
+import { PasswordDialog } from "../components/PasswordCard";
 import { PasswordModal, UnlockModal } from "../components/UnlockModal";
-import { ListBadge, Segmented } from "../components/ui";
+import { ListBadge, Segmented, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { ActiveBlock, LockMode, State } from "../lib/types";
@@ -192,14 +193,18 @@ const PRESETS = [
 function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
   const { run, snap } = useStore();
   const snapStatus = snap!.status;
-  const [listId, setListId] = useState(state.lists[0]?.id ?? "");
-  const [minutes, setMinutes] = useState(60);
-  const [custom, setCustom] = useState("");
-  const [lock, setLock] = useState<LockMode>("none");
+  // The last choices are remembered (also across restarts).
+  const [savedList, setListId] = usePref("quick-list", "");
+  const listId = state.lists.some((l) => l.id === savedList) ? savedList : (state.lists[0]?.id ?? "");
+  const [minutes, setMinutes] = usePref("quick-minutes", 60);
+  const [custom, setCustom] = usePref("quick-custom", "");
+  const [savedLock, setLock] = usePref<LockMode>("quick-lock", "none");
+  const lock = savedLock === "password" && !snapStatus.passwordSet ? "none" : savedLock;
   const [confirming, setConfirming] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
 
   const effective = minutes === -1 ? Math.max(1, 1440 - minuteOfDay(new Date())) : custom ? Number(custom) : minutes;
-  const start = () => run(() => api.startSession(listId, effective, lock), `Blocking for ${fmtMinutes(effective)}. You've got this!`);
+  const start = () => run(() => api.startSession(listId, effective, lock), t("Blocking for {duration}. You've got this!", { duration: fmtMinutes(effective) }));
 
   if (state.lists.length === 0) {
     return (
@@ -261,19 +266,19 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
         </div>
       </div>
 
+      {settingPassword && <PasswordDialog mode="set" onClose={() => setSettingPassword(false)} onDone={() => setLock("password")} />}
       <span className="label">{t("How strict")}</span>
       <Segmented
         className="mb-6 w-full"
         value={lock}
-        onChange={setLock}
+        onChange={(v) => (v === "password" && !snapStatus.passwordSet ? setSettingPassword(true) : setLock(v))}
         options={[
           { value: "none", label: <><Unlock size={14} /> {t("Flexible")}</>, title: t("Can be stopped any time") },
           { value: "text", label: <><TypeIcon size={14} /> {t("Type to unlock")}</>, title: t("Stopping requires typing a long text") },
           {
             value: "password",
             label: <><KeyRound size={14} /> {t("Password")}</>,
-            title: snapStatus.passwordSet ? t("Stopping requires the unlock password") : t("Set an unlock password in Settings first"),
-            disabled: !snapStatus.passwordSet,
+            title: snapStatus.passwordSet ? t("Stopping requires the unlock password") : t("Set an unlock password first (someone you trust can type it)"),
           },
           { value: "timer", label: <><Lock size={14} /> {t("Locked")}</>, title: t("Cannot be stopped until the time is over") },
         ]}

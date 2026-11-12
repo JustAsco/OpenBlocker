@@ -1,6 +1,5 @@
 import { AlertTriangle, Monitor, RotateCcw, ShieldOff, Snowflake } from "lucide-react";
-import { useState } from "react";
-import { HoldButton, PageHeader, Segmented } from "../components/ui";
+import { HoldButton, PageHeader, Segmented, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import { fmtDuration, fmtMinutes, fmtTime } from "../lib/util";
@@ -11,8 +10,8 @@ const PRESETS = [15, 30, 60, 120, 240];
 export function FreezePage() {
   const { snap, run, now } = useStore();
   const freeze = snap!.state.freeze;
-  const [minutes, setMinutes] = useState(30);
-  const [message, setMessage] = useState(t("Go outside. Breathe. You'll thank yourself later."));
+  const [minutes, setMinutes] = usePref("freeze-minutes", 30);
+  const [message, setMessage] = usePref("freeze-message", t("Go outside. Breathe. You'll thank yourself later."));
 
   if (freeze) {
     return (

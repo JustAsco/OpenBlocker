@@ -1,7 +1,9 @@
 // Runs on YouTube, Instagram and Facebook.
 // 1. While Shorts/Reels pages are blocked, also hides them in feeds, so they
 //    don't tempt you in the first place.
-// 2. On YouTube, reports which channel the open video is from, as a fallback
+// 2. While only some YouTube channels are allowed, hides thumbnails of all
+//    other channels.
+// 3. On YouTube, reports which channel the open video is from, as a fallback
 //    for when the background script can't look it up (e.g. videos that don't
 //    allow embedding). The background script decides whether to block.
 //
@@ -107,9 +109,124 @@ function reportChannel() {
   }
 }
 
+// ───────────── Thumbnails of other channels ─────────────
+//
+// While only some channels are allowed, video tiles (home feed, search,
+// recommendations, Shorts shelves) stay hidden until the background script
+// confirms they're from an allowed channel. What's left is a YouTube that only
+// shows allowed channels.
+
+const TILES = [
+  "ytd-rich-item-renderer",
+  "ytd-video-renderer",
+  "ytd-grid-video-renderer",
+  "ytd-compact-video-renderer",
+  "ytd-playlist-video-renderer",
+  "ytd-playlist-panel-video-renderer",
+  "ytd-reel-item-renderer",
+  "ytd-compact-autoplay-renderer",
+  "yt-lockup-view-model",
+  "ytm-shorts-lockup-view-model",
+  "ytm-shorts-lockup-view-model-v2",
+  "ytm-video-with-context-renderer",
+  "ytm-compact-video-renderer",
+  "ytm-media-item",
+].join(",");
+const CHANNEL_LINK = 'a[href^="/@"], a[href^="/channel/UC"], a[href^="/c/"], a[href^="/user/"]';
+
+const tileVerdicts = new Map(); // key -> allowed
+let tileStyle = null;
+let observer = null;
+let tileTimer = null;
+let tileRules = null;
+
+/** Channel whose page this is ("/@name/videos" → "@name"), if any. */
+function pageChannel() {
+  const m = location.pathname.match(/^\/(@[^/]+|channel\/UC[\w-]{22}|c\/[^/]+|user\/[^/]+)/);
+  return m ? normalizeChannel(m[1]) : null;
+}
+
+function tileKey(tile) {
+  const link = tile.querySelector(CHANNEL_LINK);
+  const channel = link && normalizeChannel(link.getAttribute("href"));
+  if (channel) return "c:" + channel;
+  const video = tile.querySelector('a[href*="/watch?v="], a[href^="/shorts/"]');
+  const id = video && videoIdOf(new URL(video.getAttribute("href"), location.origin).href);
+  if (id) {
+    // Videos on a channel's own page carry no channel link.
+    const own = pageChannel();
+    return own ? "c:" + own : "v:" + id;
+  }
+  return null;
+}
+
+async function filterTiles() {
+  tileTimer = null;
+  const ask = new Set();
+  const pending = [];
+  for (const tile of document.querySelectorAll(TILES)) {
+    const key = tileKey(tile);
+    // YouTube reuses tile elements for other videos: re-check when the key changes.
+    if (!key || tile.dataset.obKey === key) continue;
+    tile.dataset.obKey = key;
+    if (tileVerdicts.has(key)) {
+      tile.dataset.obOk = tileVerdicts.get(key) ? "1" : "0";
+    } else {
+      delete tile.dataset.obOk;
+      ask.add(key);
+      pending.push(tile);
+    }
+  }
+  if (!ask.size) return;
+  const answers = await api.runtime.sendMessage({ type: "yt-tiles", keys: [...ask] }).catch(() => null);
+  if (!answers) return;
+  for (const [k, v] of Object.entries(answers)) {
+    tileVerdicts.set(k, v);
+    if (tileVerdicts.size > 3000) tileVerdicts.delete(tileVerdicts.keys().next().value);
+  }
+  for (const tile of pending) {
+    const v = tileVerdicts.get(tile.dataset.obKey);
+    if (v !== undefined) tile.dataset.obOk = v ? "1" : "0";
+  }
+}
+
+function scheduleTiles() {
+  if (!tileTimer) tileTimer = setTimeout(filterTiles, 250);
+}
+
+function applyTileFilter(rules) {
+  const channels = rules?.youtubeChannels && /(^|\.)youtube\.com$/.test(location.hostname) ? rules.youtubeChannels.join() : null;
+  if (channels === tileRules) return;
+  tileRules = channels;
+  tileVerdicts.clear();
+  for (const tile of document.querySelectorAll("[data-ob-key]")) {
+    delete tile.dataset.obKey;
+    delete tile.dataset.obOk;
+  }
+  if (!channels) {
+    tileStyle?.remove();
+    tileStyle = null;
+    observer?.disconnect();
+    observer = null;
+    return;
+  }
+  if (!tileStyle) {
+    tileStyle = document.createElement("style");
+    tileStyle.id = "openblocker-channels";
+    tileStyle.textContent = `:is(${TILES}):not([data-ob-ok="1"]) { display: none !important; }`;
+  }
+  if (!tileStyle.isConnected) (document.head || document.documentElement).append(tileStyle);
+  if (!observer) {
+    observer = new MutationObserver(scheduleTiles);
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["href"] });
+  }
+  scheduleTiles();
+}
+
 async function refresh() {
   const { rules } = await api.storage.local.get("rules");
   applyFeedCss(rules);
+  applyTileFilter(rules);
   if (rules?.youtubeChannels && /(^|\.)youtube\.com$/.test(location.hostname)) reportChannel();
 }
 

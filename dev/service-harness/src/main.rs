@@ -7,6 +7,8 @@
 mod bridge;
 #[path = "../../../src-tauri/src/enforce.rs"]
 mod enforce;
+#[path = "../../../src-tauri/src/i18n.rs"]
+mod i18n;
 #[path = "../../../src-tauri/src/http.rs"]
 mod http;
 #[path = "../../../src-tauri/src/password.rs"]

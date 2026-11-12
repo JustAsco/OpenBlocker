@@ -1,9 +1,9 @@
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { api } from "../lib/api";
+import { t } from "../lib/i18n";
 import { useStore } from "../lib/store";
 import { Modal } from "./ui";
-import { t } from "../lib/i18n";
 
 type Mode = "set" | "change" | "remove";
 
@@ -12,29 +12,9 @@ type Mode = "set" | "change" | "remove";
  * you trust types it in, so only they can end such a block early.
  */
 export function PasswordCard() {
-  const { snap, run } = useStore();
+  const { snap } = useStore();
   const isSet = snap!.status.passwordSet;
   const [mode, setMode] = useState<Mode | null>(null);
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [repeat, setRepeat] = useState("");
-
-  const open = (m: Mode) => {
-    setCurrent("");
-    setNext("");
-    setRepeat("");
-    setMode(m);
-  };
-  const needsNew = mode === "set" || mode === "change";
-  const valid = (!isSet || current.length > 0) && (!needsNew || (next.length >= 4 && next === repeat));
-  const submit = async () => {
-    const ok = await run(
-      () => api.setPassword(isSet ? current : null, needsNew ? next : null),
-      mode === "remove" ? "Password removed." : "Password saved.",
-    );
-    if (ok) setMode(null);
-    else setCurrent("");
-  };
 
   return (
     <section className="card self-start p-6">
@@ -49,63 +29,85 @@ export function PasswordCard() {
         <div className="flex-1" />
         {isSet ? (
           <>
-            <button className="btn-ghost" onClick={() => open("change")}>
+            <button className="btn-ghost" onClick={() => setMode("change")}>
               {t("Change")}
             </button>
-            <button className="btn-ghost" onClick={() => open("remove")}>
+            <button className="btn-ghost" onClick={() => setMode("remove")}>
               {t("Remove")}
             </button>
           </>
         ) : (
-          <button className="btn-primary" onClick={() => open("set")}>
+          <button className="btn-primary" onClick={() => setMode("set")}>
             {t("Set a password")}
           </button>
         )}
       </div>
-
-      <Modal open={mode !== null} onClose={() => setMode(null)} title={mode === "set" ? t("Set an unlock password") : mode === "change" ? t("Change the password") : t("Remove the password")} width={460}>
-        {mode === "set" && (
-          <p className="mb-4 text-sm text-muted">
-            {t("Hand the keyboard to whoever should keep it. Changing or removing it later needs this password. If it's lost, the emergency reset is the only way out.")}
-          </p>
-        )}
-        <div className="space-y-3">
-          {isSet && (
-            <input className="input" type="password" autoFocus autoComplete="off" placeholder={t("Current password")} value={current} onChange={(e) => setCurrent(e.target.value)} />
-          )}
-          {needsNew && (
-            <>
-              <input
-                className="input"
-                type="password"
-                autoFocus={!isSet}
-                autoComplete="new-password"
-                placeholder={t("New password (at least 4 characters)")}
-                value={next}
-                onChange={(e) => setNext(e.target.value)}
-              />
-              <input
-                className="input"
-                type="password"
-                autoComplete="new-password"
-                placeholder={t("Repeat the new password")}
-                value={repeat}
-                onChange={(e) => setRepeat(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && valid && submit()}
-              />
-              {repeat && next !== repeat && <p className="text-xs text-red-300">{t("The passwords don't match.")}</p>}
-            </>
-          )}
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button className="btn-ghost" onClick={() => setMode(null)}>
-            {t("Cancel")}
-          </button>
-          <button className={mode === "remove" ? "btn-danger" : "btn-primary"} disabled={!valid} onClick={submit}>
-            {mode === "remove" ? t("Remove") : t("Save")}
-          </button>
-        </div>
-      </Modal>
+      {mode && <PasswordDialog mode={mode} onClose={() => setMode(null)} />}
     </section>
+  );
+}
+
+/**
+ * Sets, changes or removes the unlock password. Also opened straight from a
+ * "Password" option when no password exists yet; `onDone` runs after saving.
+ */
+export function PasswordDialog({ mode, onClose, onDone }: { mode: Mode; onClose: () => void; onDone?: () => void }) {
+  const { snap, run } = useStore();
+  const isSet = snap!.status.passwordSet;
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const needsNew = mode === "set" || mode === "change";
+  const valid = (!isSet || current.length > 0) && (!needsNew || (next.length >= 4 && next === repeat));
+  const submit = async () => {
+    const ok = await run(() => api.setPassword(isSet ? current : null, needsNew ? next : null), mode === "remove" ? "Password removed." : "Password saved.");
+    if (ok) {
+      onClose();
+      onDone?.();
+    } else setCurrent("");
+  };
+
+  return (
+    <Modal open onClose={onClose} title={mode === "set" ? t("Set an unlock password") : mode === "change" ? t("Change the password") : t("Remove the password")} width={460}>
+      {mode === "set" && (
+        <p className="mb-4 text-sm text-muted">
+          {t("Hand the keyboard to whoever should keep it. Changing or removing it later needs this password. If it's lost, the emergency reset is the only way out.")}
+        </p>
+      )}
+      <div className="space-y-3">
+        {isSet && <input className="input" type="password" autoFocus autoComplete="off" placeholder={t("Current password")} value={current} onChange={(e) => setCurrent(e.target.value)} />}
+        {needsNew && (
+          <>
+            <input
+              className="input"
+              type="password"
+              autoFocus={!isSet}
+              autoComplete="new-password"
+              placeholder={t("New password (at least 4 characters)")}
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+            />
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              placeholder={t("Repeat the new password")}
+              value={repeat}
+              onChange={(e) => setRepeat(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && valid && submit()}
+            />
+            {repeat && next !== repeat && <p className="text-xs text-red-300">{t("The passwords don't match.")}</p>}
+          </>
+        )}
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <button className="btn-ghost" onClick={onClose}>
+          {t("Cancel")}
+        </button>
+        <button className={mode === "remove" ? "btn-danger" : "btn-primary"} disabled={!valid} onClick={submit}>
+          {mode === "remove" ? t("Remove") : t("Save")}
+        </button>
+      </div>
+    </Modal>
   );
 }

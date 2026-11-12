@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import type { SuggestionGroup } from "../components/Autocomplete";
 import { EditorShell, IconColorPicker, ItemsEditor, useDraft } from "../components/ItemsEditor";
-import { Modal, PageHeader, Segmented } from "../components/ui";
+import { Modal, PageHeader, Segmented, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { score } from "../lib/catalog";
 import { useStore } from "../lib/store";
@@ -21,7 +21,8 @@ export const openCategory = (id: string, go: (p: Page) => void) => {
 export function ListsPage({ go }: { go: (p: Page) => void }) {
   const { snap, run } = useStore();
   const { state, status } = snap!;
-  const [selected, setSelected] = useState<string | null>(state.lists[0]?.id ?? null);
+  const [savedSelected, setSelected] = usePref<string | null>("lists-selected", null);
+  const selected = state.lists.some((l) => l.id === savedSelected) ? savedSelected : (state.lists[0]?.id ?? null);
   const [creating, setCreating] = useState(false);
   const list = state.lists.find((l) => l.id === selected) ?? null;
 
@@ -118,7 +119,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
   const { snap, run } = useStore();
   const [draft, setDraft, dirty, discard] = useDraft(list);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [tab, setTab] = useState<"items" | "exceptions" | "youtube">("items");
+  const [tab, setTab] = usePref<"items" | "exceptions" | "youtube">("lists-tab", "items");
   const exceptSites = draft.exceptSites ?? [];
   const exceptApps = draft.exceptApps ?? [];
   const appAllow = draft.appMode === "allow";

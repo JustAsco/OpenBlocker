@@ -173,6 +173,9 @@ const de: Record<string, string> = {
   "New password (at least 4 characters)": "Neues Passwort (mindestens 4 Zeichen)",
   "Repeat the new password": "Neues Passwort wiederholen",
   "The passwords don't match.": "Die Passwörter stimmen nicht überein.",
+  "You'll be asked to set an unlock password first.": "Du wirst zuerst gebeten, ein Entsperr-Passwort festzulegen.",
+  "Set an unlock password first (someone you trust can type it)": "Lege zuerst ein Entsperr-Passwort fest (das kann jemand eingeben, dem du vertraust)",
+  "Blocking for {duration}. You've got this!": "Gesperrt für {duration}. Du schaffst das!",
   "Password can end it early": "Passwort kann vorzeitig beenden",
   "Whoever knows the unlock password can stop {what} before it ends.": "Wer das Entsperr-Passwort kennt, kann {what} vorzeitig beenden.",
 
@@ -488,14 +491,18 @@ const de: Record<string, string> = {
   "Mindless but tedious": "Stumpf, aber mühsam",
   Reflection: "Nachdenken",
   "Sentences about why you want to stop early": "Sätze darüber, warum du früher aufhören willst",
-  "How much you must type to stop a “Type to unlock” block early. “Reflection” has you type sentences about what you're about to give up instead of random characters.":
-    "Wie viel du tippen musst, um eine „Tippen zum Entsperren“-Sperre vorzeitig zu beenden. Bei „Nachdenken“ tippst du statt zufälliger Zeichen Sätze darüber, was du gerade aufgeben willst.",
+  "How much you must type to stop a “Type to unlock” block early. “Reflection” has you type sentences about what you're about to give up instead of random characters: whole sentences are added until the length is reached.":
+    "Wie viel du tippen musst, um eine „Tippen zum Entsperren“-Sperre vorzeitig zu beenden. Bei „Nachdenken“ tippst du statt zufälliger Zeichen Sätze darüber, was du gerade aufgeben willst: Es werden ganze Sätze aneinandergereiht, bis die Länge erreicht ist.",
+  "at least {n} characters": "mindestens {n} Zeichen",
   "Can only be made longer while a locked block is running.": "Kann nur verlängert werden, solange eine gesperrte Sperre läuft.",
   "Can't be turned off while a locked block is running": "Kann nicht ausgeschaltet werden, solange eine gesperrte Sperre läuft",
   "Browser extension": "Browsererweiterung",
   "Blocks websites instantly, including tabs that are already open, and enables allowlists. Strongly recommended in every browser you use.":
     "Sperrt Websites sofort, auch bereits offene Tabs, und ermöglicht Positivlisten. Für jeden Browser, den du nutzt, dringend empfohlen.",
   "Not connected in any browser yet.": "Noch in keinem Browser verbunden.",
+  "· outdated": "· veraltet",
+  "A newer extension ({version}) comes with this version of OpenBlocker. It updates itself when it's loaded from the folder below; otherwise open the browser's extensions page and click the reload button ↻ on OpenBlocker, or load the folder below again.":
+    "Mit dieser OpenBlocker-Version kommt eine neuere Erweiterung ({version}). Sie aktualisiert sich selbst, wenn sie aus dem Ordner unten geladen wurde; ansonsten öffne die Erweiterungsseite des Browsers und klicke bei OpenBlocker auf Neu laden ↻, oder lade den Ordner unten erneut.",
   "· not in private windows": "· nicht in privaten Fenstern",
   "Private/incognito windows aren't blocked in {browsers}. Open the extension's details and turn on “Allow in Incognito” (Firefox: “Run in Private Windows”). While the extension is required, such browsers are closed.":
     "Private/Inkognito-Fenster werden in {browsers} nicht gesperrt. Öffne die Details der Erweiterung und aktiviere „Im Inkognitomodus zulassen“ (Firefox: „In privaten Fenstern ausführen“). Solange die Erweiterung erforderlich ist, werden solche Browser geschlossen.",

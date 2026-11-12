@@ -183,6 +183,8 @@ export interface Status {
   usageToday: Record<string, number>;
   /** An unlock password is set. */
   passwordSet: boolean;
+  /** Version of the extension shipped with the app. */
+  extensionLatest?: string;
 }
 
 export interface BrowserSeen {

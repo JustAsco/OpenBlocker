@@ -141,6 +141,14 @@ export function normalizeSite(input: string): string | null {
 }
 
 /** Is this site entry only part of a website ("youtube.com/shorts")? */
+/** Is version a older than b ("0.2.0" < "0.10.0")? */
+export function olderVersion(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  return false;
+}
+
 export const isPathSite = (site: string) => site.includes("/");
 
 export function uid(): string {

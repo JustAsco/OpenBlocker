@@ -3,7 +3,7 @@ import { Download, Library, Lock, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import { EditorShell, ItemsEditor, useDraft } from "../components/ItemsEditor";
-import { Modal, PageHeader } from "../components/ui";
+import { Modal, PageHeader, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { factoryCategory } from "../lib/catalog";
 import { useStore } from "../lib/store";
@@ -14,11 +14,16 @@ import { t } from "../lib/i18n";
 export function CategoriesPage({ go }: { go: (p: Page) => void }) {
   const { snap, run } = useStore();
   const { state } = snap!;
-  const [selected, setSelected] = useState<string | null>(() => {
+  const [savedSelected, setSelected] = usePref<string | null>("categories-selected", null);
+  // "Edit" on a category elsewhere jumps here with that category.
+  useEffect(() => {
     const wanted = localStorage.getItem("ob-category");
-    localStorage.removeItem("ob-category");
-    return wanted ?? state.categories[0]?.id ?? null;
-  });
+    if (wanted) {
+      localStorage.removeItem("ob-category");
+      setSelected(wanted);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const selected = state.categories.some((c) => c.id === savedSelected) ? savedSelected : (state.categories[0]?.id ?? null);
   const category = state.categories.find((c) => c.id === selected) ?? null;
 
   useEffect(() => {

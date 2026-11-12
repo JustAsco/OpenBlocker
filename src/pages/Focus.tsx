@@ -4,7 +4,7 @@ import { useState } from "react";
 import { LockWarning, lockedWord } from "../components/LockWarning";
 import { PasswordEscape } from "../components/PasswordEscape";
 import { PasswordModal } from "../components/UnlockModal";
-import { PageHeader, Toggle } from "../components/ui";
+import { PageHeader, Toggle, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { PomodoroConfig } from "../lib/types";
@@ -140,16 +140,11 @@ function NumberField({ label, value, onChange, suffix = "min" }: { label: string
 function Setup() {
   const { snap, run } = useStore();
   const lists = snap!.state.lists;
-  const [cfg, setCfg] = useState<PomodoroConfig>({
-    focusMin: 25,
-    breakMin: 5,
-    longBreakMin: 15,
-    rounds: 4,
-    listId: lists[0]?.id ?? null,
-    locked: false,
-    password: false,
-    totalRounds: 4,
-  });
+  const [saved, setCfg] = usePref<Partial<PomodoroConfig>>("focus-config", {});
+  const defaults: PomodoroConfig = { focusMin: 25, breakMin: 5, longBreakMin: 15, rounds: 4, listId: lists[0]?.id ?? null, locked: false, password: false, totalRounds: 4 };
+  const merged = { ...defaults, ...saved };
+  // A remembered list that was deleted since: fall back to the first one.
+  const cfg: PomodoroConfig = { ...merged, listId: merged.listId === null || lists.some((l) => l.id === merged.listId) ? merged.listId : defaults.listId };
   const set = (p: Partial<PomodoroConfig>) => setCfg({ ...cfg, ...p });
   const [confirming, setConfirming] = useState(false);
   const start = () => run(() => api.pomodoroStart(cfg), "Focus mode on. Let's go! 🎯");

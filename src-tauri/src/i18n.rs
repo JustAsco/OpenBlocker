@@ -65,6 +65,9 @@ fn german(en: &str) -> Option<&'static str> {
         "{apps} was closed." => "{apps} wurde geschlossen.",
         "Browser closed 🧩" => "Browser geschlossen 🧩",
         "{browsers} doesn't have the OpenBlocker extension running." => "In {browsers} läuft die OpenBlocker-Erweiterung nicht.",
+        "{browsers}: the OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details." => {
+            "{browsers}: Die OpenBlocker-Erweiterung ist in privaten Fenstern nicht erlaubt. Aktiviere „Im Inkognitomodus zulassen“ in ihren Details."
+        }
         _ => return None,
     })
 }

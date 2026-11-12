@@ -95,11 +95,15 @@ src-tauri/
 - [ ] Extension: publish to the Chrome Web Store and Firefox Add-ons (`python3 dev/package_extension.py` builds the zip; needs developer accounts)
 - [x] **Short videos**: built-in "Short videos" category plus hiding Shorts/Reels in feeds
 - [x] **YouTube channel allowlist** per block list
+- [x] Channel allowlist also hides thumbnails and recommendations of other channels, so YouTube only shows allowed channels
+- [x] Extension updates itself when the app ships a newer version (store installs ask the store); the app shows when it's outdated
 - [ ] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`): the extension needs to check the channel inside those frames too; today only youtube.com itself is checked
 - [x] Exceptions per block list (sites, parts of sites, apps)
 - [x] Password lock (account-wide unlock password)
 - [x] Password option for schedules, focus sessions and limits
-- [x] Reflection texts for "Type to unlock"
+- [x] Reflection texts for "Type to unlock" (deliberately uncomfortable; English and German)
+- [x] Remember the last choices (quick block, focus timer, freeze, selected list and tab)
+- [x] Freeze screen shows the current time instead of a countdown; Windows key, Alt+Tab, Ctrl+Esc and Alt+F4 are blocked while frozen (Ctrl+Alt+Del can't be, by design)
 - [x] Security hardening and tests (see [SECURITY.md](SECURITY.md))
 - [x] **Background Windows service + watchdog**: blocks survive killing the app, no admin prompt for the UI
 - [x] Uninstall/settings protection during locked blocks
@@ -113,6 +117,7 @@ src-tauri/
 - [x] Export/import settings
 - [x] Warning before starting a locked block, hidden emergency reset
 - [ ] **User accounts**: sign in to sync lists, categories, schedules and settings between devices (optional; everything keeps working offline and without an account)
+- [ ] **Android and iOS apps** synced with the desktop (needs user accounts), so you can, for example, lock your phone from your PC. Far in the future: phones only allow this through their parental-control/Screen Time APIs
 
 Contributions are very welcome. Open an issue to discuss bigger changes.
 
