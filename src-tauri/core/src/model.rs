@@ -296,6 +296,18 @@ pub struct Settings {
     pub suggest_extension: bool,
     /// While Shorts/Reels are blocked, also hide them in feeds (extension).
     pub hide_short_video_feeds: bool,
+    /// What to type for "Type to unlock".
+    pub unlock_text_style: UnlockTextStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum UnlockTextStyle {
+    /// Random letters and digits.
+    #[default]
+    Random,
+    /// Sentences that make you think about why you want to stop early.
+    Reflection,
 }
 
 impl Default for Settings {
@@ -310,6 +322,7 @@ impl Default for Settings {
             require_extension: false,
             suggest_extension: true,
             hide_short_video_feeds: true,
+            unlock_text_style: UnlockTextStyle::Random,
         }
     }
 }

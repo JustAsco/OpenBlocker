@@ -117,6 +117,8 @@ export interface Settings {
   suggestExtension: boolean;
   /** While Shorts/Reels are blocked, also hide them in feeds (extension). */
   hideShortVideoFeeds: boolean;
+  /** "Type to unlock": random characters or reflection sentences. */
+  unlockTextStyle: "random" | "reflection";
 }
 
 export interface DayStats {

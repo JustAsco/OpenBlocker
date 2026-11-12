@@ -530,8 +530,8 @@ fn unlock_challenge(shared: tauri::State<'_, Shared>, id: String) -> Res<String>
         if i.svc.is_some() {
             return service::client::challenge(&id);
         }
-        let len = i.state.settings.unlock_text_length.clamp(10, 1000) as usize;
-        Ok(i.challenges.entry(id).or_insert_with(|| random_text(len)).clone())
+        let text = service::unlock_text(&i.state, &id);
+        Ok(i.challenges.entry(id).or_insert(text).clone())
     })
 }
 

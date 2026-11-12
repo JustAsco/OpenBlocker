@@ -246,6 +246,31 @@ fn random_text(len: usize) -> String {
     out
 }
 
+/// The text to type to end a text-locked quick block early: random
+/// characters or reflection sentences, depending on the settings.
+pub fn unlock_text(state: &State, session_id: &str) -> String {
+    use openblocker_core::model::UnlockTextStyle;
+    let len = state.settings.unlock_text_length.clamp(10, 1000) as usize;
+    match state.settings.unlock_text_style {
+        UnlockTextStyle::Random => random_text(len),
+        UnlockTextStyle::Reflection => {
+            let session = state.sessions.iter().find(|s| s.id == session_id);
+            let list = session.and_then(|s| state.list(&s.list_id)).map(|l| l.name.as_str()).unwrap_or("");
+            let ends = session.map(|s| s.ends_at).unwrap_or_else(now_ms);
+            let until = chrono::DateTime::from_timestamp_millis(ends)
+                .map(|d| d.with_timezone(&Local).format("%H:%M").to_string())
+                .unwrap_or_default();
+            let ctx = openblocker_core::texts::Context {
+                list,
+                minutes_left: (ends - now_ms()) / 60_000,
+                until: &until,
+            };
+            let seed = u64::from_le_bytes(uuid::Uuid::new_v4().as_bytes()[..8].try_into().unwrap());
+            openblocker_core::texts::reflection(seed, &ctx, len)
+        }
+    }
+}
+
 impl Svc {
     fn load(dir: PathBuf, bridge: Arc<bridge::Bridge>) -> Self {
         let _ = std::fs::create_dir_all(dir.join("sources"));
@@ -327,16 +352,18 @@ impl Svc {
     }
 
     fn challenge(&mut self, key: &str) -> Result<String, String> {
-        let len = if key == RESET_KEY {
-            (self.state.settings.unlock_text_length as usize * 3).clamp(300, 1000)
+        let text = if key == RESET_KEY {
+            // The emergency reset is a way out, not a temptation: plain random text.
+            let len = (self.state.settings.unlock_text_length as usize * 3).clamp(300, 1000);
+            random_text(len)
         } else {
             let s = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?;
-            if s.lock != openblocker_core::model::LockMode::Text {
+            if s.lock != LockMode::Text {
                 return Err("This block can't be unlocked with a text.".into());
             }
-            self.state.settings.unlock_text_length.clamp(10, 1000) as usize
+            unlock_text(&self.state, key)
         };
-        Ok(self.challenges.entry(key.into()).or_insert_with(|| random_text(len)).clone())
+        Ok(self.challenges.entry(key.into()).or_insert(text).clone())
     }
 
     fn unlock(&mut self, key: &str, answer: Option<&str>) -> Result<u64, String> {

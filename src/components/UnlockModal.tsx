@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -9,7 +10,13 @@ export function TypeChallenge({ challenge, answer, onAnswer }: { challenge: stri
   while (correct < answer.length && answer[correct] === challenge[correct]) correct++;
   return (
     <>
-      <div className="mb-4 max-h-48 overflow-y-auto rounded-xl border border-line bg-bg p-4 font-mono text-sm leading-relaxed break-all select-none">
+      <div
+        className={clsx(
+          "mb-4 max-h-48 overflow-y-auto rounded-xl border border-line bg-bg p-4 text-sm leading-relaxed select-none",
+          // Sentences wrap at words; random strings anywhere.
+          challenge.includes(" ") ? "break-words" : "font-mono break-all",
+        )}
+      >
         <span className="text-emerald-400">{challenge.slice(0, correct)}</span>
         <span className="text-red-400 underline">{answer.length > correct ? challenge.slice(correct, answer.length) : ""}</span>
         <span className="text-muted">{challenge.slice(Math.max(correct, answer.length))}</span>

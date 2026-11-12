@@ -2,7 +2,7 @@ import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Up
 import { useEffect, useState } from "react";
 import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
-import { PageHeader, Toggle, usePref, useSecretClicks } from "../components/ui";
+import { PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
@@ -62,8 +62,18 @@ export function SettingsPage() {
                 }}
                 className="w-full accent-violet-500"
               />
-              <p className="mt-1 text-xs text-muted">
-                How much you must type to stop a “Type to unlock” block early.{locked && " Can only be made longer while a locked block is running."}
+              <Segmented
+                className="mt-3 w-full"
+                value={settings.unlockTextStyle}
+                onChange={(unlockTextStyle) => save({ unlockTextStyle })}
+                options={[
+                  { value: "random", label: "Random characters", title: "Mindless but tedious" },
+                  { value: "reflection", label: "Reflection", title: "Sentences about why you want to stop early" },
+                ]}
+              />
+              <p className="mt-2 text-xs text-muted">
+                How much you must type to stop a “Type to unlock” block early. “Reflection” has you type sentences about what you're about to give up instead of
+                random characters.{locked && " Can only be made longer while a locked block is running."}
               </p>
             </div>
           </div>

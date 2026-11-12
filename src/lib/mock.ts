@@ -47,6 +47,7 @@ function defaultState(): State {
       requireExtension: false,
       suggestExtension: true,
       hideShortVideoFeeds: true,
+      unlockTextStyle: "random",
     },
     stats,
   };
@@ -263,6 +264,16 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       state.sessions = state.sessions.map((s) => (s.id === a.id ? { ...s, endsAt: s.endsAt + a.minutes * MINUTE } : s));
       return commit();
     case "unlock_challenge": {
+      if (!challenges.has(a.id) && state.settings.unlockTextStyle === "reflection") {
+        // The real texts live in the core (texts.rs); the mock shows a sample.
+        const s = state.sessions.find((x) => x.id === a.id);
+        const list = state.lists.find((l) => l.id === s?.listId)?.name ?? "this list";
+        const left = Math.max(1, Math.round(((s?.endsAt ?? now) - now) / MINUTE));
+        challenges.set(
+          a.id,
+          `I am about to unlock ${list} with ${left} minutes left. Nothing in there is urgent. It will all still be there later, and so will the reasons I blocked it. This urge feels important, but urges fade in a few minutes if I wait. I could just let it pass.`,
+        );
+      }
       if (!challenges.has(a.id)) {
         const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         challenges.set(a.id, Array.from({ length: state.settings.unlockTextLength }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
