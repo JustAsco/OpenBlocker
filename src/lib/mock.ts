@@ -29,14 +29,15 @@ function defaultState(): State {
       { id: "games", name: "Games", color: "#10b981", icon: "🎮", sites: [], apps: [], categories: ["gaming"], mode: "block" },
     ],
     schedules: [
-      { id: "s1", listId: "social", days: [0, 1, 2, 3, 4], start: 9 * 60, end: 17 * 60, locked: false, label: "Work hours" },
-      { id: "s2", listId: "games", days: [0, 1, 2, 3, 6], start: 22 * 60, end: 7 * 60, locked: true, label: "Sleep" },
-      { id: "s3", listId: "video", days: [0, 2, 4], start: 13 * 60, end: 15 * 60 + 30, locked: false, label: "Deep work" },
+      { id: "s1", listId: "social", days: [0, 1, 2, 3, 4], start: 9 * 60, end: 17 * 60, locked: false, password: false, label: "Work hours" },
+      { id: "s2", listId: "games", days: [0, 1, 2, 3, 6], start: 22 * 60, end: 7 * 60, locked: true, password: true, label: "Sleep" },
+      { id: "s3", listId: "video", days: [0, 2, 4], start: 13 * 60, end: 15 * 60 + 30, locked: false, password: false, label: "Deep work" },
     ],
     sessions: [],
     pomodoro: null,
     freeze: null,
-    limits: [{ id: "l1", listId: "video", minutes: 45, days: [0, 1, 2, 3, 4, 5, 6], locked: false }],
+    limits: [{ id: "l1", listId: "video", minutes: 45, days: [0, 1, 2, 3, 4, 5, 6], locked: false, password: false }],
+    skips: [],
     settings: {
       flushDns: true,
       notifications: true,
@@ -288,6 +289,21 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       state.sessions = state.sessions.filter((x) => x.id !== a.id);
       return commit();
     }
+    case "end_block": {
+      const pom = state.pomodoro;
+      if (a.id === "pomodoro" && pom && !pom.config.listId) {
+        if (pom.config.locked && pom.phase === "focus" && (!pom.config.password || a.password !== mockPassword())) fail("Wrong password.");
+        state.pomodoro = null;
+        return commit();
+      }
+      const b = activeBlocks(state, now, usage).find((x) => x.refId === a.id) ?? fail("This block isn't running.");
+      if (b.locked && !b.password) fail(`Locked until ${new Date(b.endsAt).toLocaleTimeString()}. Stay strong 💪`);
+      if (b.password && a.password !== mockPassword()) fail("Wrong password.");
+      if (b.source === "pomodoro") state.pomodoro = null;
+      else if (b.source === "session") state.sessions = state.sessions.filter((x) => x.id !== a.id);
+      else state.skips = [...(state.skips ?? []).filter((s) => s.until > now), { refId: a.id, until: b.endsAt }];
+      return commit();
+    }
     case "pomodoro_start":
       state.pomodoro = { config: a.config, phase: "focus", round: 1, phaseStartedAt: now, phaseEndsAt: now + a.config.focusMin * MINUTE, pausedRemaining: null };
       return commit();
@@ -333,7 +349,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     case "set_password": {
       const cur = mockPassword();
       if (cur && a.current !== cur) fail("Wrong password.");
-      if (!a.new && state.sessions.some((s) => s.lock === "password" && s.endsAt > now)) fail("A password-locked block is running. You can remove the password once it ends.");
+      if (!a.new && activeBlocks(state, now, usage).some((b) => b.password)) fail("A password-locked block is running. You can remove the password once it ends.");
       if (a.new && a.new.length < 4) fail("Use at least 4 characters.");
       // The mock keeps it in plain text; the real app stores an Argon2 hash.
       if (a.new) localStorage.setItem("mock-password", a.new);

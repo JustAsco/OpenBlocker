@@ -3,6 +3,7 @@ import { Hourglass, Lock, Plus, Puzzle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Page } from "../App";
 import { LockWarning } from "../components/LockWarning";
+import { PasswordEscape } from "../components/PasswordEscape";
 import { ListBadge, Modal, PageHeader, Segmented, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -22,7 +23,7 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
   const [editing, setEditing] = useState<UsageLimit | null>(null);
   const blockLists = state.lists.filter((l) => l.mode === "block");
   const today = weekday(new Date(now));
-  const blank = (): UsageLimit => ({ id: "", listId: blockLists[0]?.id ?? "", minutes: 30, days: [0, 1, 2, 3, 4, 5, 6], locked: false });
+  const blank = (): UsageLimit => ({ id: "", listId: blockLists[0]?.id ?? "", minutes: 30, days: [0, 1, 2, 3, 4, 5, 6], locked: false, password: false });
 
   return (
     <>
@@ -194,6 +195,7 @@ function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | nu
           checked={l.locked}
           onChange={(locked) => setL({ ...l, locked })}
         />
+        {l.locked && <PasswordEscape what="the block" checked={l.password} onChange={(password) => setL({ ...l, password })} />}
       </div>
 
       <div className="mt-6 flex items-center gap-2">

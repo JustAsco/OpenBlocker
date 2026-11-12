@@ -164,9 +164,32 @@ def run_tests():
     time.sleep(3.1)
     check("password removal refused while a password lock runs", call("POST", "/svc/v1/password", {"current": "hunter22", "new": None})[0] == 403)
     time.sleep(3.1)
-    check("right password unlocks", call("POST", "/svc/v1/unlock", {"key": "p1", "answer": "hunter22"})[0] == 200)
+    code, body = call("POST", "/svc/v1/unlock", {"key": "p1", "answer": "hunter22"})
+    check("right password unlocks", code == 200)
+    gen = body["generation"]
     code, st = call("GET", "/svc/v1/state")
     check("password session gone, timer session kept", [x["id"] for x in st["sessions"]] == ["s1"])
+
+    # ── password for schedules (also limits and the focus timer) ──
+    allday = lambda id, pw: {"id": id, "listId": "tv", "days": list(range(7)), "start": 0, "end": 0, "locked": True, "password": pw, "label": None}
+    sched = clone(st)
+    sched["lists"].append({**sched["lists"][0], "id": "tv", "name": "TV"})
+    sched["schedules"] = [allday("strict", False), allday("escape", True)]
+    check("locked schedules published", call("POST", f"/svc/v1/state?gen={gen}", sched)[0] == 200)
+    loosened = clone(sched)
+    loosened["schedules"][0]["password"] = True
+    check("adding a password escape to a running lock refused", call("POST", f"/svc/v1/state?gen={gen}", loosened)[0] == 409)
+    skipped = clone(sched)
+    skipped["skips"] = [{"refId": "strict", "until": now + 86400_000}]
+    check("the app can't skip a locked schedule itself", call("POST", f"/svc/v1/state?gen={gen}", skipped)[0] == 409)
+    check("a schedule without the escape can't be ended", call("POST", "/svc/v1/unlock", {"key": "strict", "answer": "hunter22"})[0] == 403)
+    time.sleep(3.1)
+    check("wrong password for a schedule refused", call("POST", "/svc/v1/unlock", {"key": "escape", "answer": "nope"})[0] == 403)
+    time.sleep(3.1)
+    code, body = call("POST", "/svc/v1/unlock", {"key": "escape", "answer": "hunter22"})
+    check("right password ends the schedule for now", code == 200)
+    code, st = call("GET", "/svc/v1/state")
+    check("skipped until its end, schedule kept", [x["refId"] for x in st["skips"]] == ["escape"] and len(st["schedules"]) == 2)
 
     # ── emergency reset ──
     check("reset without text refused while locked", call("POST", "/svc/v1/unlock", {"key": "__reset__"})[0] == 403)

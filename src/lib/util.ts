@@ -80,22 +80,23 @@ export function activeBlocks(state: State, now = Date.now(), usage: Record<strin
   const out: ActiveBlock[] = [];
   for (const s of state.sessions)
     if (s.startedAt <= now && now < s.endsAt)
-      out.push({ listId: s.listId, source: "session", refId: s.id, endsAt: s.endsAt, locked: s.lock !== "none" });
+      out.push({ listId: s.listId, source: "session", refId: s.id, endsAt: s.endsAt, locked: s.lock !== "none", password: s.lock === "password" });
   const date = new Date(now);
   for (const sch of state.schedules) {
     const left = scheduleRemaining(sch, date);
     if (left !== null)
-      out.push({ listId: sch.listId, source: "schedule", refId: sch.id, endsAt: now + left, locked: sch.locked });
+      out.push({ listId: sch.listId, source: "schedule", refId: sch.id, endsAt: now + left, locked: sch.locked, password: sch.locked && !!sch.password });
   }
   const p = state.pomodoro;
   if (p && p.phase === "focus" && p.pausedRemaining === null && p.config.listId)
-    out.push({ listId: p.config.listId, source: "pomodoro", refId: "pomodoro", endsAt: p.phaseEndsAt, locked: p.config.locked });
+    out.push({ listId: p.config.listId, source: "pomodoro", refId: "pomodoro", endsAt: p.phaseEndsAt, locked: p.config.locked, password: p.config.locked && !!p.config.password });
   const midnight = new Date(now);
   midnight.setHours(24, 0, 0, 0);
   for (const l of state.limits ?? [])
     if (l.days.includes(weekday(date)) && (usage[l.id] ?? 0) >= l.minutes * 60)
-      out.push({ listId: l.listId, source: "limit", refId: l.id, endsAt: midnight.getTime(), locked: l.locked });
-  return out.filter((b) => state.lists.some((l) => l.id === b.listId));
+      out.push({ listId: l.listId, source: "limit", refId: l.id, endsAt: midnight.getTime(), locked: l.locked, password: l.locked && !!l.password });
+  const skipped = (id: string) => (state.skips ?? []).some((s) => s.refId === id && now < s.until);
+  return out.filter((b) => state.lists.some((l) => l.id === b.listId) && !skipped(b.refId));
 }
 
 /** Port of hosts::normalize_domain. */

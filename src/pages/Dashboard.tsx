@@ -3,7 +3,7 @@ import { CalendarClock, Flame, KeyRound, Lock, LockKeyhole, Play, Plus, ShieldCh
 import { useMemo, useState } from "react";
 import type { Page } from "../App";
 import { LockWarning, fmtWhen } from "../components/LockWarning";
-import { UnlockModal } from "../components/UnlockModal";
+import { PasswordModal, UnlockModal } from "../components/UnlockModal";
 import { ListBadge, Segmented } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -44,6 +44,14 @@ export function Dashboard({ go }: { go: (p: Page) => void }) {
 
 function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; state: State; onUnlock: (id: string) => void; go: (p: Page) => void }) {
   const { now, run } = useStore();
+  const [ending, setEnding] = useState<ActiveBlock[] | null>(null);
+  // Schedules, used-up limits and the focus timer, ended one after another.
+  const endAll = (blocks: ActiveBlock[], password?: string) =>
+    run(async () => {
+      let snap;
+      for (const b of blocks) snap = await api.endBlock(b.refId, password);
+      return snap!;
+    }, "Ended early.");
   if (active.length === 0) {
     return (
       <div className="card relative overflow-hidden p-6">
@@ -113,6 +121,15 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
                     {list.mode === "allow" ? `only ${t.sites.size} sites allowed` : `${t.sites.size} sites`} · {t.apps.size} apps
                   </div>
                 </div>
+                {!session && others.length > 0 && others.every((b) => !b.locked || b.password) && (
+                  <button
+                    className="btn-ghost px-3 py-1.5"
+                    title={others.some((b) => b.password) ? "Needs the unlock password" : "Ends it for now; it starts again next time"}
+                    onClick={() => (others.some((b) => b.password) ? setEnding(others) : endAll(others))}
+                  >
+                    {others.some((b) => b.password) ? <KeyRound size={14} /> : <Square size={14} />} End early
+                  </button>
+                )}
                 {session && (
                   <div className="flex gap-2">
                     <button className="btn-ghost px-3 py-1.5" onClick={() => run(() => api.extendSession(session.id, 15), "Extended by 15 minutes.")}>
@@ -145,6 +162,13 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
           );
         })}
       </div>
+      {ending && (
+        <PasswordModal
+          text="This block is locked. Only the unlock password can end it early."
+          onClose={() => setEnding(null)}
+          onSubmit={(password) => endAll(ending, password)}
+        />
+      )}
     </div>
   );
 }

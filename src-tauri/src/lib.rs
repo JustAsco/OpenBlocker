@@ -567,6 +567,40 @@ fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<Str
     })
 }
 
+/// Ends a running schedule, used-up limit or the focus timer early. Locked
+/// ones only with the unlock password, and only if they allow it.
+#[tauri::command]
+fn end_block(shared: tauri::State<'_, Shared>, id: String, password: Option<String>) -> Res<Snapshot> {
+    with_unguarded(&shared, |i| {
+        let Some(block) = i.blocks().into_iter().find(|b| b.ref_id == id) else {
+            // A focus timer without a block list: nothing is blocked, so only
+            // the app is involved.
+            let p = i.state.pomodoro.as_ref().filter(|_| id == "pomodoro").ok_or("This block isn't running.")?;
+            if p.config.locked && p.phase == PomodoroPhase::Focus {
+                if !p.config.password {
+                    return Err("This focus session is locked. You can do it!".into());
+                }
+                let hash = i.state.password.clone();
+                i.throttle.check(password.as_deref(), hash.as_deref(), now_ms())?;
+            }
+            i.state.pomodoro = None;
+            return Ok(i.commit());
+        };
+        if block.locked && !block.password {
+            return Err(format!("Locked until {}. Stay strong 💪", fmt_until(block.ends_at)));
+        }
+        if block.locked && i.svc.is_some() {
+            // The service checks the password and ends the block on its side too.
+            i.svc_gen = Some(service::client::unlock(&id, password)?);
+        } else if block.locked {
+            let hash = i.state.password.clone();
+            i.throttle.check(password.as_deref(), hash.as_deref(), now_ms())?;
+        }
+        engine::end_block(&mut i.state, &id, now_ms(), &local_now())?;
+        Ok(i.commit())
+    })
+}
+
 #[tauri::command]
 fn pomodoro_start(shared: tauri::State<'_, Shared>, config: PomodoroConfig) -> Res<Snapshot> {
     with(&shared, |i| {
@@ -835,7 +869,7 @@ fn remove_category_source(shared: tauri::State<'_, Shared>, id: String) -> Res<S
 #[tauri::command]
 fn set_password(shared: tauri::State<'_, Shared>, current: Option<String>, new: Option<String>) -> Res<Snapshot> {
     with_unguarded(&shared, |i| {
-        if new.is_none() && i.state.sessions.iter().any(|s| s.lock == LockMode::Password && s.ends_at > now_ms()) {
+        if new.is_none() && i.blocks().iter().any(|b| b.password) {
             return Err("A password-locked block is running. You can remove the password once it ends.".into());
         }
         if i.svc.is_some() {
@@ -1285,6 +1319,7 @@ pub fn run() {
             extend_session,
             unlock_challenge,
             stop_session,
+            end_block,
             pomodoro_start,
             pomodoro_pause,
             pomodoro_resume,

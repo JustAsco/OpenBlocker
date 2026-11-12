@@ -372,6 +372,18 @@ impl Svc {
             if self.any_lock() && !typed_ok() {
                 return Err("The text doesn't match.".into());
             }
+        } else if !self.state.sessions.iter().any(|s| s.id == key) {
+            // A schedule, limit or the focus timer: only the password ends it early.
+            let block = engine::active_blocks(&self.state, now_ms(), &local_now())
+                .into_iter()
+                .find(|b| b.ref_id == key)
+                .ok_or("This block isn't running.")?;
+            if block.locked && !block.password {
+                return Err("This block can't be stopped before it ends.".into());
+            }
+            if block.password {
+                self.throttle.check(answer, self.state.password.as_deref(), now_ms())?;
+            }
         } else {
             let lock = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?.lock;
             match lock {
@@ -390,7 +402,7 @@ impl Svc {
             self.state = engine::factory_reset(&self.state);
             self.challenges.clear();
         } else {
-            self.state.sessions.retain(|s| s.id != key);
+            engine::end_block(&mut self.state, key, now_ms(), &local_now())?;
         }
         self.generation += 1;
         self.save();
@@ -400,7 +412,7 @@ impl Svc {
     /// Sets, changes or removes the unlock password. Returns the new
     /// generation and hash.
     fn set_password(&mut self, current: Option<&str>, new: Option<&str>) -> Result<(u64, Option<String>), String> {
-        if new.is_none() && self.state.sessions.iter().any(|s| s.lock == LockMode::Password && s.ends_at > now_ms()) {
+        if new.is_none() && engine::active_blocks(&self.state, now_ms(), &local_now()).iter().any(|b| b.password) {
             return Err("A password-locked block is running. You can remove the password once it ends.".into());
         }
         let hash = password::change(&mut self.throttle, self.state.password.as_deref(), current, new, now_ms())?;

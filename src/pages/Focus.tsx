@@ -1,7 +1,9 @@
 import clsx from "clsx";
-import { Coffee, Lock, Pause, Play, SkipForward, Square, Target } from "lucide-react";
+import { Coffee, KeyRound, Lock, Pause, Play, SkipForward, Square, Target } from "lucide-react";
 import { useState } from "react";
 import { LockWarning } from "../components/LockWarning";
+import { PasswordEscape } from "../components/PasswordEscape";
+import { PasswordModal } from "../components/UnlockModal";
 import { PageHeader, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -41,6 +43,7 @@ function Running() {
   const frac = Math.max(0, Math.min(1, 1 - left / total));
   const meta = PHASE[p.phase];
   const lockedNow = p.config.locked && p.phase === "focus";
+  const [asking, setAsking] = useState(false);
   const R = 130;
   const C = 2 * Math.PI * R;
   const roundInCycle = ((p.round - 1) % p.config.rounds) + 1;
@@ -94,14 +97,27 @@ function Running() {
           <button className="btn-ghost" disabled={lockedNow} onClick={() => run(api.pomodoroSkip)}>
             <SkipForward size={16} /> Skip
           </button>
-          <button className="btn-ghost" disabled={lockedNow} onClick={() => run(api.pomodoroStop, "Focus session ended.")}>
-            <Square size={16} /> Stop
-          </button>
+          {lockedNow && p.config.password ? (
+            <button className="btn-ghost" onClick={() => setAsking(true)}>
+              <KeyRound size={16} /> Stop
+            </button>
+          ) : (
+            <button className="btn-ghost" disabled={lockedNow} onClick={() => run(api.pomodoroStop, "Focus session ended.")}>
+              <Square size={16} /> Stop
+            </button>
+          )}
         </div>
         {lockedNow && (
           <p className="mt-4 flex items-center gap-1.5 text-sm text-amber-300">
-            <Lock size={14} /> Locked until this focus round ends.
+            <Lock size={14} /> Locked until this focus round ends{p.config.password ? ", unless the unlock password is entered" : ""}.
           </p>
+        )}
+        {asking && (
+          <PasswordModal
+            text="This focus session is locked. Only the unlock password can stop it early."
+            onClose={() => setAsking(false)}
+            onSubmit={(password) => run(() => api.endBlock("pomodoro", password), "Focus session ended.")}
+          />
         )}
       </div>
     </div>
@@ -130,6 +146,7 @@ function Setup() {
     rounds: 4,
     listId: lists[0]?.id ?? null,
     locked: false,
+    password: false,
     totalRounds: 4,
   });
   const set = (p: Partial<PomodoroConfig>) => setCfg({ ...cfg, ...p });
@@ -191,6 +208,7 @@ function Setup() {
             </div>
           )}
           <Toggle label="Lock focus rounds" hint="You can't pause, skip or stop while a focus round is running." checked={cfg.locked} onChange={(locked) => set({ locked })} />
+          {cfg.locked && <PasswordEscape what="a focus round" checked={!!cfg.password} onChange={(password) => set({ password })} />}
         </div>
       </div>
 

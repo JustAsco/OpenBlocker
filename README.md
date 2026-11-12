@@ -20,7 +20,7 @@ Block websites and apps on a schedule, run Pomodoro focus sessions, or freeze yo
 | ❄️ **Freeze PC** | Full-screen lock on every monitor for a set time, with your own message. Task Manager is blocked while frozen. |
 | 🧩 **Browser extension** | Optional, works alongside the hosts file. Blocks instantly, including tabs that are already open, shows a friendly block page, and sends you back to the site when the block ends. OpenBlocker suggests it when a website block starts without it (can be turned off). Chrome, Edge, Brave, Opera, Vivaldi, Firefox. |
 | ✅ **Allowlists** | Switch any list to "allow only these websites": in browsers everything else is blocked (needs the extension; browsers without it are closed while the allowlist runs). |
-| 🔒 **Strictness levels** | *Flexible* (stop any time) · *Type to unlock* (type a long random text or reflection sentences, paste disabled) · *Password* (an account-wide password, ideally kept by someone you trust) · *Locked* (cannot be stopped). Locked lists can only grow, never shrink. Locked schedules can't be edited while running. Starting anything locked shows a warning you have to hold to confirm, with an extra alert for never-ending schedules. |
+| 🔒 **Strictness levels** | *Flexible* (stop any time) · *Type to unlock* (type a long random text or reflection sentences, paste disabled) · *Password* (an account-wide password, ideally kept by someone you trust; locked schedules, limits and focus sessions can also allow it to end them early) · *Locked* (cannot be stopped). Locked lists can only grow, never shrink. Locked schedules can't be edited while running. Starting anything locked shows a warning you have to hold to confirm, with an extra alert for never-ending schedules. |
 | 💾 **Backup** | Export your lists, categories, schedules and settings to a file and import them on another PC. |
 | 📊 **Stats** | Focus time, pomodoros and blocked app launches per day, weekly chart and streaks. |
 | 🛡️ **Robust** | A background service keeps blocking while the app is closed or killed, restarts the app during locks, and can't be stopped while something is locked. Uninstalling or updating is refused during a lock, and settings that would loosen blocking are locked too. No administrator prompt for the app. |
@@ -98,7 +98,7 @@ src-tauri/
 - [ ] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`): the extension needs to check the channel inside those frames too; today only youtube.com itself is checked
 - [x] Exceptions per block list (sites, parts of sites, apps)
 - [x] Password lock (account-wide unlock password)
-- [ ] Password option for schedules, focus sessions and limits (today: quick blocks)
+- [x] Password option for schedules, focus sessions and limits
 - [x] Reflection texts for "Type to unlock"
 - [x] Security hardening and tests (see [SECURITY.md](SECURITY.md))
 - [x] **Background Windows service + watchdog**: blocks survive killing the app, no admin prompt for the UI

@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Lock, Moon, Plus, Sparkles, Sun, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LockWarning } from "../components/LockWarning";
+import { PasswordEscape } from "../components/PasswordEscape";
 import { Modal, PageHeader, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -68,6 +69,7 @@ const blank = (state: State, partial: Partial<Schedule> = {}): Schedule => ({
   start: 9 * 60,
   end: 17 * 60,
   locked: false,
+  password: false,
   label: "",
   ...partial,
 });
@@ -342,6 +344,7 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
           checked={s.locked}
           onChange={(locked) => setS({ ...s, locked })}
         />
+        {s.locked && <PasswordEscape what="this schedule" checked={s.password} onChange={(password) => setS({ ...s, password })} />}
       </div>
 
       <p className="mt-4 rounded-xl bg-panel px-4 py-3 text-sm text-muted">{summary()}</p>

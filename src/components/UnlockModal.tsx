@@ -48,14 +48,24 @@ export function UnlockModal({ sessionId, onClose }: { sessionId: string | null; 
 
 function PasswordUnlock({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const { run } = useStore();
+  return <PasswordModal onClose={onClose} onSubmit={(password) => run(() => api.stopSession(sessionId, password), "Block stopped.")} />;
+}
+
+/**
+ * Asks for the unlock password. `onSubmit` resolves to true when it worked;
+ * the dialog then closes.
+ */
+export function PasswordModal({ onSubmit, onClose, text }: { onSubmit: (password: string) => Promise<boolean>; onClose: () => void; text?: string }) {
   const [password, setPassword] = useState("");
   const submit = async () => {
-    if (await run(() => api.stopSession(sessionId, password), "Block stopped.")) onClose();
+    if (await onSubmit(password)) onClose();
     else setPassword("");
   };
   return (
     <Modal open onClose={onClose} title="Unlock with the password" width={460}>
-      <p className="mb-4 text-sm text-muted">This block can only be stopped with the unlock password. If someone else keeps it for you, ask them to type it in.</p>
+      <p className="mb-4 text-sm text-muted">
+        {text ?? "This block can only be stopped with the unlock password."} If someone else keeps it for you, ask them to type it in.
+      </p>
       <input
         className="input"
         type="password"

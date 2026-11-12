@@ -120,20 +120,22 @@ export function Toggle({
   label,
   hint,
   lockedOn,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
   hint?: ReactNode;
   lockedOn?: boolean;
+  disabled?: boolean;
 }) {
-  const frozen = !!lockedOn && checked;
+  const frozen = (!!lockedOn && checked) || !!disabled;
   return (
-    <label className={clsx("flex items-start justify-between gap-6 py-3", frozen ? "cursor-not-allowed" : "cursor-pointer")}>
+    <label className={clsx("flex items-start justify-between gap-6 py-3", frozen ? "cursor-not-allowed" : "cursor-pointer", disabled && "opacity-60")}>
       <span>
         <span className="flex items-center gap-1.5 text-sm font-medium">
           {label}
-          {frozen && <Lock size={12} className="text-amber-400" aria-label="Can't be turned off while a locked block is running" />}
+          {frozen && !disabled && <Lock size={12} className="text-amber-400" aria-label="Can't be turned off while a locked block is running" />}
         </span>
         {hint && <span className="mt-0.5 block text-xs text-muted">{hint}</span>}
       </span>
@@ -142,7 +144,7 @@ export function Toggle({
         role="switch"
         aria-checked={checked}
         disabled={frozen}
-        title={frozen ? "Can't be turned off while a locked block is running" : undefined}
+        title={frozen && !disabled ? "Can't be turned off while a locked block is running" : undefined}
         onClick={() => onChange(!checked)}
         className={clsx(
           "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:opacity-60",

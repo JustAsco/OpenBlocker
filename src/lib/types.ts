@@ -54,6 +54,8 @@ export interface UsageLimit {
   /** 0 = Monday … 6 = Sunday */
   days: number[];
   locked: boolean;
+  /** When locked: the unlock password can still end the block early. */
+  password: boolean;
 }
 
 export interface Schedule {
@@ -65,6 +67,8 @@ export interface Schedule {
   start: number;
   end: number;
   locked: boolean;
+  /** When locked: the unlock password can still end it early. */
+  password: boolean;
   label?: string | null;
 }
 
@@ -87,6 +91,8 @@ export interface PomodoroConfig {
   rounds: number;
   listId: string | null;
   locked: boolean;
+  /** When locked: the unlock password can still stop it early. */
+  password: boolean;
   totalRounds: number | null;
 }
 
@@ -138,6 +144,8 @@ export interface State {
   settings: Settings;
   stats: Record<string, DayStats>;
   limits: UsageLimit[];
+  /** Schedules and limits ended early, until their planned end. */
+  skips: { refId: string; until: number }[];
 }
 
 export type Source = "session" | "schedule" | "pomodoro" | "limit";
@@ -148,6 +156,8 @@ export interface ActiveBlock {
   refId: string;
   endsAt: number;
   locked: boolean;
+  /** Locked, but the unlock password can end it early. */
+  password: boolean;
 }
 
 export interface Status {
