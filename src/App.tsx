@@ -13,18 +13,19 @@ import { LimitsPage } from "./pages/Limits";
 import { ListsPage } from "./pages/Lists";
 import { SchedulePage } from "./pages/Schedule";
 import { SettingsPage } from "./pages/Settings";
+import { t } from "./lib/i18n";
 
 export type Page = "today" | "lists" | "categories" | "schedule" | "limits" | "focus" | "freeze" | "settings";
 
 const NAV: { id: Page; label: string; icon: typeof Timer }[] = [
-  { id: "today", label: "Today", icon: LayoutDashboard },
-  { id: "lists", label: "Block lists", icon: ShieldBan },
-  { id: "categories", label: "Categories", icon: Tags },
-  { id: "schedule", label: "Schedule", icon: CalendarDays },
-  { id: "limits", label: "Daily limits", icon: Hourglass },
-  { id: "focus", label: "Focus timer", icon: Timer },
-  { id: "freeze", label: "Freeze PC", icon: Snowflake },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+  { id: "today", label: t("Today"), icon: LayoutDashboard },
+  { id: "lists", label: t("Block lists"), icon: ShieldBan },
+  { id: "categories", label: t("Categories"), icon: Tags },
+  { id: "schedule", label: t("Schedule"), icon: CalendarDays },
+  { id: "limits", label: t("Daily limits"), icon: Hourglass },
+  { id: "focus", label: t("Focus timer"), icon: Timer },
+  { id: "freeze", label: t("Freeze PC"), icon: Snowflake },
+  { id: "settings", label: t("Settings"), icon: SettingsIcon },
 ];
 
 /** Applies the chosen theme ("system" follows Windows). The freeze screen always stays dark. */
@@ -88,10 +89,10 @@ export default function App() {
         <div className="mt-auto rounded-xl border border-line bg-card p-3">
           <div className="flex items-center gap-2 text-sm font-medium">
             <span className={clsx("size-2.5 rounded-full", blocking ? "pulse-dot bg-good" : "bg-faint")} />
-            {blocking ? "Blocking active" : "Nothing blocked"}
+            {blocking ? t("Blocking active") : t("Nothing blocked")}
           </div>
           <p className="mt-1 text-xs text-muted">
-            {blocking ? `${status.blockedSites} sites · ${status.blockedApps} apps` : "Start a block or set a schedule."}
+            {blocking ? t("{sites} sites · {apps} apps", { sites: status.blockedSites, apps: status.blockedApps }) : t("Start a block or set a schedule.")}
           </p>
         </div>
       </aside>
@@ -100,10 +101,10 @@ export default function App() {
         {status.hostsError && (
           <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-8 py-2.5 text-sm text-amber-200 backdrop-blur">
             <ShieldAlert size={18} className="shrink-0" />
-            <span className="flex-1">{status.hostsError} App blocking still works.</span>
+            <span className="flex-1">{status.hostsError} {t("App blocking still works.")}</span>
             {isTauri && !status.service && (
               <button className="btn-ghost py-1" onClick={() => run(async () => (await api.relaunchAsAdmin(), api.snapshot()))}>
-                Restart as administrator
+                {t("Restart as administrator")}
               </button>
             )}
           </div>
@@ -112,11 +113,10 @@ export default function App() {
           <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-cyan-500/30 bg-cyan-500/10 px-8 py-2.5 text-sm text-cyan-100 backdrop-blur">
             <Puzzle size={18} className="shrink-0" />
             <span className="flex-1">
-              {status.allowlistSites !== null ? "An allowlist is active." : "Website blocking requires the extension."} Browsers without the OpenBlocker
-              extension are closed until it's installed.
+              {status.allowlistSites !== null ? t("An allowlist is active.") : t("Website blocking requires the extension.")} {t("Browsers without the OpenBlocker extension are closed until it's installed.")}
             </span>
             <button className="btn-ghost py-1" onClick={() => setPage("settings")}>
-              Set up extension
+              {t("Set up extension")}
             </button>
           </div>
         )}

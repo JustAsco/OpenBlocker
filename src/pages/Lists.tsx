@@ -10,6 +10,7 @@ import { score } from "../lib/catalog";
 import { useStore } from "../lib/store";
 import type { BlockList, Category, ListMode, State } from "../lib/types";
 import { LIST_COLORS, fmtTime, isPathSite, listTargets, normalizeChannel, uid } from "../lib/util";
+import { t, tx } from "../lib/i18n";
 
 /** Remember which category to open when jumping to the Categories page. */
 export const openCategory = (id: string, go: (p: Page) => void) => {
@@ -31,11 +32,11 @@ export function ListsPage({ go }: { go: (p: Page) => void }) {
   return (
     <>
       <PageHeader
-        title="Block lists"
-        subtitle="What gets blocked together. Include whole categories and add your own extras. Use lists in quick blocks, schedules and focus sessions."
+        title={t("Block lists")}
+        subtitle={t("What gets blocked together. Include whole categories and add your own extras. Use lists in quick blocks, schedules and focus sessions.")}
         actions={
           <button className="btn-primary" onClick={() => setCreating(true)}>
-            <Plus size={16} /> New list
+            <Plus size={16} /> {t("New list")}
           </button>
         }
       />
@@ -43,7 +44,7 @@ export function ListsPage({ go }: { go: (p: Page) => void }) {
         <div className="flex flex-col gap-2">
           {state.lists.map((l) => {
             const active = status.active.some((a) => a.listId === l.id);
-            const t = listTargets(state, l);
+            const targets = listTargets(state, l);
             return (
               <button
                 key={l.id}
@@ -59,19 +60,19 @@ export function ListsPage({ go }: { go: (p: Page) => void }) {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">{l.name}</span>
                   <span className="text-xs text-muted">
-                    {t.sites.size} sites · {t.apps.size} apps
+                    {t("{sites} sites · {apps} apps", { sites: targets.sites.size, apps: targets.apps.size })}
                   </span>
                 </span>
-                {active && <span className="pulse-dot size-2 shrink-0 rounded-full bg-good" title="Active now" />}
+                {active && <span className="pulse-dot size-2 shrink-0 rounded-full bg-good" title={t("Active now")} />}
               </button>
             );
           })}
-          {state.lists.length === 0 && <p className="p-4 text-sm text-muted">No lists yet.</p>}
+          {state.lists.length === 0 && <p className="p-4 text-sm text-muted">{t("No lists yet.")}</p>}
         </div>
         {list ? (
           <ListEditor key={list.id} list={list} state={state} go={go} />
         ) : (
-          <div className="card grid place-items-center p-12 text-sm text-muted">Create your first block list to get started.</div>
+          <div className="card grid place-items-center p-12 text-sm text-muted">{t("Create your first block list to get started.")}</div>
         )}
       </div>
       <NewListModal
@@ -99,14 +100,14 @@ function CategoryPill({ c, on, locked, onToggle, onEdit }: { c: Category; on: bo
         className={clsx("inline-flex items-center gap-1.5 py-1.5 pr-1 pl-2.5", on ? "text-fg" : "text-muted hover:text-fg")}
         onClick={onToggle}
         disabled={on && locked}
-        title={on && locked ? "Locked while a block is running" : `${c.sites.length} sites · ${c.apps.length} apps`}
+        title={on && locked ? t("Locked while a block is running") : `${c.sites.length} sites · ${c.apps.length} apps`}
       >
         {on ? locked ? <Lock size={13} /> : <Check size={14} strokeWidth={3} style={{ color: c.color }} /> : <Plus size={14} className="text-faint" />}
         <span>{c.icon}</span>
-        {c.name}
+        {t(c.name)}
         <span className="text-xs text-faint tabular-nums">{c.sites.length + c.apps.length}</span>
       </button>
-      <button className="mr-1 rounded-full p-1 text-faint opacity-0 transition group-hover:opacity-100 hover:bg-line hover:text-fg focus:opacity-100" onClick={onEdit} title={`Edit “${c.name}”`}>
+      <button className="mr-1 rounded-full p-1 text-faint opacity-0 transition group-hover:opacity-100 hover:bg-line hover:text-fg focus:opacity-100" onClick={onEdit} title={t("Edit “{name}”", { name: t(c.name) })}>
         <Pencil size={12} />
       </button>
     </span>
@@ -127,7 +128,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
   const exceptionGroups = useCallback(
     (q: string): SuggestionGroup[] => [
       {
-        label: "In this list",
+        label: t("In this list"),
         items: [...beforeExceptions.sites]
           .filter((d) => !exceptSites.includes(d) && (!q || score(q, d) > 0))
           .slice(0, q ? 8 : 6)
@@ -135,7 +136,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
             key: `in-${d}`,
             icon: <CircleMinus size={16} className="text-muted" />,
             title: d,
-            subtitle: "Leave it out of this list",
+            subtitle: t("Leave it out of this list"),
             onPick: () => setDraft((x) => ({ ...x, exceptSites: [...(x.exceptSites ?? []), d] })),
           })),
       },
@@ -148,8 +149,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
   const lockedApps = useMemo(() => new Set(lockBlock ? list.apps.map((a) => a.exe.toLowerCase()) : []), [lockBlock, list.apps]);
   const total = listTargets(state, draft);
   const covered = useMemo(() => {
-    const t = listTargets(state, { ...draft, sites: [], apps: [] });
-    return { sites: t.sites, apps: new Set(t.apps.keys()) };
+    const base = listTargets(state, { ...draft, sites: [], apps: [] });
+    return { sites: base.sites, apps: new Set(base.apps.keys()) };
   }, [state, draft]);
 
   const toggleCategory = useCallback(
@@ -160,14 +161,14 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
   const categoryGroups = useCallback(
     (q: string): SuggestionGroup[] => [
       {
-        label: "Include a whole category",
+        label: t("Include a whole category"),
         items: state.categories
-          .filter((c) => !draft.categories.includes(c.id) && (!q || score(q, c.name) > 0))
+          .filter((c) => !draft.categories.includes(c.id) && (!q || score(q, c.name) > 0 || score(q, t(c.name)) > 0))
           .map((c) => ({
             key: `cat-${c.id}`,
             icon: <span className="text-base">{c.icon}</span>,
-            title: c.name,
-            subtitle: `${c.sites.length} sites · ${c.apps.length} apps — stays in sync when you edit the category`,
+            title: t(c.name),
+            subtitle: t("{sites} sites · {apps} apps — stays in sync when you edit the category", { sites: c.sites.length, apps: c.apps.length }),
             onPick: () => toggleCategory(c.id),
           })),
       },
@@ -182,8 +183,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
       name={draft.name}
       subtitle={
         [
-          draft.mode === "allow" ? `only ${total.sites.size} websites allowed` : `${total.sites.size} websites blocked`,
-          appAllow ? `only ${total.apps.size} apps allowed` : `${total.apps.size} apps blocked`,
+          draft.mode === "allow" ? t("only {n} websites allowed", { n: total.sites.size }) : t("{n} websites blocked", { n: total.sites.size }),
+          appAllow ? t("only {n} apps allowed", { n: total.apps.size }) : t("{n} apps blocked", { n: total.apps.size }),
         ].join(" · ")
       }
       dirty={dirty}
@@ -199,8 +200,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
           <div className="mb-5 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
             <Lock size={16} className="shrink-0" />
             {draft.mode === "allow" || appAllow
-              ? `Locked until ${fmtTime(lockBlock.endsAt)}. It can only get stricter until then.`
-              : `Locked until ${fmtTime(lockBlock.endsAt)}. You can add more, but can't remove anything until then.`}
+              ? t("Locked until {time}. It can only get stricter until then.", { time: fmtTime(lockBlock.endsAt) })
+              : t("Locked until {time}. You can add more, but can't remove anything until then.", { time: fmtTime(lockBlock.endsAt) })}
           </div>
         )
       }
@@ -211,8 +212,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
           value={draft.mode}
           onChange={(mode) => setDraft({ ...draft, mode })}
           options={[
-            { value: "block", label: <><Ban size={14} /> Block these websites</> },
-            { value: "allow", label: <><CircleCheck size={14} /> Allow only these websites</> },
+            { value: "block", label: <><Ban size={14} /> {t("Block these websites")}</> },
+            { value: "allow", label: <><CircleCheck size={14} /> {t("Allow only these websites")}</> },
           ]}
         />
         <Segmented<ListMode>
@@ -220,20 +221,19 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
           value={draft.appMode ?? "block"}
           onChange={(appMode) => setDraft({ ...draft, appMode })}
           options={[
-            { value: "block", label: <><Ban size={14} /> Block these apps</> },
-            { value: "allow", label: <><CircleCheck size={14} /> Allow only these apps</> },
+            { value: "block", label: <><Ban size={14} /> {t("Block these apps")}</> },
+            { value: "allow", label: <><CircleCheck size={14} /> {t("Allow only these apps")}</> },
           ]}
         />
         {draft.mode === "allow" && (
           <div className="mt-3 flex items-start gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
             <Puzzle size={16} className="mt-0.5 shrink-0" />
             <div>
-              While this list is active, browsers can only open the websites below; everything else is blocked. This needs
-              the OpenBlocker browser extension, and browsers without it are closed while the allowlist runs.{" "}
+              {t("While this list is active, browsers can only open the websites below; everything else is blocked. This needs the OpenBlocker browser extension, and browsers without it are closed while the allowlist runs.")}{" "}
               <span className="text-cyan-300">
                 {snap!.status.extension.length
-                  ? `Extension active in ${snap!.status.extension.map((b) => b.name).join(", ")}.`
-                  : "The extension isn't connected yet; see Settings → Browser extension."}
+                  ? t("Extension active in {browsers}.", { browsers: snap!.status.extension.map((b) => b.name).join(", ") })
+                  : t("The extension isn't connected yet; see Settings → Browser extension.")}
               </span>
             </div>
           </div>
@@ -242,9 +242,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
           <div className="mt-3 flex items-start gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
             <AppWindow size={16} className="mt-0.5 shrink-0" />
             <div>
-              While this list is active, only the apps below can be used: any other program you bring to the front is closed. Windows itself (desktop, taskbar,
-              Settings, File Explorer) and OpenBlocker always keep working.{" "}
-              <span className="text-cyan-300">Add your browser if you need websites.</span>
+              {t("While this list is active, only the apps below can be used: any other program you bring to the front is closed. Windows itself (desktop, taskbar, Settings, File Explorer) and OpenBlocker always keep working.")}{" "}
+              <span className="text-cyan-300">{t("Add your browser if you need websites.")}</span>
             </div>
           </div>
         )}
@@ -255,27 +254,28 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
         value={tab}
         onChange={setTab}
         options={[
-          { value: "items", label: <><Tags size={14} /> {draft.mode === "allow" && appAllow ? "Allowed" : draft.mode === "allow" || appAllow ? "Items" : "Blocked"}</> },
-          { value: "exceptions", label: <><CircleMinus size={14} /> Exceptions{exceptSites.length + exceptApps.length ? ` · ${exceptSites.length + exceptApps.length}` : ""}</> },
-          { value: "youtube", label: <><MonitorPlay size={14} /> YouTube channels{channels.length ? ` · ${channels.length}` : ""}</> },
+          { value: "items", label: <><Tags size={14} /> {draft.mode === "allow" && appAllow ? t("Allowed") : draft.mode === "allow" || appAllow ? t("Items") : t("Blocked")}</> },
+          { value: "exceptions", label: <><CircleMinus size={14} /> {t("Exceptions")}{exceptSites.length + exceptApps.length ? ` · ${exceptSites.length + exceptApps.length}` : ""}</> },
+          { value: "youtube", label: <><MonitorPlay size={14} /> {t("YouTube channels")}{channels.length ? ` · ${channels.length}` : ""}</> },
         ]}
       />
 
       {tab === "exceptions" && (
         <>
           <p className="mb-5 text-sm text-muted">
-            Leave websites and apps out of this list without changing its categories, e.g. all social media except Facebook. Works with community lists too.
-            Add part of a site (like <span className="text-fg">reddit.com/r/rust</span>) to keep just that reachable while the rest stays blocked; that part needs the
-            browser extension, and the site is then blocked by the extension only.
+            {tx(
+              "Leave websites and apps out of this list without changing its categories, e.g. all social media except Facebook. Works with community lists too. Add part of a site (like {example}) to keep just that reachable while the rest stays blocked; that part needs the browser extension, and the site is then blocked by the extension only.",
+              { example: <span className="text-fg">reddit.com/r/rust</span> },
+            )}
           </p>
           {lockBlock && (
             <p className="mb-4 flex items-center gap-2 text-sm text-amber-200">
-              <Lock size={14} /> Locked: you can remove exceptions, but not add new ones until it ends.
+              <Lock size={14} /> {t("Locked: you can remove exceptions, but not add new ones until it ends.")}
             </p>
           )}
           <ItemsEditor
-            siteTitle="Websites to leave out"
-            appTitle="Apps to leave out"
+            siteTitle={t("Websites to leave out")}
+            appTitle={t("Apps to leave out")}
             sites={exceptSites}
             apps={exceptApps}
             onSites={(exceptSites) => setDraft({ ...draft, exceptSites })}
@@ -284,7 +284,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
           />
           {exceptSites.some(isPathSite) && (
             <p className="-mt-3 flex items-center gap-2 text-xs text-cyan-200">
-              <Puzzle size={13} /> Exceptions for parts of a site only work in browsers with the extension.
+              <Puzzle size={13} /> {t("Exceptions for parts of a site only work in browsers with the extension.")}
             </p>
           )}
         </>
@@ -304,10 +304,10 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
       <section className="mb-7">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
-            <Tags size={16} className="text-pink-400" /> {draft.mode === "allow" ? "Allowed categories" : "Categories"}
+            <Tags size={16} className="text-pink-400" /> {draft.mode === "allow" ? t("Allowed categories") : t("Categories")}
           </h3>
           <button className="text-xs text-muted hover:text-fg" onClick={() => go("categories")}>
-            Manage categories →
+            {t("Manage categories →")}
           </button>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -325,8 +325,8 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
       </section>
 
       <ItemsEditor
-        siteTitle={draft.mode === "allow" ? "Allowed websites" : "Extra websites"}
-        appTitle={appAllow ? "Allowed apps" : "Extra apps"}
+        siteTitle={draft.mode === "allow" ? t("Allowed websites") : t("Extra websites")}
+        appTitle={appAllow ? t("Allowed apps") : t("Extra apps")}
         sites={draft.sites}
         apps={draft.apps}
         onSites={(sites) => setDraft({ ...draft, sites })}
@@ -340,13 +340,13 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
       )}
 
       <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title={`Delete “${list.name}”?`}>
-        <p className="text-sm text-muted">This also removes its schedules and running quick blocks. Categories are kept.</p>
+        <p className="text-sm text-muted">{t("This also removes its schedules and running quick blocks. Categories are kept.")}</p>
         <div className="mt-6 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setConfirmDelete(false)}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button className="btn-danger" onClick={() => run(() => api.deleteList(list.id), "List deleted.").then(() => setConfirmDelete(false))}>
-            Delete
+            {t("Delete")}
           </button>
         </div>
       </Modal>
@@ -379,8 +379,8 @@ function NewListModal({ open, categories, onClose, onCreate }: { open: boolean; 
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="New block list" width={600}>
-      <span className="label">Include categories</span>
+    <Modal open={open} onClose={onClose} title={t("New block list")} width={600}>
+      <span className="label">{t("Include categories")}</span>
       <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3">
         {categories.map((c) => (
           <button
@@ -389,21 +389,21 @@ function NewListModal({ open, categories, onClose, onCreate }: { open: boolean; 
             onClick={() => toggle(c)}
           >
             <span>{c.icon}</span>
-            <span className="truncate">{c.name}</span>
+            <span className="truncate">{t(c.name)}</span>
             {cats.includes(c.id) && <Check size={14} className="ml-auto shrink-0 text-accent" />}
           </button>
         ))}
       </div>
-      <span className="label">Name</span>
-      <input className="input mb-5" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Evening distractions" autoFocus />
+      <span className="label">{t("Name")}</span>
+      <input className="input mb-5" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("e.g. Evening distractions")} autoFocus />
       <IconColorPicker icon={icon} color={color} onIcon={setIcon} onColor={setColor} />
-      <p className="mt-4 text-xs text-muted">You can add individual websites and apps after creating the list.</p>
+      <p className="mt-4 text-xs text-muted">{t("You can add individual websites and apps after creating the list.")}</p>
       <div className="mt-6 flex justify-end gap-2">
         <button className="btn-ghost" onClick={onClose}>
-          Cancel
+          {t("Cancel")}
         </button>
         <button className="btn-primary" disabled={!name.trim()} onClick={() => onCreate({ id: uid(), name: name.trim(), icon, color, sites: [], apps: [], categories: cats, mode: "block", appMode: "block" })}>
-          Create list
+          {t("Create list")}
         </button>
       </div>
     </Modal>
@@ -436,27 +436,26 @@ function ChannelsEditor({
   return (
     <section className="mb-2">
       <p className="mb-4 text-sm text-muted">
-        While this list is active, YouTube videos only play if they're from one of these channels; everything else shows the block page. Search and the home
-        page stay usable. Leave it empty for no restriction. Needs the browser extension (browsers without it are closed while the restriction runs).
+        {t("While this list is active, YouTube videos only play if they're from one of these channels; everything else shows the block page. Search and the home page stay usable. Leave it empty for no restriction. Needs the browser extension (browsers without it are closed while the restriction runs).")}
       </p>
       {blocksYoutube && (
-        <p className="mb-4 text-sm text-amber-200">This list blocks youtube.com completely, so channels here have no effect. Remove YouTube (or add it as an exception) to use them.</p>
+        <p className="mb-4 text-sm text-amber-200">{t("This list blocks youtube.com completely, so channels here have no effect. Remove YouTube (or add it as an exception) to use them.")}</p>
       )}
       {locked && channels.length > 0 && (
         <p className="mb-4 flex items-center gap-2 text-sm text-amber-200">
-          <Lock size={14} /> Locked: you can remove channels, but not add any until it ends.
+          <Lock size={14} /> {t("Locked: you can remove channels, but not add any until it ends.")}
         </p>
       )}
       <div className="mb-3 flex gap-2">
         <input
           className="input"
-          placeholder="Paste a channel link or @handle, e.g. https://www.youtube.com/@veritasium"
+          placeholder={t("Paste a channel link or @handle, e.g. https://www.youtube.com/@veritasium")}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
         />
         <button className="btn-ghost shrink-0" disabled={!input.trim()} onClick={add}>
-          <Plus size={15} /> Add
+          <Plus size={15} /> {t("Add")}
         </button>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -471,9 +470,9 @@ function ChannelsEditor({
             </button>
           </span>
         ))}
-        {!channels.length && <p className="text-sm text-faint">No restriction: videos from every channel play.</p>}
+        {!channels.length && <p className="text-sm text-faint">{t("No restriction: videos from every channel play.")}</p>}
       </div>
-      <p className="mt-5 text-xs text-faint">Tip: to block only Shorts and keep normal videos, include the “Short videos” category instead.</p>
+      <p className="mt-5 text-xs text-faint">{t("Tip: to block only Shorts and keep normal videos, include the “Short videos” category instead.")}</p>
     </section>
   );
 }

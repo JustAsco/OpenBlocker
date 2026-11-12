@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import { Modal } from "./ui";
+import { t } from "../lib/i18n";
 
 type Mode = "set" | "change" | "remove";
 
@@ -38,40 +39,39 @@ export function PasswordCard() {
   return (
     <section className="card self-start p-6">
       <h2 className="mb-1 flex items-center gap-2 font-semibold">
-        <KeyRound size={18} className="text-accent-2" /> Unlock password
+        <KeyRound size={18} className="text-accent-2" /> {t("Unlock password")}
       </h2>
       <p className="mb-4 text-sm text-muted">
-        Adds a “Password” strictness to quick blocks: only this password can stop them early. Works best if someone you trust sets it, so they can unlock for you
-        when you ask.
+        {t("Adds a “Password” strictness to quick blocks, and lets locked schedules, limits and focus sessions allow it as a way out: only this password can stop them early. Works best if someone you trust sets it, so they can unlock for you when you ask.")}
       </p>
       <div className="flex flex-wrap items-center gap-2">
-        <span className={isSet ? "chip border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "chip text-muted"}>{isSet ? "Password is set" : "No password set"}</span>
+        <span className={isSet ? "chip border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "chip text-muted"}>{isSet ? t("Password is set") : t("No password set")}</span>
         <div className="flex-1" />
         {isSet ? (
           <>
             <button className="btn-ghost" onClick={() => open("change")}>
-              Change
+              {t("Change")}
             </button>
             <button className="btn-ghost" onClick={() => open("remove")}>
-              Remove
+              {t("Remove")}
             </button>
           </>
         ) : (
           <button className="btn-primary" onClick={() => open("set")}>
-            Set a password
+            {t("Set a password")}
           </button>
         )}
       </div>
 
-      <Modal open={mode !== null} onClose={() => setMode(null)} title={mode === "set" ? "Set an unlock password" : mode === "change" ? "Change the password" : "Remove the password"} width={460}>
+      <Modal open={mode !== null} onClose={() => setMode(null)} title={mode === "set" ? t("Set an unlock password") : mode === "change" ? t("Change the password") : t("Remove the password")} width={460}>
         {mode === "set" && (
           <p className="mb-4 text-sm text-muted">
-            Hand the keyboard to whoever should keep it. Changing or removing it later needs this password. If it's lost, the emergency reset is the only way out.
+            {t("Hand the keyboard to whoever should keep it. Changing or removing it later needs this password. If it's lost, the emergency reset is the only way out.")}
           </p>
         )}
         <div className="space-y-3">
           {isSet && (
-            <input className="input" type="password" autoFocus autoComplete="off" placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            <input className="input" type="password" autoFocus autoComplete="off" placeholder={t("Current password")} value={current} onChange={(e) => setCurrent(e.target.value)} />
           )}
           {needsNew && (
             <>
@@ -80,7 +80,7 @@ export function PasswordCard() {
                 type="password"
                 autoFocus={!isSet}
                 autoComplete="new-password"
-                placeholder="New password (at least 4 characters)"
+                placeholder={t("New password (at least 4 characters)")}
                 value={next}
                 onChange={(e) => setNext(e.target.value)}
               />
@@ -88,21 +88,21 @@ export function PasswordCard() {
                 className="input"
                 type="password"
                 autoComplete="new-password"
-                placeholder="Repeat the new password"
+                placeholder={t("Repeat the new password")}
                 value={repeat}
                 onChange={(e) => setRepeat(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && valid && submit()}
               />
-              {repeat && next !== repeat && <p className="text-xs text-red-300">The passwords don't match.</p>}
+              {repeat && next !== repeat && <p className="text-xs text-red-300">{t("The passwords don't match.")}</p>}
             </>
           )}
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setMode(null)}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button className={mode === "remove" ? "btn-danger" : "btn-primary"} disabled={!valid} onClick={submit}>
-            {mode === "remove" ? "Remove" : "Save"}
+            {mode === "remove" ? t("Remove") : t("Save")}
           </button>
         </div>
       </Modal>

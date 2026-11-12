@@ -127,6 +127,8 @@ export interface Settings {
   hideShortVideoFeeds: boolean;
   /** "Type to unlock": random characters or reflection sentences. */
   unlockTextStyle: "random" | "reflection";
+  /** UI language ("en", "de"); "" = follow the system. */
+  language: string;
 }
 
 export interface DayStats {

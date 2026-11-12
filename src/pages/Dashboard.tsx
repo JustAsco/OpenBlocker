@@ -2,13 +2,14 @@ import clsx from "clsx";
 import { CalendarClock, Flame, KeyRound, Lock, LockKeyhole, Play, Plus, ShieldCheck, Square, Timer, TypeIcon, Unlock, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Page } from "../App";
-import { LockWarning, fmtWhen } from "../components/LockWarning";
+import { LockWarning, fmtWhen, lockedWord } from "../components/LockWarning";
 import { PasswordModal, UnlockModal } from "../components/UnlockModal";
 import { ListBadge, Segmented } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { ActiveBlock, LockMode, State } from "../lib/types";
 import { DAYS, dateKey, fmtClock, fmtDuration, fmtMinutes, fmtTime, listTargets, minuteOfDay, weekday } from "../lib/util";
+import { language, t, tx } from "../lib/i18n";
 
 function greeting() {
   const h = new Date().getHours();
@@ -23,8 +24,8 @@ export function Dashboard({ go }: { go: (p: Page) => void }) {
   return (
     <>
       <div className="mb-8">
-        <p className="text-sm text-muted">{new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</p>
-        <h1 className="font-display mt-1 text-3xl font-semibold tracking-tight">{greeting()} 👋</h1>
+        <p className="text-sm text-muted">{new Date().toLocaleDateString(language(), { weekday: "long", day: "numeric", month: "long" })}</p>
+        <h1 className="font-display mt-1 text-3xl font-semibold tracking-tight">{t(greeting())} 👋</h1>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-5">
@@ -61,16 +62,16 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
             <ShieldCheck className="text-muted" />
           </div>
           <div>
-            <h2 className="font-display text-lg font-semibold">No active blocks</h2>
-            <p className="text-sm text-muted">Everything is reachable right now. Start a quick block below or plan your week.</p>
+            <h2 className="font-display text-lg font-semibold">{t("No active blocks")}</h2>
+            <p className="text-sm text-muted">{t("Everything is reachable right now. Start a quick block below or plan your week.")}</p>
           </div>
         </div>
         <div className="mt-5 flex gap-2">
           <button className="btn-ghost" onClick={() => go("schedule")}>
-            <CalendarClock size={16} /> Plan schedule
+            <CalendarClock size={16} /> {t("Plan schedule")}
           </button>
           <button className="btn-ghost" onClick={() => go("focus")}>
-            <Timer size={16} /> Start pomodoro
+            <Timer size={16} /> {t("Start pomodoro")}
           </button>
         </div>
       </div>
@@ -81,7 +82,7 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
       <div className="absolute -top-20 -right-10 size-56 rounded-full bg-emerald-500/10 blur-3xl" />
       <div className="mb-4 flex items-center gap-2">
         <span className="pulse-dot size-2.5 rounded-full bg-good" />
-        <h2 className="font-display text-lg font-semibold">Blocking now</h2>
+        <h2 className="font-display text-lg font-semibold">{t("Blocking now")}</h2>
       </div>
       <div className="flex flex-col gap-3">
         {groupByList(active).map(([listId, blocks]) => {
@@ -96,38 +97,39 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
           const othersEnd = others.length ? Math.max(...others.map((b) => b.endsAt)) : 0;
           const labels = blocks.map((b) =>
             b.source === "session"
-              ? "Quick block"
+              ? t("Quick block")
               : b.source === "pomodoro"
-                ? "Focus timer"
+                ? t("Focus timer")
                 : b.source === "limit"
-                  ? "Daily limit used up"
-                  : state.schedules.find((s) => s.id === b.refId)?.label || "Scheduled",
+                  ? t("Daily limit used up")
+                  : state.schedules.find((s) => s.id === b.refId)?.label || t("Scheduled"),
           );
           const start = blocks.length === 1 ? (session?.startedAt ?? (blocks[0].source === "pomodoro" ? state.pomodoro?.phaseStartedAt : undefined)) : undefined;
           const pct = start ? Math.min(100, ((now - start) / (endsAt - start)) * 100) : null;
-          const t = listTargets(state, list);
+          const targets = listTargets(state, list);
           return (
             <div key={listId} className="rounded-xl border border-line bg-panel p-4">
               <div className="flex items-center gap-3">
                 <ListBadge list={list} className="min-w-0 flex-1" />
                 <span className="truncate text-xs text-muted">{[...new Set(labels)].join(" · ")}</span>
-                {locked && <Lock size={14} className="shrink-0 text-amber-400" aria-label="Locked" />}
+                {locked && <Lock size={14} className="shrink-0 text-amber-400" aria-label={t("Locked")} />}
               </div>
               <div className="mt-3 flex items-end justify-between gap-3">
                 <div>
                   <div className="font-display text-2xl font-semibold tabular-nums">{fmtDuration(endsAt - now)}</div>
                   <div className="text-xs text-muted">
-                    until {fmtTime(endsAt)} ·{" "}
-                    {list.mode === "allow" ? `only ${t.sites.size} sites allowed` : `${t.sites.size} sites`} · {t.apps.size} apps
+                    {t("until {time}", { time: fmtTime(endsAt) })} ·{" "}
+                    {list.mode === "allow" ? t("only {n} sites allowed", { n: targets.sites.size }) : t("{n} sites", { n: targets.sites.size })} ·{" "}
+                    {list.appMode === "allow" ? t("only {n} apps allowed", { n: targets.apps.size }) : t("{n} apps", { n: targets.apps.size })}
                   </div>
                 </div>
                 {!session && others.length > 0 && others.every((b) => !b.locked || b.password) && (
                   <button
                     className="btn-ghost px-3 py-1.5"
-                    title={others.some((b) => b.password) ? "Needs the unlock password" : "Ends it for now; it starts again next time"}
+                    title={others.some((b) => b.password) ? t("Needs the unlock password") : t("Ends it for now; it starts again next time")}
                     onClick={() => (others.some((b) => b.password) ? setEnding(others) : endAll(others))}
                   >
-                    {others.some((b) => b.password) ? <KeyRound size={14} /> : <Square size={14} />} End early
+                    {others.some((b) => b.password) ? <KeyRound size={14} /> : <Square size={14} />} {t("End early")}
                   </button>
                 )}
                 {session && (
@@ -136,18 +138,18 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
                       <Plus size={14} /> 15m
                     </button>
                     {session.lock === "timer" ? (
-                      <button className="btn-ghost px-3 py-1.5" disabled title="Locked until the timer ends">
+                      <button className="btn-ghost px-3 py-1.5" disabled title={t("Locked until the timer ends")}>
                         <LockKeyhole size={14} />
                       </button>
                     ) : (
                       <button
                         className="btn-ghost px-3 py-1.5"
-                        title={othersEnd > now ? `The quick block stops; ${labels.filter((l) => l !== "Quick block").join(", ")} keeps it blocked until ${fmtTime(othersEnd)}.` : undefined}
+                        title={othersEnd > now ? t("The quick block stops; {others} keeps it blocked until {time}.", { others: labels.filter((l) => l !== t("Quick block")).join(", "), time: fmtTime(othersEnd) }) : undefined}
                         onClick={() =>
                           session.lock === "text" || session.lock === "password" ? onUnlock(session.id) : run(() => api.stopSession(session.id), "Quick block stopped.")
                         }
                       >
-                        <Square size={14} /> Stop
+                        <Square size={14} /> {t("Stop")}
                       </button>
                     )}
                   </div>
@@ -164,7 +166,7 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
       </div>
       {ending && (
         <PasswordModal
-          text="This block is locked. Only the unlock password can end it early."
+          text={t("This block is locked. Only the unlock password can end it early.")}
           onClose={() => setEnding(null)}
           onSubmit={(password) => endAll(ending, password)}
         />
@@ -184,7 +186,7 @@ const PRESETS = [
   { label: "1h", min: 60 },
   { label: "2h", min: 120 },
   { label: "4h", min: 240 },
-  { label: "Rest of day", min: -1 },
+  { label: t("Rest of day"), min: -1 },
 ];
 
 function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
@@ -202,10 +204,10 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
   if (state.lists.length === 0) {
     return (
       <div className="card p-6">
-        <h2 className="font-display text-lg font-semibold">Quick block</h2>
-        <p className="mt-1 text-sm text-muted">Create a block list first.</p>
+        <h2 className="font-display text-lg font-semibold">{t("Quick block")}</h2>
+        <p className="mt-1 text-sm text-muted">{t("Create a block list first.")}</p>
         <button className="btn-primary mt-4" onClick={() => go("lists")}>
-          <Plus size={16} /> New block list
+          <Plus size={16} /> {t("New block list")}
         </button>
       </div>
     );
@@ -215,10 +217,10 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
     <div className="card p-6">
       <div className="mb-5 flex items-center gap-2">
         <Zap size={18} className="text-accent" />
-        <h2 className="font-display text-lg font-semibold">Quick block</h2>
+        <h2 className="font-display text-lg font-semibold">{t("Quick block")}</h2>
       </div>
 
-      <span className="label">What</span>
+      <span className="label">{t("What")}</span>
       <div className="mb-5 flex flex-wrap gap-2">
         {state.lists.map((l) => (
           <button
@@ -236,7 +238,7 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
         ))}
       </div>
 
-      <span className="label">For how long</span>
+      <span className="label">{t("For how long")}</span>
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <Segmented
           value={custom ? 0 : minutes}
@@ -251,29 +253,29 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
             className="input pr-12"
             type="number"
             min={1}
-            placeholder="Custom"
+            placeholder={t("Custom")}
             value={custom}
             onChange={(e) => setCustom(e.target.value.replace(/\D/g, ""))}
           />
-          <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-faint">min</span>
+          <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-faint">{t("min")}</span>
         </div>
       </div>
 
-      <span className="label">How strict</span>
+      <span className="label">{t("How strict")}</span>
       <Segmented
         className="mb-6 w-full"
         value={lock}
         onChange={setLock}
         options={[
-          { value: "none", label: <><Unlock size={14} /> Flexible</>, title: "Can be stopped any time" },
-          { value: "text", label: <><TypeIcon size={14} /> Type to unlock</>, title: "Stopping requires typing a long text" },
+          { value: "none", label: <><Unlock size={14} /> {t("Flexible")}</>, title: t("Can be stopped any time") },
+          { value: "text", label: <><TypeIcon size={14} /> {t("Type to unlock")}</>, title: t("Stopping requires typing a long text") },
           {
             value: "password",
-            label: <><KeyRound size={14} /> Password</>,
-            title: snapStatus.passwordSet ? "Stopping requires the unlock password" : "Set an unlock password in Settings first",
+            label: <><KeyRound size={14} /> {t("Password")}</>,
+            title: snapStatus.passwordSet ? t("Stopping requires the unlock password") : t("Set an unlock password in Settings first"),
             disabled: !snapStatus.passwordSet,
           },
-          { value: "timer", label: <><Lock size={14} /> Locked</>, title: "Cannot be stopped until the time is over" },
+          { value: "timer", label: <><Lock size={14} /> {t("Locked")}</>, title: t("Cannot be stopped until the time is over") },
         ]}
       />
 
@@ -282,15 +284,19 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
         disabled={!listId || !effective}
         onClick={() => (lock === "timer" ? setConfirming(true) : start())}
       >
-        {lock === "timer" ? <Lock size={18} /> : <Play size={18} />} Start blocking · {fmtMinutes(effective)}
+        {lock === "timer" ? <Lock size={18} /> : <Play size={18} />} {t("Start blocking · {duration}", { duration: fmtMinutes(effective) })}
       </button>
       <LockWarning
         open={confirming}
-        what={`Blocking ${state.lists.find((l) => l.id === listId)?.name ?? "this list"} for ${fmtMinutes(effective)}`}
-        until={<>until <span className="text-fg">{fmtWhen(Date.now() + effective * 60_000)}</span></>}
+        summary={tx("Blocking {list} for {duration} is {locked} until {when}.", {
+          list: state.lists.find((l) => l.id === listId)?.name ?? t("this list"),
+          duration: fmtMinutes(effective),
+          locked: lockedWord(),
+          when: <span className="text-fg">{fmtWhen(Date.now() + effective * 60_000)}</span>,
+        })}
         severe={
           effective >= 1440 ? (
-            <>That's {fmtMinutes(effective)}. Make sure this is really what you want; for recurring blocks a schedule is usually the better choice.</>
+            t("That's {duration}. Make sure this is really what you want; for recurring blocks a schedule is usually the better choice.", { duration: fmtMinutes(effective) })
           ) : undefined
         }
         onClose={() => setConfirming(false)}
@@ -329,17 +335,17 @@ function StatsCard({ state }: { state: State }) {
   return (
     <div className="card p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold">Your focus</h2>
+        <h2 className="font-display text-lg font-semibold">{t("Your focus")}</h2>
         {streak > 0 && (
           <span className="chip border-orange-500/30 bg-orange-500/10 text-orange-300">
-            <Flame size={13} /> {streak}-day streak
+            <Flame size={13} /> {t("{n}-day streak", { n: streak })}
           </span>
         )}
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Stat label="Focused today" value={fmtDuration(today.focusSeconds * 1000, false)} />
-        <Stat label="Pomodoros" value={String(today.pomodoros)} />
-        <Stat label="Apps closed" value={String(today.blockedLaunches)} />
+        <Stat label={t("Focused today")} value={fmtDuration(today.focusSeconds * 1000, false)} />
+        <Stat label={t("Pomodoros")} value={String(today.pomodoros)} />
+        <Stat label={t("Apps closed")} value={String(today.blockedLaunches)} />
       </div>
       <div className="mt-6 flex h-32 gap-2">
         {week.map((w, i) => (
@@ -384,13 +390,13 @@ function TodayTimeline({ state, go }: { state: State; go: (p: Page) => void }) {
   return (
     <div className="card p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold">Today's schedule</h2>
+        <h2 className="font-display text-lg font-semibold">{t("Today's schedule")}</h2>
         <button className="text-xs text-muted hover:text-fg" onClick={() => go("schedule")}>
-          Open calendar →
+          {t("Open calendar →")}
         </button>
       </div>
       {items.length === 0 ? (
-        <p className="text-sm text-muted">Nothing scheduled today.</p>
+        <p className="text-sm text-muted">{t("Nothing scheduled today.")}</p>
       ) : (
         <ol className="relative flex flex-col gap-2">
           {items.map(({ start, end, s }, i) => {
@@ -410,7 +416,7 @@ function TodayTimeline({ state, go }: { state: State; go: (p: Page) => void }) {
                   </div>
                 </div>
                 {s.locked && <Lock size={13} className="text-amber-400" />}
-                {live && <span className="chip border-emerald-500/30 bg-emerald-500/10 text-emerald-300">now</span>}
+                {live && <span className="chip border-emerald-500/30 bg-emerald-500/10 text-emerald-300">{t("now")}</span>}
               </li>
             );
           })}

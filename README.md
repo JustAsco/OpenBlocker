@@ -109,7 +109,7 @@ src-tauri/
 - [x] Importable community category lists (large adult/gambling/news domain lists)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
 - [x] Light theme (Settings → App → Theme; dark, light or follow Windows)
-- [ ] Translations (i18n)
+- [x] Translations: English and German (Settings → App → Language). To add a language, copy `src/locales/de.ts` and the table in `src-tauri/src/i18n.rs`
 - [x] Export/import settings
 - [x] Warning before starting a locked block, hidden emergency reset
 - [ ] **User accounts**: sign in to sync lists, categories, schedules and settings between devices (optional; everything keeps working offline and without an account)

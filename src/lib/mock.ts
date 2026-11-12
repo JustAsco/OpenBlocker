@@ -49,6 +49,7 @@ function defaultState(): State {
       suggestExtension: true,
       hideShortVideoFeeds: true,
       unlockTextStyle: "random",
+      language: "",
     },
     stats,
   };

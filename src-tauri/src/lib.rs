@@ -6,6 +6,7 @@
 mod bridge;
 mod enforce;
 mod http;
+mod i18n;
 mod password;
 mod platform;
 pub mod service;
@@ -692,8 +693,12 @@ fn start_freeze(shared: tauri::State<'_, Shared>, minutes: u32, message: String)
 }
 
 #[tauri::command]
-fn save_settings(shared: tauri::State<'_, Shared>, settings: Settings) -> Res<Snapshot> {
+fn save_settings(shared: tauri::State<'_, Shared>, mut settings: Settings) -> Res<Snapshot> {
     with(&shared, |i| {
+        // A language code like "de" or "pt-BR"; anything else means "like Windows".
+        if settings.language.len() > 8 || !settings.language.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            settings.language.clear();
+        }
         i.state.settings = settings;
         Ok(i.commit())
     })
@@ -977,16 +982,18 @@ fn notify(app: &AppHandle, enabled: bool, title: &str, body: &str) {
 }
 
 fn describe(event: &Event, state: &State) -> Option<(String, String)> {
+    let lang = i18n::language(&state.settings.language);
+    let tr = |en: &str, args: &[(&str, &str)]| i18n::tr(lang, en, args);
     let list_name = |id: &str| state.list(id).map(|l| l.name.clone()).unwrap_or_default();
     Some(match event {
-        Event::SessionEnded { list_id } => ("Block finished".into(), format!("“{}” is unblocked again.", list_name(list_id))),
+        Event::SessionEnded { list_id } => (tr("Block finished", &[]), tr("“{name}” is unblocked again.", &[("name", &list_name(list_id))])),
         Event::PomodoroPhase { phase, round } => match phase {
-            PomodoroPhase::Focus => ("Back to focus 🎯".into(), format!("Round {round} has started.")),
-            PomodoroPhase::Break => ("Short break ☕".into(), "Stand up, stretch, drink water.".into()),
-            PomodoroPhase::LongBreak => ("Long break 🌿".into(), "Great work! Take a proper rest.".into()),
+            PomodoroPhase::Focus => (tr("Back to focus 🎯", &[]), tr("Round {round} has started.", &[("round", &round.to_string())])),
+            PomodoroPhase::Break => (tr("Short break ☕", &[]), tr("Stand up, stretch, drink water.", &[])),
+            PomodoroPhase::LongBreak => (tr("Long break 🌿", &[]), tr("Great work! Take a proper rest.", &[])),
         },
-        Event::PomodoroFinished => ("Pomodoro complete 🎉".into(), "All rounds done. Nicely focused!".into()),
-        Event::FreezeEnded => ("Freeze ended".into(), "Your computer is unlocked.".into()),
+        Event::PomodoroFinished => (tr("Pomodoro complete 🎉", &[]), tr("All rounds done. Nicely focused!", &[])),
+        Event::FreezeEnded => (tr("Freeze ended", &[]), tr("Your computer is unlocked.", &[])),
         Event::PomodoroFocusCompleted => return None,
     })
 }
@@ -1098,7 +1105,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             i.usage_carry_ms %= 1000;
             for id in engine::add_usage(&mut i.state, &local, secs, &activity) {
                 if let Some(name) = i.state.limits.iter().find(|l| l.id == id).and_then(|l| i.state.list(&l.list_id)).map(|l| l.name.clone()) {
-                    notes.push(("Daily limit reached ⏳".into(), format!("“{name}” is blocked until midnight.")));
+                    let lang = i18n::language(&i.state.settings.language);
+                    notes.push((i18n::tr(lang, "Daily limit reached ⏳", &[]), i18n::tr(lang, "“{name}” is blocked until midnight.", &[("name", &name)])));
                 }
                 i.publish_now = true;
                 dirty = true;
@@ -1110,7 +1118,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
                 let key = format!("{day}/{}", l.id);
                 if engine::limit_applies(&l, &local) && allowed > 600 && used + 300 >= allowed && used < allowed && i.limit_warned.insert(key) {
                     if let Some(list) = i.state.list(&l.list_id) {
-                        notes.push(("5 minutes left ⏳".into(), format!("Your daily time for “{}” is almost up.", list.name)));
+                        let lang = i18n::language(&i.state.settings.language);
+                        notes.push((i18n::tr(lang, "5 minutes left ⏳", &[]), i18n::tr(lang, "Your daily time for “{name}” is almost up.", &[("name", &list.name)])));
                     }
                 }
             }
@@ -1201,11 +1210,16 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         if !killed.is_empty() {
             shared.lock().unwrap().day().blocked_launches += killed.len() as u32;
             let _ = app.emit("app-blocked", &killed);
-            notes.push(("Blocked 🚫".into(), format!("{} was closed.", killed.join(", "))));
+            let lang = i18n::language(&settings.language);
+            notes.push((i18n::tr(lang, "Blocked 🚫", &[]), i18n::tr(lang, "{apps} was closed.", &[("apps", &killed.join(", "))])));
         }
         if !closed.is_empty() && now - last_browser_note > 60_000 {
             last_browser_note = now;
-            notes.push(("Browser closed 🧩".into(), format!("{} doesn't have the OpenBlocker extension running.", closed.join(", "))));
+            let lang = i18n::language(&settings.language);
+            notes.push((
+                i18n::tr(lang, "Browser closed 🧩", &[]),
+                i18n::tr(lang, "{browsers} doesn't have the OpenBlocker extension running.", &[("browsers", &closed.join(", "))]),
+            ));
         }
         for (title, body) in notes {
             notify(&app, settings.notifications, &title, &body);
@@ -1265,8 +1279,9 @@ pub fn run() {
             // The app serves the extension only while the service doesn't.
             std::thread::spawn(move || bridge::run(bridge, move || !svc_up.load(Ordering::Relaxed)));
 
-            let open = MenuItem::with_id(app, "open", "Open OpenBlocker", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let lang = i18n::language(&shared.lock().unwrap().state.settings.language);
+            let open = MenuItem::with_id(app, "open", i18n::tr(lang, "Open OpenBlocker", &[]), true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", i18n::tr(lang, "Quit", &[]), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().expect("app icon"))

@@ -1,8 +1,12 @@
+import { language, t } from "./i18n";
 import type { ActiveBlock, AppEntry, BlockList, Schedule, State } from "./types";
 
 export const MINUTE = 60_000;
-export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-export const DAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// Weekday names in the UI language, Monday first (2024-01-01 was a Monday).
+const weekdays = (style: "short" | "long") =>
+  Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i).toLocaleDateString(language(), { weekday: style }));
+export const DAYS = weekdays("short");
+export const DAYS_LONG = weekdays("long");
 
 /** 0 = Monday */
 export const weekday = (d: Date) => (d.getDay() + 6) % 7;
@@ -25,7 +29,7 @@ export function fmtDuration(ms: number, seconds = true): string {
   const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  if (d > 0) return `${d}d ${h}h`;
+  if (d > 0) return `${t("{n}d", { n: d })} ${h}h`;
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   if (m > 0) return seconds ? `${m}m ${String(s).padStart(2, "0")}s` : `${m}m`;
   return seconds ? `${s}s` : "<1m";
@@ -46,7 +50,7 @@ export function fmtTime(ts: number): string {
   const d = new Date(ts);
   const sameDay = new Date().toDateString() === d.toDateString();
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  return sameDay ? time : `${d.toLocaleDateString(language(), { weekday: "short" })} ${time}`;
 }
 
 export function dateKey(d: Date): string {
@@ -153,7 +157,7 @@ export function fmtMinutes(min: number): string {
   const d = Math.floor(min / 1440);
   const h = Math.floor((min % 1440) / 60);
   const m = Math.round(min % 60);
-  return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "0m";
+  return [d && t("{n}d", { n: d }), h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "0m";
 }
 
 /** Everything a list blocks: its own items plus those of its categories. */

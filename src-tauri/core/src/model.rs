@@ -323,6 +323,8 @@ pub struct Settings {
     pub hide_short_video_feeds: bool,
     /// What to type for "Type to unlock".
     pub unlock_text_style: UnlockTextStyle,
+    /// UI language code ("en", "de"); empty = follow Windows.
+    pub language: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -348,6 +350,7 @@ impl Default for Settings {
             suggest_extension: true,
             hide_short_video_feeds: true,
             unlock_text_style: UnlockTextStyle::Random,
+            language: String::new(),
         }
     }
 }

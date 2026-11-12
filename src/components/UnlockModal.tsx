@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import { Modal } from "./ui";
+import { t } from "../lib/i18n";
 
 /** Shows `challenge` and a textarea it must be typed into exactly. Paste is disabled. */
 export function TypeChallenge({ challenge, answer, onAnswer }: { challenge: string; answer: string; onAnswer: (s: string) => void }) {
@@ -29,7 +30,7 @@ export function TypeChallenge({ challenge, answer, onAnswer }: { challenge: stri
         onPaste={(e) => e.preventDefault()}
         onDrop={(e) => e.preventDefault()}
         onChange={(e) => onAnswer(e.target.value)}
-        placeholder="Start typing…"
+        placeholder={t("Start typing…")}
       />
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-elevated">
         <div className="h-full bg-accent transition-all" style={{ width: `${(correct / Math.max(1, challenge.length)) * 100}%` }} />
@@ -62,9 +63,9 @@ export function PasswordModal({ onSubmit, onClose, text }: { onSubmit: (password
     else setPassword("");
   };
   return (
-    <Modal open onClose={onClose} title="Unlock with the password" width={460}>
+    <Modal open onClose={onClose} title={t("Unlock with the password")} width={460}>
       <p className="mb-4 text-sm text-muted">
-        {text ?? "This block can only be stopped with the unlock password."} If someone else keeps it for you, ask them to type it in.
+        {text ?? t("This block can only be stopped with the unlock password.")} {t("If someone else keeps it for you, ask them to type it in.")}
       </p>
       <input
         className="input"
@@ -74,14 +75,14 @@ export function PasswordModal({ onSubmit, onClose, text }: { onSubmit: (password
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && password && submit()}
-        placeholder="Password"
+        placeholder={t("Password")}
       />
       <div className="mt-5 flex justify-end gap-2">
         <button className="btn-primary" onClick={onClose}>
-          Keep blocking
+          {t("Keep blocking")}
         </button>
         <button className="btn-danger" disabled={!password} onClick={submit}>
-          Unlock
+          {t("Unlock")}
         </button>
       </div>
     </Modal>
@@ -100,14 +101,14 @@ function TextUnlock({ sessionId, onClose, run }: { sessionId: string | null; onC
   const done = answer === challenge && challenge.length > 0;
 
   return (
-    <Modal open={!!sessionId} onClose={onClose} title="Unlock this block?" width={620}>
+    <Modal open={!!sessionId} onClose={onClose} title={t("Unlock this block?")} width={620}>
       <p className="mb-4 text-sm text-muted">
-        Type the text below exactly to stop the block early. Copy &amp; paste is disabled. Is this really worth it?
+        {t("Type the text below exactly to stop the block early. Copy & paste is disabled. Is this really worth it?")}
       </p>
       <TypeChallenge challenge={challenge} answer={answer} onAnswer={setAnswer} />
       <div className="mt-5 flex justify-end gap-2">
         <button className="btn-primary" onClick={onClose}>
-          Keep blocking
+          {t("Keep blocking")}
         </button>
         <button
           className="btn-danger"
@@ -116,7 +117,7 @@ function TextUnlock({ sessionId, onClose, run }: { sessionId: string | null; onC
             if (await run(() => api.stopSession(sessionId!, answer), "Block stopped.")) onClose();
           }}
         >
-          Unlock
+          {t("Unlock")}
         </button>
       </div>
     </Modal>

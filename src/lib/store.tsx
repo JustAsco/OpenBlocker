@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, onSnapshot } from "./api";
+import { syncLanguage, translateMessage } from "./i18n";
 import type { Snapshot } from "./types";
 
 interface Toast {
@@ -38,9 +39,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "info") => {
     const id = nextId.current++;
-    setToasts((t) => [...t, { id, kind, text }]);
+    // Toasts are translated here, including messages from the backend.
+    setToasts((t) => [...t, { id, kind, text: translateMessage(text) }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 6000 : 3500);
   }, []);
+
+  const language = snap?.state.settings.language;
+  useEffect(() => {
+    if (language !== undefined) syncLanguage(language);
+  }, [language]);
 
   const run = useCallback(
     async (fn: () => Promise<Snapshot | null>, success?: string) => {
