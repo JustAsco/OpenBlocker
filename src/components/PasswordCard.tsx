@@ -36,7 +36,7 @@ export function PasswordCard() {
   };
 
   return (
-    <section className="card p-6">
+    <section className="card self-start p-6">
       <h2 className="mb-1 flex items-center gap-2 font-semibold">
         <KeyRound size={18} className="text-accent-2" /> Unlock password
       </h2>
