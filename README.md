@@ -108,7 +108,8 @@ src-tauri/
 - [x] Usage limits ("max 30 min of YouTube per day")
 - [x] Importable community category lists (large adult/gambling/news domain lists)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
-- [ ] Light theme, i18n
+- [x] Light theme (Settings → App → Theme; dark, light or follow Windows)
+- [ ] Translations (i18n)
 - [x] Export/import settings
 - [x] Warning before starting a locked block, hidden emergency reset
 - [ ] **User accounts**: sign in to sync lists, categories, schedules and settings between devices (optional; everything keeps working offline and without an account)

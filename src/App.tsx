@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { CalendarDays, Hourglass, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ExtensionPrompt } from "./components/ExtensionPrompt";
-import { Toasts } from "./components/ui";
+import { Toasts, usePref } from "./components/ui";
 import { api, isTauri } from "./lib/api";
 import { useStore } from "./lib/store";
 import { CategoriesPage } from "./pages/Categories";
@@ -27,8 +27,24 @@ const NAV: { id: Page; label: string; icon: typeof Timer }[] = [
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
+/** Applies the chosen theme ("system" follows Windows). The freeze screen always stays dark. */
+function useTheme() {
+  const [theme] = usePref<"dark" | "light" | "system">("theme", "dark");
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      const light = theme === "light" || (theme === "system" && media.matches);
+      document.documentElement.dataset.theme = light ? "light" : "dark";
+    };
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [theme]);
+}
+
 export default function App() {
   const { snap, run } = useStore();
+  useTheme();
   const [page, setPage] = useState<Page>(() => (localStorage.getItem("ob-page") as Page) || "today");
   useEffect(() => localStorage.setItem("ob-page", page), [page]);
 

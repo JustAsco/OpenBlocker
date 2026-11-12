@@ -12,6 +12,7 @@ export function SettingsPage() {
   const { settings } = snap!.state;
   const status = snap!.status;
   const [siteIcons, setSiteIcons] = usePref("site-icons", true);
+  const [theme, setTheme] = usePref<"dark" | "light" | "system">("theme", "dark");
   const { toast } = useStore();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [extPath, setExtPath] = useState<string | null>(null);
@@ -194,6 +195,18 @@ export function SettingsPage() {
             <Toggle label="Notifications" hint="Pomodoro phases, finished blocks and closed apps." checked={settings.notifications} onChange={(notifications) => save({ notifications })} />
             <Toggle label="Keep running in the tray" hint="Closing the window keeps your blocks active." checked={settings.closeToTray} onChange={(closeToTray) => save({ closeToTray })} />
             <Toggle label="Show website icons" hint="Icons are loaded from Google's favicon service." checked={siteIcons} onChange={setSiteIcons} />
+            <div className="flex items-center justify-between gap-6 py-3">
+              <span className="text-sm font-medium">Theme</span>
+              <Segmented
+                value={theme}
+                onChange={setTheme}
+                options={[
+                  { value: "dark", label: "Dark" },
+                  { value: "light", label: "Light" },
+                  { value: "system", label: "System" },
+                ]}
+              />
+            </div>
           </div>
         </section>
 
