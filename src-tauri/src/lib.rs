@@ -6,6 +6,7 @@
 mod bridge;
 mod enforce;
 mod http;
+mod password;
 mod platform;
 pub mod service;
 
@@ -62,6 +63,8 @@ struct Inner {
     retry_hosts: bool,
     /// "date/limit id" pairs already warned about (5 minutes left).
     limit_warned: BTreeSet<String>,
+    /// Brake on password guessing (only without the service).
+    throttle: password::Throttle,
 }
 
 type Shared = Arc<Mutex<Inner>>;
@@ -88,6 +91,8 @@ struct Status {
     bridge_error: Option<String>,
     /// Seconds used today per usage limit id.
     usage_today: BTreeMap<String, u64>,
+    /// An unlock password is set (the hash itself never goes to the UI).
+    password_set: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -156,6 +161,7 @@ impl Inner {
             last_publish: 0,
             retry_hosts: false,
             limit_warned: BTreeSet::new(),
+            throttle: password::Throttle::default(),
         }
     }
 
@@ -190,8 +196,9 @@ impl Inner {
         let (sites, apps) = engine::enforced_targets(&self.state, &active);
         let allowed = engine::allowed_sites(&self.state, &active);
         let mut state = self.state.clone();
-        // Usage history and huge community lists stay out of the UI payload.
+        // Usage history and the password hash stay out of the UI payload.
         state.usage.clear();
+        state.password = None;
         Snapshot {
             state,
             status: Status {
@@ -213,6 +220,7 @@ impl Inner {
                     None => self.bridge.error.lock().unwrap().clone(),
                 },
                 usage_today: self.state.usage.get(&today_key()).cloned().unwrap_or_default(),
+                password_set: self.state.password.is_some(),
                 active,
             },
         }
@@ -520,11 +528,21 @@ fn unlock_challenge(shared: tauri::State<'_, Shared>, id: String) -> Res<String>
 #[tauri::command]
 fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<String>) -> Res<Snapshot> {
     with_unguarded(&shared, |i| {
-        let s = i.state.sessions.iter().find(|s| s.id == id).ok_or("Session not found.")?;
-        match s.lock {
-            LockMode::Timer => return Err(format!("Locked until {}. Stay strong 💪", fmt_until(s.ends_at))),
+        let (lock, ends_at) = i
+            .state
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| (s.lock, s.ends_at))
+            .ok_or("Session not found.")?;
+        match lock {
+            LockMode::Timer => return Err(format!("Locked until {}. Stay strong 💪", fmt_until(ends_at))),
             // The service checks the text and ends the block on its side too.
-            LockMode::Text if i.svc.is_some() => i.svc_gen = Some(service::client::unlock(&id, answer)?),
+            LockMode::Text | LockMode::Password if i.svc.is_some() => i.svc_gen = Some(service::client::unlock(&id, answer)?),
+            LockMode::Password => {
+                let hash = i.state.password.clone();
+                i.throttle.check(answer.as_deref(), hash.as_deref(), now_ms())?;
+            }
             LockMode::Text => {
                 let expected = i.challenges.get(&id).ok_or("Request the unlock text first.")?;
                 if answer.as_deref() != Some(expected.as_str()) {
@@ -797,6 +815,26 @@ fn remove_category_source(shared: tauri::State<'_, Shared>, id: String) -> Res<S
         // While a lock uses the category this change is refused, so the file stays.
         if engine::category_locked_until(&i.state, &id, now_ms(), &local_now()).is_none() {
             let _ = std::fs::remove_file(i.sources_dir.join(format!("{id}.txt")));
+        }
+        Ok(i.commit())
+    })
+}
+
+/// Sets, changes or removes the unlock password. The current password is
+/// required whenever one is set (the service checks it when it runs).
+#[tauri::command]
+fn set_password(shared: tauri::State<'_, Shared>, current: Option<String>, new: Option<String>) -> Res<Snapshot> {
+    with_unguarded(&shared, |i| {
+        if new.is_none() && i.state.sessions.iter().any(|s| s.lock == LockMode::Password && s.ends_at > now_ms()) {
+            return Err("A password-locked block is running. You can remove the password once it ends.".into());
+        }
+        if i.svc.is_some() {
+            let (generation, hash) = service::client::set_password(current, new)?;
+            i.svc_gen = Some(generation);
+            i.state.password = hash;
+        } else {
+            let old = i.state.password.clone();
+            i.state.password = password::change(&mut i.throttle, old.as_deref(), current.as_deref(), new.as_deref(), now_ms())?;
         }
         Ok(i.commit())
     })
@@ -1250,6 +1288,7 @@ pub fn run() {
             factory_reset,
             save_limit,
             delete_limit,
+            set_password,
             set_category_source,
             remove_category_source,
             installed_apps,

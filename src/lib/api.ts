@@ -111,6 +111,8 @@ export const api = {
     });
     return text === null ? null : call<Snapshot>("mock_import", { text });
   },
+  /** Sets (current = null when none is set), changes or removes (next = null) the unlock password. */
+  setPassword: (current: string | null, next: string | null) => call<Snapshot>("set_password", { current, new: next }),
   saveLimit: (limit: UsageLimit) => call<Snapshot>("save_limit", { limit }),
   deleteLimit: (id: string) => call<Snapshot>("delete_limit", { id }),
   /** Downloads a community list (the list hosts allow cross-origin requests) and stores it for a category. */

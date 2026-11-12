@@ -1,5 +1,6 @@
 import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
 import { PageHeader, Toggle, usePref } from "../components/ui";
 import { api, isTauri } from "../lib/api";
@@ -75,6 +76,8 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+
+        <PasswordCard />
 
         <section className="card p-6 lg:row-span-2">
           <h2 className="mb-1 flex items-center gap-2 font-semibold">

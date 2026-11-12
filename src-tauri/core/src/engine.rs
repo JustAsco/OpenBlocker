@@ -281,7 +281,8 @@ fn strictness(l: LockMode) -> u8 {
     match l {
         LockMode::None => 0,
         LockMode::Text => 1,
-        LockMode::Timer => 2,
+        LockMode::Password => 2,
+        LockMode::Timer => 3,
     }
 }
 
@@ -567,6 +568,9 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
         {
             return Some("Settings that loosen blocking can't be changed while a locked block is running.".into());
         }
+    }
+    if old.password.is_some() && new.password != old.password {
+        return Some("The password can only be changed with the current password.".into());
     }
     let today = date_key(local);
     for l in old.limits.iter().filter(|l| l.locked) {
@@ -1077,5 +1081,28 @@ mod tests {
         new.lists[0].sites.push("reddit.com".into());
         new.lists[0].except_sites = vec!["reddit.com/r/rust".into()];
         assert!(lock_violation(&old, &new, now, &local).is_some(), "path exception");
+    }
+
+    #[test]
+    fn password_locks() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.password = Some("hash".into());
+        old.sessions.push(Session { id: "p".into(), list_id: "social".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Password });
+        assert!(active_blocks(&old, now, &local)[0].locked);
+        let mut new = old.clone();
+        new.sessions.clear();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "password-locked blocks need the password");
+        let mut new = old.clone();
+        new.password = None;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "removing the password");
+        // Stricter wins when merging: password beats text, timer beats password.
+        let mut st = State::default();
+        start_or_merge_session(&mut st, "social", 0, 10, LockMode::Text, "a".into());
+        start_or_merge_session(&mut st, "social", 0, 10, LockMode::Password, "b".into());
+        assert_eq!(st.sessions[0].lock, LockMode::Password);
+        start_or_merge_session(&mut st, "social", 0, 10, LockMode::Timer, "c".into());
+        assert_eq!(st.sessions[0].lock, LockMode::Timer);
     }
 }

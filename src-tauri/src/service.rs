@@ -16,7 +16,8 @@
 //! it restarts the app in the user's session if the app was killed (the app
 //! shows the freeze screen and notifications).
 
-use crate::{bridge, enforce, http, platform};
+use crate::{bridge, enforce, http, password, platform};
+use openblocker_core::model::LockMode;
 use chrono::{Local, NaiveDateTime};
 use openblocker_core::engine;
 use openblocker_core::model::State;
@@ -72,6 +73,18 @@ struct KeyAnswer {
     key: String,
     #[serde(default)]
     answer: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PasswordChange {
+    current: Option<String>,
+    new: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PasswordSet {
+    generation: u64,
+    password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -162,6 +175,18 @@ pub mod client {
         }
     }
 
+    /// Sets, changes or removes the unlock password; returns the new
+    /// generation and the hash to store.
+    pub fn set_password(current: Option<String>, new: Option<String>) -> Result<(u64, Option<String>), String> {
+        let req = serde_json::to_vec(&PasswordChange { current, new }).unwrap();
+        let (code, body) = call("POST", "/svc/v1/password", Some(&req))?;
+        if code != 200 {
+            return Err(error_of(&body));
+        }
+        let r: PasswordSet = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
+        Ok((r.generation, r.password))
+    }
+
     pub fn reset_key() -> &'static str {
         RESET_KEY
     }
@@ -193,6 +218,7 @@ struct Svc {
     has_state: bool,
     /// Bumped whenever the service itself ends a lock (see [`Publish`]).
     generation: u64,
+    throttle: password::Throttle,
     dir: PathBuf,
     challenges: HashMap<String, String>,
     killed: VecDeque<(u64, String)>,
@@ -233,6 +259,7 @@ impl Svc {
             has_state: loaded.is_some(),
             // Unique per run, so an app that talked to a previous run resyncs.
             generation: now_ms().max(0) as u64,
+            throttle: password::Throttle::default(),
             state: loaded.unwrap_or_default(),
             dir,
             challenges: HashMap::new(),
@@ -311,9 +338,20 @@ impl Svc {
     }
 
     fn unlock(&mut self, key: &str, answer: Option<&str>) -> Result<u64, String> {
-        let needs_text = key != RESET_KEY || self.any_lock();
-        if needs_text && (answer.is_none() || self.challenges.get(key).map(String::as_str) != answer) {
-            return Err("The text doesn't match.".into());
+        let typed_ok = || answer.is_some() && self.challenges.get(key).map(String::as_str) == answer;
+        if key == RESET_KEY {
+            if self.any_lock() && !typed_ok() {
+                return Err("The text doesn't match.".into());
+            }
+        } else {
+            let lock = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?.lock;
+            match lock {
+                LockMode::Text if !typed_ok() => return Err("The text doesn't match.".into()),
+                LockMode::Text => {}
+                LockMode::Password => self.throttle.check(answer, self.state.password.as_deref(), now_ms())?,
+                LockMode::Timer => return Err("This block can't be stopped before it ends.".into()),
+                LockMode::None => {}
+            }
         }
         self.challenges.remove(key);
         if key == RESET_KEY {
@@ -328,6 +366,19 @@ impl Svc {
         self.generation += 1;
         self.save();
         Ok(self.generation)
+    }
+
+    /// Sets, changes or removes the unlock password. Returns the new
+    /// generation and hash.
+    fn set_password(&mut self, current: Option<&str>, new: Option<&str>) -> Result<(u64, Option<String>), String> {
+        if new.is_none() && self.state.sessions.iter().any(|s| s.lock == LockMode::Password && s.ends_at > now_ms()) {
+            return Err("A password-locked block is running. You can remove the password once it ends.".into());
+        }
+        let hash = password::change(&mut self.throttle, self.state.password.as_deref(), current, new, now_ms())?;
+        self.state.password = hash.clone();
+        self.generation += 1;
+        self.save();
+        Ok((self.generation, hash))
     }
 
     fn set_source(&mut self, id: &str, text: &str) -> Result<(), String> {
@@ -411,6 +462,13 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
             .and_then(|k| s.unlock(&k.key, k.answer.as_deref()))
         {
             Ok(generation) => respond(req, 200, &Generation { generation }),
+            Err(e) => respond(req, 403, &err(e)),
+        },
+        ("POST", "/svc/v1/password") => match serde_json::from_str::<PasswordChange>(&body)
+            .map_err(|e| e.to_string())
+            .and_then(|p| s.set_password(p.current.as_deref(), p.new.as_deref()))
+        {
+            Ok((generation, password)) => respond(req, 200, &PasswordSet { generation, password }),
             Err(e) => respond(req, 403, &err(e)),
         },
         ("PUT", "/svc/v1/source") => {

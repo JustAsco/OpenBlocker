@@ -171,6 +171,8 @@ pub enum LockMode {
     None,
     /// Requires typing a long random string to stop.
     Text,
+    /// Requires the account password (often set by someone you trust).
+    Password,
     /// Cannot be stopped until the timer runs out.
     Timer,
 }
@@ -339,6 +341,9 @@ pub struct State {
     pub limits: Vec<UsageLimit>,
     /// Seconds used per limit id, keyed by local date `YYYY-MM-DD`.
     pub usage: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Hash (Argon2 PHC string) of the unlock password, if one is set. Only
+    /// changed through its own command, which checks the current password.
+    pub password: Option<String>,
     /// Domains of each category's community list (normalised), loaded from
     /// their own files. Never serialised.
     #[serde(skip)]
@@ -399,6 +404,7 @@ impl Default for State {
             stats: BTreeMap::new(),
             limits: vec![],
             usage: BTreeMap::new(),
+            password: None,
             source_sites: BTreeMap::new(),
         }
     }

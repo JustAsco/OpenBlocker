@@ -31,9 +31,47 @@ export function TypeChallenge({ challenge, answer, onAnswer }: { challenge: stri
   );
 }
 
-/** Type-the-random-text challenge for text-locked sessions. */
+/** Ends a text- or password-locked quick block early. */
 export function UnlockModal({ sessionId, onClose }: { sessionId: string | null; onClose: () => void }) {
+  const { run, snap } = useStore();
+  const lock = snap?.state.sessions.find((s) => s.id === sessionId)?.lock;
+  if (lock === "password") return <PasswordUnlock sessionId={sessionId!} onClose={onClose} />;
+  return <TextUnlock sessionId={lock ? sessionId : null} onClose={onClose} run={run} />;
+}
+
+function PasswordUnlock({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const { run } = useStore();
+  const [password, setPassword] = useState("");
+  const submit = async () => {
+    if (await run(() => api.stopSession(sessionId, password), "Block stopped.")) onClose();
+    else setPassword("");
+  };
+  return (
+    <Modal open onClose={onClose} title="Unlock with the password" width={460}>
+      <p className="mb-4 text-sm text-muted">This block can only be stopped with the unlock password. If someone else keeps it for you, ask them to type it in.</p>
+      <input
+        className="input"
+        type="password"
+        autoFocus
+        autoComplete="off"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && password && submit()}
+        placeholder="Password"
+      />
+      <div className="mt-5 flex justify-end gap-2">
+        <button className="btn-primary" onClick={onClose}>
+          Keep blocking
+        </button>
+        <button className="btn-danger" disabled={!password} onClick={submit}>
+          Unlock
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function TextUnlock({ sessionId, onClose, run }: { sessionId: string | null; onClose: () => void; run: ReturnType<typeof useStore>["run"] }) {
   const [challenge, setChallenge] = useState("");
   const [answer, setAnswer] = useState("");
 

@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CalendarClock, Flame, Lock, LockKeyhole, Play, Plus, ShieldCheck, Square, Timer, TypeIcon, Unlock, Zap } from "lucide-react";
+import { CalendarClock, Flame, KeyRound, Lock, LockKeyhole, Play, Plus, ShieldCheck, Square, Timer, TypeIcon, Unlock, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Page } from "../App";
 import { LockWarning, fmtWhen } from "../components/LockWarning";
@@ -126,7 +126,9 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
                       <button
                         className="btn-ghost px-3 py-1.5"
                         title={othersEnd > now ? `The quick block stops; ${labels.filter((l) => l !== "Quick block").join(", ")} keeps it blocked until ${fmtTime(othersEnd)}.` : undefined}
-                        onClick={() => (session.lock === "text" ? onUnlock(session.id) : run(() => api.stopSession(session.id), "Quick block stopped."))}
+                        onClick={() =>
+                          session.lock === "text" || session.lock === "password" ? onUnlock(session.id) : run(() => api.stopSession(session.id), "Quick block stopped.")
+                        }
                       >
                         <Square size={14} /> Stop
                       </button>
@@ -162,7 +164,8 @@ const PRESETS = [
 ];
 
 function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
-  const { run } = useStore();
+  const { run, snap } = useStore();
+  const snapStatus = snap!.status;
   const [listId, setListId] = useState(state.lists[0]?.id ?? "");
   const [minutes, setMinutes] = useState(60);
   const [custom, setCustom] = useState("");
@@ -239,7 +242,13 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
         onChange={setLock}
         options={[
           { value: "none", label: <><Unlock size={14} /> Flexible</>, title: "Can be stopped any time" },
-          { value: "text", label: <><TypeIcon size={14} /> Type to unlock</>, title: "Stopping requires typing a long random text" },
+          { value: "text", label: <><TypeIcon size={14} /> Type to unlock</>, title: "Stopping requires typing a long text" },
+          {
+            value: "password",
+            label: <><KeyRound size={14} /> Password</>,
+            title: snapStatus.passwordSet ? "Stopping requires the unlock password" : "Set an unlock password in Settings first",
+            disabled: !snapStatus.passwordSet,
+          },
           { value: "timer", label: <><Lock size={14} /> Locked</>, title: "Cannot be stopped until the time is over" },
         ]}
       />

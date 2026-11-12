@@ -68,7 +68,7 @@ export interface Schedule {
   label?: string | null;
 }
 
-export type LockMode = "none" | "text" | "timer";
+export type LockMode = "none" | "text" | "password" | "timer";
 
 export interface Session {
   id: string;
@@ -165,6 +165,8 @@ export interface Status {
   bridgeError: string | null;
   /** Seconds used today per usage limit id. */
   usageToday: Record<string, number>;
+  /** An unlock password is set. */
+  passwordSet: boolean;
 }
 
 export interface BrowserSeen {

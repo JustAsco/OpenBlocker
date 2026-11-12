@@ -163,7 +163,7 @@ export function Segmented<T extends string | number>({
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: ReactNode; title?: string }[];
+  options: { value: T; label: ReactNode; title?: string; disabled?: boolean }[];
   className?: string;
 }) {
   return (
@@ -173,9 +173,10 @@ export function Segmented<T extends string | number>({
           key={String(o.value)}
           type="button"
           title={o.title}
+          disabled={o.disabled}
           onClick={() => onChange(o.value)}
           className={clsx(
-            "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap transition",
+            "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap transition disabled:cursor-not-allowed disabled:opacity-40",
             value === o.value ? "bg-elevated text-fg shadow ring-1 ring-line-strong" : "text-muted hover:text-fg",
           )}
         >
