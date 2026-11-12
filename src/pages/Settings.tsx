@@ -42,6 +42,13 @@ export function SettingsPage() {
           <h2 className="mb-2 font-semibold">Blocking</h2>
           <div className="divide-y divide-line">
             <Toggle label="Block subdomains" hint="Also block www., m. and mobile. versions of every website." checked={settings.blockSubdomains} lockedOn={locked} onChange={(blockSubdomains) => save({ blockSubdomains })} />
+            <Toggle
+              label="Hide Shorts and Reels in feeds"
+              hint="While Shorts or Reels are blocked (e.g. with the “Short videos” category), also hide their shelves and buttons on YouTube, Instagram and Facebook. Needs the extension."
+              checked={settings.hideShortVideoFeeds}
+              lockedOn={locked}
+              onChange={(hideShortVideoFeeds) => save({ hideShortVideoFeeds })}
+            />
             <Toggle label="Flush DNS cache" hint="Helps new blocks apply sooner. Browsers can keep open connections alive; the extension below fixes that." checked={settings.flushDns} onChange={(flushDns) => save({ flushDns })} />
             <Toggle label="Block Task Manager while frozen" checked={settings.freezeBlocksTaskManager} onChange={(freezeBlocksTaskManager) => save({ freezeBlocksTaskManager })} />
             <div className="py-3">

@@ -165,5 +165,38 @@ export function listTargets(state: State, list: BlockList): { sites: Set<string>
     c.sites.forEach((x) => sites.add(x));
     c.apps.forEach((a) => apps.set(a.exe.toLowerCase(), a));
   }
+  // Exceptions: a domain leaves out the whole site, a path just that part.
+  for (const e of list.exceptSites ?? []) {
+    for (const s of [...sites]) {
+      const d = s.split("/")[0];
+      if (isPathSite(e) ? s === e || s.startsWith(e + "/") : d === e || d.endsWith("." + e)) sites.delete(s);
+    }
+  }
+  for (const a of list.exceptApps ?? []) apps.delete(a.exe.toLowerCase());
   return { sites, apps };
+}
+
+/**
+ * Canonical YouTube channel reference: "@handle" (lowercase), "UC…" id, or
+ * "c/name" / "user/name". Mirrors `normalize_channel` in the core.
+ */
+export function normalizeChannel(input: string): string | null {
+  let s = input.trim();
+  const scheme = s.indexOf("://");
+  if (scheme >= 0) s = s.slice(scheme + 3);
+  const lower = s.toLowerCase();
+  const host = ["www.youtube.com/", "m.youtube.com/", "youtube.com/", "music.youtube.com/"].find((p) => lower.startsWith(p));
+  const wasUrl = !!host || scheme >= 0 || /[?#]/.test(s);
+  if (host) s = s.slice(host.length);
+  s = s.split(/[?#]/)[0].replace(/^\/+|\/+$/g, "");
+  const parts = s.split("/");
+  const ok = (t?: string): boolean => !!t && t.length <= 100 && /^[A-Za-z0-9._-]+$/.test(t);
+  const isId = (t?: string): boolean => !!t && t.length === 24 && t.startsWith("UC") && ok(t);
+  const first = parts[0] ?? "";
+  if (first === "channel") return isId(parts[1]) ? parts[1]! : null;
+  if (first === "c" || first === "user") return ok(parts[1]) ? `${first}/${parts[1]!.toLowerCase()}` : null;
+  if (first.startsWith("@") && ok(first.slice(1))) return first.toLowerCase();
+  if (isId(first)) return first;
+  if (!wasUrl && !s.includes("/") && ok(first) && !first.includes(".")) return "@" + first.toLowerCase();
+  return null;
 }

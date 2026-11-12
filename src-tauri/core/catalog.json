@@ -153,6 +153,45 @@
       ]
     },
     {
+      "id": "shorts",
+      "name": "Short videos",
+      "icon": "🎞️",
+      "color": "#f43f5e",
+      "sites": [
+        {
+          "domain": "youtube.com/shorts",
+          "name": "YouTube Shorts"
+        },
+        {
+          "domain": "instagram.com/reels",
+          "name": "Instagram Reels",
+          "related": [
+            "instagram.com/reel"
+          ]
+        },
+        {
+          "domain": "facebook.com/reel",
+          "name": "Facebook Reels",
+          "related": [
+            "facebook.com/reels"
+          ]
+        },
+        {
+          "domain": "snapchat.com/spotlight",
+          "name": "Snapchat Spotlight"
+        },
+        {
+          "domain": "tiktok.com",
+          "name": "TikTok",
+          "related": [
+            "tiktokcdn.com",
+            "tiktokv.com"
+          ]
+        }
+      ],
+      "apps": []
+    },
+    {
       "id": "gaming",
       "name": "Gaming",
       "icon": "🎮",

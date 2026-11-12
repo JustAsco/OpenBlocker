@@ -135,6 +135,7 @@ impl Inner {
             .ok()
             .and_then(|s| serde_json::from_str::<State>(&s).ok())
             .unwrap_or_default();
+        state.migrate();
         state.source_sites = load_sources(&sources_dir, &state);
         Self {
             state,
@@ -241,6 +242,7 @@ impl Inner {
     /// Takes over the service's state (it refused ours, so it knows better),
     /// keeping what only this app tracks.
     fn adopt(&mut self, mut theirs: State) {
+        theirs.migrate();
         theirs.source_sites = load_sources(&self.sources_dir, &theirs);
         for (day, mine) in &self.state.stats {
             let t = theirs.stats.entry(day.clone()).or_default();
@@ -296,6 +298,18 @@ fn save_list(shared: tauri::State<'_, Shared>, mut list: BlockList) -> Res<Snaps
             return Err("Give the list a name.".into());
         }
         clean_items(&mut list.sites, &mut list.apps);
+        let mut no_apps = vec![];
+        clean_items(&mut list.except_sites, &mut no_apps);
+        let mut seen_apps = BTreeSet::new();
+        list.except_apps
+            .retain(|a| !a.exe.trim().is_empty() && seen_apps.insert(engine::normalize_exe(&a.exe)));
+        let mut seen_channels = BTreeSet::new();
+        list.youtube_channels = list
+            .youtube_channels
+            .iter()
+            .filter_map(|c| hosts::normalize_channel(c))
+            .filter(|c| seen_channels.insert(c.clone()))
+            .collect();
         let mut seen_cats = BTreeSet::new();
         list.categories
             .retain(|c| i.state.categories.iter().any(|x| &x.id == c) && seen_cats.insert(c.clone()));

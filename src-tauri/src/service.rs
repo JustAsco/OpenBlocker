@@ -225,6 +225,10 @@ impl Svc {
         let loaded = std::fs::read_to_string(dir.join("state.json"))
             .ok()
             .and_then(|s| serde_json::from_str::<State>(&s).ok());
+        let loaded = loaded.map(|mut s| {
+            s.migrate();
+            s
+        });
         let mut svc = Self {
             has_state: loaded.is_some(),
             // Unique per run, so an app that talked to a previous run resyncs.

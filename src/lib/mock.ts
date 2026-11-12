@@ -4,7 +4,7 @@
 
 import type { InstalledApp, PomodoroConfig, Pomodoro, Snapshot, State } from "./types";
 import { defaultCategories } from "./catalog";
-import { activeBlocks, dateKey, listTargets, MINUTE, normalizeSite, uid } from "./util";
+import { activeBlocks, dateKey, listTargets, MINUTE, normalizeChannel, normalizeSite, uid } from "./util";
 
 const KEY = "openblocker-mock-state-v2";
 
@@ -21,7 +21,7 @@ function defaultState(): State {
     };
   }
   return {
-    version: 1,
+    version: 2,
     categories: defaultCategories(),
     lists: [
       { id: "social", name: "Social Media", color: "#8b5cf6", icon: "💬", sites: [], apps: [], categories: ["social"], mode: "block" },
@@ -46,6 +46,7 @@ function defaultState(): State {
       unlockTextLength: 120,
       requireExtension: false,
       suggestExtension: true,
+      hideShortVideoFeeds: true,
     },
     stats,
   };
@@ -58,6 +59,11 @@ function load(): State {
       const s = JSON.parse(raw) as State;
       s.settings = { ...defaultState().settings, ...s.settings };
       s.limits ??= [];
+      // Mirrors the core's migration: new built-in categories appear once.
+      if ((s.version ?? 1) < 2) {
+        for (const c of defaultCategories()) if (c.id === "shorts" && !s.categories.some((x) => x.id === c.id)) s.categories.push(c);
+        s.version = 2;
+      }
       return s;
     }
   } catch {
@@ -190,7 +196,12 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
     case "get_snapshot":
       return snapshot();
     case "save_list": {
-      const list = { ...a.list, sites: [...new Set<string>(a.list.sites.map(normalizeSite).filter(Boolean))] };
+      const list = {
+        ...a.list,
+        sites: [...new Set<string>(a.list.sites.map(normalizeSite).filter(Boolean))],
+        exceptSites: [...new Set<string>((a.list.exceptSites ?? []).map(normalizeSite).filter(Boolean))],
+        youtubeChannels: [...new Set<string>((a.list.youtubeChannels ?? []).map(normalizeChannel).filter(Boolean))],
+      };
       const old = state.lists.find((l) => l.id === list.id);
       if (old) {
         const until = lockedUntil(list.id);

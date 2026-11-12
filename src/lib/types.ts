@@ -17,6 +17,12 @@ export interface BlockList {
   categories: string[];
   /** "block" the sites, or "allow" only them in browsers (apps are always blocked). */
   mode: ListMode;
+  /** If not empty: while active, YouTube videos only play from these channels ("@handle", "UC…" id). */
+  youtubeChannels?: string[];
+  /** Websites left out although a category includes them; a path stays reachable inside a blocked site. */
+  exceptSites?: string[];
+  /** Apps left out although a category includes them. */
+  exceptApps?: AppEntry[];
 }
 
 export type ListMode = "block" | "allow";
@@ -109,6 +115,8 @@ export interface Settings {
   requireExtension: boolean;
   /** Suggest installing the extension when a website block starts without it. */
   suggestExtension: boolean;
+  /** While Shorts/Reels are blocked, also hide them in feeds (extension). */
+  hideShortVideoFeeds: boolean;
 }
 
 export interface DayStats {

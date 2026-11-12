@@ -9,10 +9,13 @@ use openblocker_core::hosts;
 use openblocker_core::model::State;
 use std::collections::BTreeSet;
 
-/// Allowlists can only be enforced by the extension, so browsers without it
-/// are closed while one is active (or always, if the user opted in).
+/// Allowlists and YouTube channel restrictions can only be enforced by the
+/// extension, so browsers without it are closed while one is active (or
+/// whenever websites are blocked, if the user opted in).
 pub fn extension_required(state: &State, active: &[ActiveBlock]) -> bool {
-    engine::allowed_sites(state, active).is_some() || (state.settings.require_extension && !engine::enforced_targets(state, active).0.is_empty())
+    engine::allowed_sites(state, active).is_some()
+        || engine::youtube_channels(state, active).is_some()
+        || (state.settings.require_extension && !engine::enforced_targets(state, active).0.is_empty())
 }
 
 pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
@@ -28,9 +31,12 @@ pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
     bridge::Rules {
         blocked: domains,
         blocked_paths: paths,
+        allowed_paths: engine::excepted_paths(state, active).into_iter().collect(),
         allow_only: allowed.map(|a| a.into_iter().collect()),
         until: active.iter().map(|b| b.ends_at).max(),
         lists,
+        youtube_channels: engine::youtube_channels(state, active).map(|c| c.into_iter().collect()),
+        hide_short_video_feeds: state.settings.hide_short_video_feeds,
     }
 }
 
@@ -76,7 +82,15 @@ impl Enforcer {
     /// One enforcement round.
     pub fn run(&mut self, state: &State, bridge: &bridge::Bridge, now_ms: i64, local: &NaiveDateTime) -> Outcome {
         let blocks = engine::active_blocks(state, now_ms, local);
-        let (sites, mut apps) = engine::enforced_targets(state, &blocks);
+        let (mut sites, mut apps) = engine::enforced_targets(state, &blocks);
+        // A site with an excepted path can't be in the hosts file (that would
+        // block the excepted part too); the extension blocks the rest of it.
+        let excepted = engine::excepted_paths(state, &blocks);
+        sites.retain(|s| {
+            !excepted
+                .iter()
+                .any(|p| hosts::site_domain(p) == s || hosts::site_domain(p).ends_with(&format!(".{s}")))
+        });
         if state.freeze.is_some() && state.settings.freeze_blocks_task_manager {
             apps.insert("taskmgr.exe".into());
         }

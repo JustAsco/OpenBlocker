@@ -1,5 +1,9 @@
 const target = decodeURIComponent(location.hash.slice(1));
-const host = hostOf(target) || "This site";
+const params = new URLSearchParams(location.search);
+// "channel": a YouTube video from a channel that isn't allowed right now.
+const reason = params.get("r");
+const channel = params.get("c");
+const host = reason === "channel" ? "This video" : hostOf(target) || "This site";
 const QUOTES = [
   "You chose to focus. Future you says thanks.",
   "The urge passes in about 90 seconds. Breathe.",
@@ -20,11 +24,34 @@ function fmt(ts) {
 async function render() {
   const { rules } = await api.storage.local.get("rules");
   // Unblocked in the meantime? Go to the page the user wanted.
-  if (target && rules && !isBlocked(target, rules)) {
+  const stillBlocked =
+    reason === "channel" ? !!rules?.youtubeChannels && !rules.youtubeChannels.includes(channel) : !rules || isBlocked(target, rules);
+  if (target && rules && !stillBlocked) {
     location.replace(target);
     return;
   }
   if (!rules) return;
+  if (reason === "channel") {
+    document.getElementById("why").textContent = `is from ${channel || "a channel"}, which isn't on your list of allowed YouTube channels.`;
+    const box = document.getElementById("allowed");
+    box.hidden = false;
+    box.querySelector("p").textContent = "Allowed channels:";
+    document.getElementById("allowed-list").replaceChildren(
+      ...rules.youtubeChannels.slice(0, 30).map((c) => {
+        const li = document.createElement("li");
+        const a = document.createElement("a");
+        a.href = `https://www.youtube.com/${c.startsWith("UC") ? "channel/" + c : c}`;
+        a.textContent = c;
+        li.append(a);
+        return li;
+      }),
+    );
+    const parts = [];
+    if (rules.lists?.length) parts.push(rules.lists.join(" · "));
+    if (rules.until) parts.push(`until ${fmt(rules.until)}`);
+    document.getElementById("meta").textContent = parts.join(" — ");
+    return;
+  }
   const allowlist = rules.allowOnly && !domainMatches(host, rules.blocked || []);
   document.getElementById("why").textContent = allowlist ? "isn't on your allowlist right now." : "is blocked right now.";
   const parts = [];

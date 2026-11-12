@@ -48,8 +48,53 @@ function pathMatches(url, host, paths) {
 function isBlocked(url, rules) {
   const host = hostOf(url);
   if (!host || !rules) return false;
+  // List exceptions (reddit.com/r/rust) win over blocked sites.
+  if (pathMatches(url, host, rules.allowedPaths || [])) return false;
   if (domainMatches(host, rules.blocked || [])) return true;
   if (pathMatches(url, host, rules.blockedPaths || [])) return true;
   if (rules.allowOnly && !domainMatches(host, [...rules.allowOnly, ...ALWAYS_ALLOWED])) return true;
   return false;
+}
+
+// ───────────── YouTube channels ─────────────
+
+/**
+ * Canonical form of a YouTube channel reference: "@handle" (lowercase),
+ * "UC…" channel id, or "c/name" / "user/name". Mirrors `normalize_channel`
+ * in src-tauri/core/src/hosts.rs.
+ */
+function normalizeChannel(input) {
+  let s = String(input || "").trim();
+  const scheme = s.indexOf("://");
+  if (scheme >= 0) s = s.slice(scheme + 3);
+  const lower = s.toLowerCase();
+  const host = ["www.youtube.com/", "m.youtube.com/", "youtube.com/", "music.youtube.com/"].find((p) => lower.startsWith(p));
+  const wasUrl = !!host || scheme >= 0 || /[?#]/.test(s);
+  if (host) s = s.slice(host.length);
+  s = s.split(/[?#]/)[0].replace(/^\/+|\/+$/g, "");
+  const parts = s.split("/");
+  const ok = (t) => !!t && t.length <= 100 && /^[A-Za-z0-9._-]+$/.test(t);
+  const isId = (t) => !!t && t.length === 24 && t.startsWith("UC") && ok(t);
+  const first = parts[0] || "";
+  if (first === "channel") return isId(parts[1]) ? parts[1] : null;
+  if (first === "c" || first === "user") return ok(parts[1]) ? `${first}/${parts[1].toLowerCase()}` : null;
+  if (first.startsWith("@") && ok(first.slice(1))) return first.toLowerCase();
+  if (isId(first)) return first;
+  if (!wasUrl && !s.includes("/") && ok(first) && !first.includes(".")) return "@" + first.toLowerCase();
+  return null;
+}
+
+/** Id of the YouTube video a URL plays (watch, shorts, live, youtu.be), or null. */
+function videoIdOf(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^(www|m|music)\./, "");
+    if (host === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
+    if (host !== "youtube.com") return null;
+    if (u.pathname === "/watch") return u.searchParams.get("v");
+    const m = u.pathname.match(/^\/(shorts|live)\/([\w-]{6,})/);
+    return m ? m[2] : null;
+  } catch {
+    return null;
+  }
 }

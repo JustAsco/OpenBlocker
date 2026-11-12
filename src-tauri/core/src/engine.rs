@@ -194,8 +194,61 @@ pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSe
             sites.extend(extra.iter().cloned());
         }
     }
-    let apps = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
+    // Exceptions: a domain leaves out the whole site, a path just that part.
+    for e in list.except_sites.iter().filter_map(|e| crate::hosts::normalize_site(e)) {
+        if crate::hosts::is_path_site(&e) {
+            sites.retain(|s| s != &e && !s.starts_with(&format!("{e}/")));
+        } else {
+            sites.retain(|s| {
+                let d = crate::hosts::site_domain(s);
+                d != e && !d.ends_with(&format!(".{e}"))
+            });
+        }
+    }
+    let mut apps: BTreeSet<String> = list.apps.iter().chain(cats.flat_map(|c| &c.apps)).map(|a| normalize_exe(&a.exe)).collect();
+    apps.retain(|a| !list.except_apps.iter().any(|e| exe_matches(&e.exe, a)));
     (sites, apps)
+}
+
+/// Does a set of site entries block the whole domain a path belongs to?
+fn covers_domain(sites: &BTreeSet<String>, path: &str) -> bool {
+    let d = crate::hosts::site_domain(path);
+    sites
+        .iter()
+        .any(|s| !crate::hosts::is_path_site(s) && (d == s || d.ends_with(&format!(".{s}"))))
+}
+
+/// A list's path exceptions that open up part of a site it blocks
+/// (`reddit.com/r/rust` while `reddit.com` is blocked).
+pub fn list_excepted_paths(state: &State, list: &BlockList) -> BTreeSet<String> {
+    if list.mode != ListMode::Block {
+        return BTreeSet::new();
+    }
+    let (sites, _) = list_items(state, list);
+    list.except_sites
+        .iter()
+        .filter_map(|e| crate::hosts::normalize_site(e))
+        .filter(|e| crate::hosts::is_path_site(e) && covers_domain(&sites, e))
+        .collect()
+}
+
+/// Paths that stay reachable although their site is blocked: excepted by
+/// every active list that blocks their site (one list's exception doesn't
+/// override another list that blocks the whole site).
+pub fn excepted_paths(state: &State, blocks: &[ActiveBlock]) -> BTreeSet<String> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let active: Vec<(BTreeSet<String>, BTreeSet<String>)> = state
+        .lists
+        .iter()
+        .filter(|l| ids.contains(l.id.as_str()) && l.mode == ListMode::Block)
+        .map(|l| (list_items(state, l).0, list_excepted_paths(state, l)))
+        .collect();
+    let candidates: BTreeSet<&String> = active.iter().flat_map(|(_, ex)| ex).collect();
+    candidates
+        .into_iter()
+        .filter(|p| active.iter().all(|(sites, ex)| !covers_domain(sites, p) || ex.contains(*p)))
+        .cloned()
+        .collect()
 }
 
 /// If an allowlist is active: the only sites browsers may open (union of all
@@ -211,6 +264,17 @@ pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<S
             .extend(sites.iter().map(|s| crate::hosts::site_domain(s).to_string()));
     }
     allowed
+}
+
+/// If an active list restricts YouTube to chosen channels: the channels
+/// whose videos may play (union of all such lists). `None` = no restriction.
+pub fn youtube_channels(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<String>> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let mut out: Option<BTreeSet<String>> = None;
+    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && !l.youtube_channels.is_empty()) {
+        out.get_or_insert_with(BTreeSet::new).extend(list.youtube_channels.iter().cloned());
+    }
+    out
 }
 
 fn strictness(l: LockMode) -> u8 {
@@ -470,6 +534,15 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
             ListMode::Block => os.is_subset(&ns),
             ListMode::Allow => ns.is_subset(&os),
         };
+        // A channel restriction may get stricter (fewer channels), never looser.
+        let channels_ok = o.youtube_channels.is_empty()
+            || (!n.youtube_channels.is_empty() && n.youtube_channels.iter().all(|c| o.youtube_channels.contains(c)));
+        if !channels_ok {
+            return Some(format!("“{}” is locked. You can remove YouTube channels, but not add any.", o.name));
+        }
+        if !list_excepted_paths(new, n).is_subset(&list_excepted_paths(old, o)) {
+            return Some(format!("“{}” is locked: no new exceptions until it ends.", o.name));
+        }
         if !apps_ok || !sites_ok {
             return Some(match o.mode {
                 ListMode::Block => format!("“{}” is locked. You can add items, but not remove them.", o.name),
@@ -488,6 +561,7 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
     if !locked.is_empty() {
         let (o, n) = (&old.settings, &new.settings);
         if (o.block_subdomains && !n.block_subdomains)
+            || (o.hide_short_video_feeds && !n.hide_short_video_feeds)
             || (o.require_extension && !n.require_extension)
             || n.unlock_text_length < o.unlock_text_length
         {
@@ -710,6 +784,9 @@ mod tests {
             apps: vec![AppEntry { name: "Steam".into(), exe: "steam.exe".into(), path: None }],
             categories: vec![],
             mode: ListMode::Allow,
+            youtube_channels: vec![],
+            except_sites: vec![],
+            except_apps: vec![],
         });
         let local = at(9, 12, 0);
         assert_eq!(allowed_sites(&st, &active_blocks(&st, 0, &local)), None);
@@ -921,5 +998,84 @@ mod tests {
         state.source_sites.insert("social".into(), std::sync::Arc::new(["huge-list-domain.com".to_string()].into()));
         let (sites, _) = list_items(&state, &state.lists[0]);
         assert!(sites.contains("huge-list-domain.com"));
+    }
+
+    #[test]
+    fn youtube_channel_restrictions() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.lists[1].youtube_channels = vec!["@a".into(), "@b".into()];
+        old.sessions.push(Session { id: "s".into(), list_id: "video".into(), started_at: 0, ends_at: now + 60 * MINUTE_MS, lock: LockMode::Timer });
+        let blocks = active_blocks(&old, now, &local);
+        assert_eq!(youtube_channels(&old, &blocks), Some(["@a".to_string(), "@b".to_string()].into()));
+        let mut new = old.clone();
+        new.lists[1].youtube_channels = vec!["@a".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_none(), "fewer channels is stricter");
+        new.lists[1].youtube_channels.push("@c".into());
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "adding a channel");
+        new.lists[1].youtube_channels.clear();
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "dropping the restriction");
+    }
+
+    #[test]
+    fn migration_adds_new_builtin_categories_once() {
+        let mut old = State::default();
+        old.version = 1;
+        old.categories.retain(|c| c.id != "shorts");
+        old.migrate();
+        assert!(old.category("shorts").is_some_and(|c| c.sites.contains(&"youtube.com/shorts".to_string())));
+        assert_eq!(old.version, STATE_VERSION);
+        // Deleted again by the user: stays deleted.
+        old.categories.retain(|c| c.id != "shorts");
+        old.migrate();
+        assert!(old.category("shorts").is_none());
+    }
+
+    #[test]
+    fn exceptions_leave_sites_and_apps_out() {
+        let mut state = State::default();
+        // Social media except Facebook (also covers its subdomains).
+        state.lists[0].except_sites = vec!["facebook.com".into()];
+        let (sites, _) = list_items(&state, &state.lists[0]);
+        assert!(sites.contains("instagram.com") && !sites.contains("facebook.com"));
+        // Games except Steam.
+        state.lists[2].except_apps = vec![AppEntry { name: "Steam".into(), exe: "steam.exe".into(), path: None }];
+        let (_, apps) = list_items(&state, &state.lists[2]);
+        assert!(!apps.contains("steam.exe"));
+    }
+
+    #[test]
+    fn path_exceptions_open_part_of_a_blocked_site() {
+        let local = at(4, 12, 0);
+        let mut state = State::default();
+        state.lists[0].categories.clear();
+        state.lists[0].sites = vec!["reddit.com".into()];
+        state.lists[0].except_sites = vec!["reddit.com/r/rust".into(), "example.org/x".into()];
+        state.sessions.push(Session { id: "a".into(), list_id: "social".into(), started_at: 0, ends_at: 10, lock: LockMode::None });
+        let blocks = active_blocks(&state, 0, &local);
+        // Only exceptions inside a blocked site count.
+        assert_eq!(excepted_paths(&state, &blocks), ["reddit.com/r/rust".to_string()].into());
+        // Another active list blocking all of reddit wins.
+        state.lists[1].categories.clear();
+        state.lists[1].sites = vec!["reddit.com".into()];
+        state.sessions.push(Session { id: "b".into(), list_id: "video".into(), started_at: 0, ends_at: 10, lock: LockMode::None });
+        let blocks = active_blocks(&state, 0, &local);
+        assert!(excepted_paths(&state, &blocks).is_empty());
+    }
+
+    #[test]
+    fn locked_lists_get_no_new_exceptions() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.sessions.push(Session { id: "s".into(), list_id: "social".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Timer });
+        let mut new = old.clone();
+        new.lists[0].except_sites = vec!["facebook.com".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        let mut new = old.clone();
+        new.lists[0].sites.push("reddit.com".into());
+        new.lists[0].except_sites = vec!["reddit.com/r/rust".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "path exception");
     }
 }

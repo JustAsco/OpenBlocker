@@ -70,6 +70,9 @@ pub struct Rules {
     /// everything below it, on the domain and its subdomains). A separate
     /// field so older extension versions simply ignore it.
     pub blocked_paths: Vec<String>,
+    /// Parts of blocked sites that stay reachable (list exceptions such as
+    /// `reddit.com/r/rust`). They win over `blocked` and `blocked_paths`.
+    pub allowed_paths: Vec<String>,
     /// When set, *only* these domains may be opened.
     pub allow_only: Option<Vec<String>>,
     /// Latest end of the active blocks, so a stale rule set can expire if the
@@ -77,6 +80,11 @@ pub struct Rules {
     pub until: Option<i64>,
     /// Names of the active lists, shown on the block page.
     pub lists: Vec<String>,
+    /// When set, YouTube videos may only play from these channels
+    /// (`@handle`, `UC…` id, `c/name` or `user/name`).
+    pub youtube_channels: Option<Vec<String>>,
+    /// Hide Shorts/Reels shelves in feeds while their pages are blocked.
+    pub hide_short_video_feeds: bool,
 }
 
 #[derive(Default)]
