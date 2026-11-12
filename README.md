@@ -88,6 +88,8 @@ src-tauri/
 - [x] Browser extension with block page and open-tab enforcement
 - [x] Extension: path-level blocking (`youtube.com/shorts`)
 - [ ] Extension: store/AMO publishing, incognito enforcement
+- [ ] **Short videos**: a built-in "Short videos" category (`youtube.com/shorts`, Instagram/Facebook Reels) that blocks only those parts and keeps the rest of the site usable; optionally also hide Shorts/Reels shelves and buttons in feeds (extension). Reels that play inside Instagram's normal feed can't be told apart by URL.
+- [ ] **YouTube channel allowlist**: per block list, allow only videos from chosen channels (paste a channel link or @handle in the app); the extension looks up each video's channel (oEmbed, falling back to the page) and blocks the rest. Search and the home page stay usable; embeds on other sites come later.
 - [x] **Background Windows service + watchdog**: blocks survive killing the app, no admin prompt for the UI
 - [x] Uninstall/settings protection during locked blocks
 - [x] Allowlist mode for websites
