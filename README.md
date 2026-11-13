@@ -93,7 +93,7 @@ src-tauri/
 - [x] Extension: path-level blocking (`youtube.com/shorts`)
 - [x] The extension is optional: blocks that use features only it can enforce explain that when they start; without it you choose *strict* (the whole site is blocked through the hosts file) or *lenient* (it stays open)
 - [x] Browsers are only closed (after a minute's warning) if the extension was switched off in them during a block, if it isn't allowed in private windows (setting: Default with an opt-out, On, Off), or if you turn on "Close browsers without the extension"
-- [ ] **Super strict mode**: remember every browser that ever had the extension and close it during any block if the extension is missing
+- [ ] **Super strict mode**: during any block, every open browser must have the extension running; any browser without it is closed after a short warning (normal mode keeps the extension optional)
 - [ ] **Settings presets** (e.g. relaxed / balanced / strict) instead of setting every option by hand
 - [ ] Extension: publish to the Chrome Web Store and Firefox Add-ons (`python3 dev/package_extension.py` builds the zip; needs developer accounts)
 - [x] **Short videos**: built-in "Short videos" category plus hiding Shorts/Reels in feeds
