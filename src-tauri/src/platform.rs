@@ -655,8 +655,10 @@ pub fn console_user_session() -> Option<u32> {
 }
 
 /// Starts the app (our own executable) in the logged-in user's session, as
-/// that user. Only possible from a service running as SYSTEM.
-pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
+/// that user. Only possible from a service running as SYSTEM. `urgent`: start
+/// it above normal priority, so right after logon it isn't queued behind
+/// everything else Windows starts (used while the PC is frozen).
+pub fn launch_ui_in_console_session(args: &str, urgent: bool) -> Result<(), String> {
     #[cfg(windows)]
     unsafe {
         use std::ffi::c_void;
@@ -664,7 +666,9 @@ pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
         use windows::Win32::Foundation::{CloseHandle, HANDLE};
         use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
         use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
-        use windows::Win32::System::Threading::{CreateProcessAsUserW, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW};
+        use windows::Win32::System::Threading::{
+            CreateProcessAsUserW, ABOVE_NORMAL_PRIORITY_CLASS, CREATE_UNICODE_ENVIRONMENT, PROCESS_INFORMATION, STARTUPINFOW,
+        };
 
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let session = WTSGetActiveConsoleSessionId();
@@ -690,7 +694,7 @@ pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
             None,
             None,
             false,
-            CREATE_UNICODE_ENVIRONMENT,
+            if urgent { CREATE_UNICODE_ENVIRONMENT | ABOVE_NORMAL_PRIORITY_CLASS } else { CREATE_UNICODE_ENVIRONMENT },
             (!env.is_null()).then_some(env as *const c_void),
             PCWSTR::null(),
             &si,
@@ -708,8 +712,21 @@ pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        let _ = args;
+        let _ = (args, urgent);
         Err("not supported on this platform".into())
+    }
+}
+
+/// Runs this process above normal priority (while frozen) or at normal priority.
+pub fn set_urgent_priority(urgent: bool) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, ABOVE_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS};
+        let _ = SetPriorityClass(GetCurrentProcess(), if urgent { ABOVE_NORMAL_PRIORITY_CLASS } else { NORMAL_PRIORITY_CLASS });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = urgent;
     }
 }
 
