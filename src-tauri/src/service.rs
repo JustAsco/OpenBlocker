@@ -587,24 +587,16 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
     let mut sys = sysinfo::System::new().ok();
     let mut last_locked = None;
     let mut last_launch = 0i64;
-    // Watchdog timing. Only one copy of the app can run (a second one hands
-    // over and exits), so there's no race with Windows' autostart to avoid:
-    // the watchdog doesn't wait for it. Windows starts autostart programs
-    // late and at reduced priority, often half a minute after logon on a
-    // laptop, which is far too slow for a frozen PC.
-    let mut user_session: Option<u32> = None;
-    let mut logged_in_at = 0i64;
-    let mut ui_missing_since: Option<i64> = None;
     while control.load(Ordering::Relaxed) == RUN {
         let now = now_ms();
         let local = local_now();
-        let (state, locked, frozen) = {
+        let (state, locked) = {
             let mut s = svc.lock().unwrap();
             if !engine::tick(&mut s.state, now).is_empty() {
                 s.save();
             }
             let locked = s.any_lock();
-            (s.has_state.then(|| s.state.clone()), locked, s.state.freeze.is_some())
+            (s.has_state.then(|| s.state.clone()), locked)
         };
         if let Some(state) = state {
             let out = enforcer.run(&state, &bridge, now, &local);
@@ -631,31 +623,24 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
             report_lock(locked);
             last_locked = Some(locked);
         }
-        // Watchdog: the app shows the freeze screen and notifications, and
-        // refuses to quit while locked; if it's gone anyway, it was killed.
-        if locked {
-            let session = platform::console_user_session();
-            if session != user_session {
-                user_session = session;
-                logged_in_at = now;
-            }
-            if let (Some(_), Some(sys)) = (session, sys.as_mut()) {
-                if platform::ui_running_in_console_session(sys) {
-                    ui_missing_since = None;
-                } else {
-                    let since = *ui_missing_since.get_or_insert(now);
-                    let (grace, retry) = watchdog_timing(frozen, now - logged_in_at);
-                    if now - since >= grace && now - last_launch > retry {
-                        // Right at logon the launch can fail while the session
-                        // is still being set up: then try again next second.
-                        if platform::launch_ui_in_console_session("--minimized", frozen).is_ok() {
-                            last_launch = now;
-                        }
+        // Watchdog: during a lock the app is needed for the freeze screen,
+        // app allowlists, daily limits and notifications, and it refuses to
+        // quit; if it's missing, it was killed or the PC was just restarted.
+        // Start it the moment someone is logged in, above normal priority.
+        // No waiting for Windows' autostart: it runs late and at reduced
+        // priority (often half a minute on a laptop), and since only one app
+        // copy can run, a second one just hands over and exits.
+        if locked && platform::console_user_session().is_some() {
+            if let Some(sys) = sys.as_mut() {
+                // Give a started app time to show up before starting another.
+                if !platform::ui_running_in_console_session(sys) && now - last_launch > WATCHDOG_RETRY_MS {
+                    // Right at logon the launch can fail while the session is
+                    // still being set up: then it's tried again next second.
+                    if platform::launch_ui_in_console_session("--minimized", true).is_ok() {
+                        last_launch = now;
                     }
                 }
             }
-        } else {
-            ui_missing_since = None;
         }
         std::thread::sleep(Duration::from_secs(1));
     }
@@ -666,32 +651,8 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
     }
 }
 
-/// (How long the app must be missing before the watchdog starts it, how
-/// long to wait for a started app to show up before starting it again.)
-/// Frozen: at once, so the freeze screen is back right after a restart.
-/// Otherwise a few seconds, and right after logon a little longer so the
-/// regular autostart usually gets there first (cheaper than a copy that
-/// starts only to hand over and exit).
-fn watchdog_timing(frozen: bool, since_logon_ms: i64) -> (i64, i64) {
-    match (frozen, since_logon_ms < 30_000) {
-        (true, _) => (0, 10_000),
-        (false, true) => (10_000, 20_000),
-        (false, false) => (3_000, 20_000),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::watchdog_timing;
-
-    #[test]
-    fn frozen_pc_gets_the_app_back_at_once() {
-        assert_eq!(watchdog_timing(true, 0).0, 0, "right after logon");
-        assert_eq!(watchdog_timing(true, 600_000).0, 0, "after the app was killed");
-        assert!(watchdog_timing(false, 0).0 > watchdog_timing(false, 600_000).0);
-        assert!(watchdog_timing(false, 0).0 <= 10_000, "no more half-minute waits");
-    }
-}
+/// After starting the app, wait this long for it to appear before trying again.
+const WATCHDOG_RETRY_MS: i64 = 10_000;
 
 /// `openblocker --service-console`: the service loop in the foreground, for
 /// development. Data goes to `OPENBLOCKER_SERVICE_DIR` if set.
