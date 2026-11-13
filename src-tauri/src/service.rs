@@ -56,6 +56,9 @@ pub struct Status {
     pub seq: u64,
     /// Apps closed after the `since` the client asked for.
     pub killed: Vec<String>,
+    /// Browser warnings and closings after `since`.
+    #[serde(default)]
+    pub browser_notices: Vec<enforce::BrowserNotice>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -224,6 +227,7 @@ struct Svc {
     dir: PathBuf,
     challenges: HashMap<String, String>,
     killed: VecDeque<(u64, String)>,
+    notices: VecDeque<(u64, enforce::BrowserNotice)>,
     seq: u64,
     hosts_error: Option<String>,
     bridge: Arc<bridge::Bridge>,
@@ -292,6 +296,7 @@ impl Svc {
             dir,
             challenges: HashMap::new(),
             killed: VecDeque::new(),
+            notices: VecDeque::new(),
             seq: 0,
             hosts_error: None,
             bridge,
@@ -450,6 +455,7 @@ impl Svc {
             browsers: self.bridge.connected(now_ms()),
             seq: self.seq,
             killed: self.killed.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
+            browser_notices: self.notices.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
         }
     }
 }
@@ -583,6 +589,14 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
                 s.killed.push_back((seq, name));
                 if s.killed.len() > 100 {
                     s.killed.pop_front();
+                }
+            }
+            for notice in out.browser_notices {
+                s.seq += 1;
+                let seq = s.seq;
+                s.notices.push_back((seq, notice));
+                if s.notices.len() > 50 {
+                    s.notices.pop_front();
                 }
             }
         }

@@ -141,26 +141,47 @@ impl ProcessKiller {
         killed
     }
 
-    /// Closes browsers in which the extension isn't running (or isn't allowed
-    /// in private windows). Browsers get a
-    /// 30 s grace period after starting so the extension can check in.
-    /// Returns friendly names of the browsers that were closed.
-    pub fn close_unprotected_browsers(&mut self, has_extension: impl Fn(&str) -> bool) -> Vec<String> {
+    /// Browsers running without a working extension (`has_extension` says
+    /// whether an exe is covered), as (exe, friendly name). Browsers get 30 s
+    /// after starting so the extension can check in.
+    pub fn unprotected_browsers(&mut self, has_extension: impl Fn(&str) -> bool) -> Vec<(String, String)> {
         let now_s = chrono::Utc::now().timestamp().max(0) as u64;
         let own_exe = std::env::current_exe().ok();
         let Some(sys) = self.refresh() else { return vec![] };
-        let mut closed = BTreeSet::new();
+        let mut out = BTreeMap::new();
         for (pid, p) in sys.processes() {
             let exe = p.name().to_string_lossy().to_lowercase();
             let Some(name) = crate::bridge::browser_name(&exe) else { continue };
             if !may_close(pid.as_u32(), &exe, p.exe(), own_exe.as_deref()) || has_extension(&exe) || now_s.saturating_sub(p.start_time()) < 30 {
                 continue;
             }
-            if p.kill() {
-                closed.insert(name.to_string());
+            out.insert(exe, name.to_string());
+        }
+        out.into_iter().collect()
+    }
+
+    /// Closes a browser by ending its main process only (the one whose parent
+    /// isn't the same browser). Its tab and helper processes then exit on
+    /// their own, so there's no "Aw, Snap!" flash, and the browser offers to
+    /// restore the tabs next time. Returns whether anything was ended.
+    pub fn close_browser(&mut self, exe: &str) -> bool {
+        let own_exe = std::env::current_exe().ok();
+        let Some(sys) = self.refresh() else { return false };
+        let mut closed = false;
+        for (pid, p) in sys.processes() {
+            let name = p.name().to_string_lossy().to_lowercase();
+            if name != exe || !may_close(pid.as_u32(), &name, p.exe(), own_exe.as_deref()) {
+                continue;
+            }
+            let child = p
+                .parent()
+                .and_then(|pp| sys.process(pp))
+                .is_some_and(|parent| parent.name().to_string_lossy().eq_ignore_ascii_case(exe));
+            if !child && p.kill() {
+                closed = true;
             }
         }
-        closed.into_iter().collect()
+        closed
     }
 
     /// Running user programs, used for autosuggestions.

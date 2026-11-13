@@ -38,15 +38,31 @@ pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
         youtube_channels: engine::youtube_channels(state, active).map(|c| c.into_iter().collect()),
         hide_short_video_feeds: state.settings.hide_short_video_feeds,
         latest_version: bridge::extension_version(),
+        extension_required: extension_required(state, active),
     }
+}
+
+/// A browser is closed this long after the warning.
+pub const BROWSER_WARNING_MS: i64 = 60_000;
+
+/// Something to tell the user about a browser that lacks the extension.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserNotice {
+    /// Friendly name, e.g. "Google Chrome".
+    pub browser: String,
+    /// true: it was closed now; false: it will be closed in a minute.
+    pub closed: bool,
+    /// The extension runs, but isn't allowed in private windows.
+    pub private_windows: bool,
 }
 
 #[derive(Default)]
 pub struct Outcome {
     /// Executables closed this round.
     pub killed: Vec<String>,
-    /// Browsers closed because the extension wasn't running in them.
-    pub closed_browsers: Vec<String>,
+    /// Browsers about to be closed, or closed, for lacking the extension.
+    pub browser_notices: Vec<BrowserNotice>,
 }
 
 pub struct Enforcer {
@@ -55,6 +71,8 @@ pub struct Enforcer {
     applied: Option<(BTreeSet<String>, bool)>,
     pub hosts_error: Option<String>,
     retry_at: i64,
+    /// Browsers found without the extension: exe -> when they were warned.
+    warned: std::collections::HashMap<String, i64>,
 }
 
 impl Default for Enforcer {
@@ -70,6 +88,7 @@ impl Enforcer {
             applied: None,
             hosts_error: None,
             retry_at: 0,
+            warned: Default::default(),
         }
     }
 
@@ -120,7 +139,28 @@ impl Enforcer {
             ..Default::default()
         };
         if extension_required(state, &blocks) {
-            out.closed_browsers = self.killer.close_unprotected_browsers(|exe| bridge.is_protected(exe, now_ms));
+            // Warn first, close a minute later: closing a browser out of the
+            // blue looks like a crash.
+            let found = self.killer.unprotected_browsers(|exe| bridge.is_protected(exe, now_ms));
+            self.warned.retain(|exe, _| found.iter().any(|(e, _)| e == exe));
+            for (exe, name) in found {
+                let private_windows = bridge.private_windows_missing(&exe, now_ms);
+                match self.warned.get(&exe) {
+                    None => {
+                        self.warned.insert(exe, now_ms);
+                        out.browser_notices.push(BrowserNotice { browser: name, closed: false, private_windows });
+                    }
+                    Some(at) if now_ms - at >= BROWSER_WARNING_MS => {
+                        if self.killer.close_browser(&exe) {
+                            out.browser_notices.push(BrowserNotice { browser: name, closed: true, private_windows });
+                        }
+                        self.warned.remove(&exe);
+                    }
+                    Some(_) => {}
+                }
+            }
+        } else {
+            self.warned.clear();
         }
         out
     }

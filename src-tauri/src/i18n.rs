@@ -63,10 +63,11 @@ fn german(en: &str) -> Option<&'static str> {
         "Your daily time for “{name}” is almost up." => "Deine Tageszeit für „{name}“ ist fast aufgebraucht.",
         "Blocked 🚫" => "Gesperrt 🚫",
         "{apps} was closed." => "{apps} wurde geschlossen.",
-        "Browser closed 🧩" => "Browser geschlossen 🧩",
-        "{browsers} doesn't have the OpenBlocker extension running." => "In {browsers} läuft die OpenBlocker-Erweiterung nicht.",
-        "{browsers}: the OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details." => {
-            "{browsers}: Die OpenBlocker-Erweiterung ist in privaten Fenstern nicht erlaubt. Aktiviere „Im Inkognitomodus zulassen“ in ihren Details."
+        "{browser} was closed 🧩" => "{browser} wurde geschlossen 🧩",
+        "{browser} will be closed in a minute 🧩" => "{browser} wird in einer Minute geschlossen 🧩",
+        "The OpenBlocker extension isn't running in it." => "Die OpenBlocker-Erweiterung läuft darin nicht.",
+        "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details." => {
+            "Die OpenBlocker-Erweiterung ist in privaten Fenstern nicht erlaubt. Aktiviere „Im Inkognitomodus zulassen“ in ihren Details."
         }
         _ => return None,
     })
