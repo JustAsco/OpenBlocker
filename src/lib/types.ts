@@ -143,6 +143,8 @@ export interface Settings {
   extensionFallback: "strict" | "lenient";
   /** Close browsers whose extension can't see private windows (default: with an opt-out). */
   privateWindows: "default" | "on" | "off";
+  /** While any block runs, every browser must have the extension (else closed after 15 s). */
+  superStrict: boolean;
 }
 
 export interface DayStats {

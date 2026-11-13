@@ -22,4 +22,10 @@ const cont = { onResponseReceivedActions: [{ appendContinuationItemsAction: { co
 const r2 = ctx.collectSubscriptions(cont);
 ok("continuation page: grid entries, no further token", r2.ids[0] === id(3) && r2.token === null);
 ok("garbage is harmless", ctx.jsonAfter("ytInitialData = {broken", "ytInitialData = ") === null && ctx.collectSubscriptions(null).ids.length === 0);
+// Video ids, including embedded players.
+const v = (u) => ctx.videoIdOf(u);
+ok("watch / shorts / youtu.be", v("https://www.youtube.com/watch?v=abcdefghijk") === "abcdefghijk" && v("https://youtube.com/shorts/abcdefghijk") === "abcdefghijk" && v("https://youtu.be/abcdefghijk") === "abcdefghijk");
+ok("embedded players", v("https://www.youtube.com/embed/abcdefghijk?autoplay=1") === "abcdefghijk" && v("https://www.youtube-nocookie.com/embed/abcdefghijk") === "abcdefghijk");
+ok("embedded playlist has no single video", v("https://www.youtube.com/embed/videoseries?list=PL123") === null);
+ok("other sites", v("https://example.com/embed/abcdefghijk") === null);
 console.log(fails + " failure(s)"); process.exit(fails ? 1 : 0);

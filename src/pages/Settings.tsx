@@ -1,13 +1,15 @@
-import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Upload } from "lucide-react";
+import clsx from "clsx";
+import { Check, Copy, Download, Feather, FolderOpen, Heart, Lock, Puzzle, Scale, Shield, ShieldAlert, ShieldCheck, Upload, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
-import { AppIcon, PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
+import { AppIcon, Modal, PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
 import { LANGUAGES, t, tx } from "../lib/i18n";
 import { olderVersion } from "../lib/util";
+import { PRESETS, currentPreset, loosens, type PresetId } from "../lib/presets";
 
 export function SettingsPage() {
   const { snap, run } = useStore();
@@ -34,6 +36,7 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title={t("Settings")} />
+      <Presets />
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="card p-6">
           <h2 className="mb-2 font-semibold">{t("Blocking")}</h2>
@@ -162,7 +165,21 @@ export function SettingsPage() {
             })}
           </p>
           <div className="border-t border-line">
-            <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+            <Toggle
+              label={
+                <span className="flex items-center gap-1.5">
+                  <Zap size={14} className="text-amber-400" /> {t("Super strict mode")}
+                </span>
+              }
+              hint={t("While any block runs (also app-only blocks, focus rounds and limits), every open browser needs the extension, also in private windows, or it's closed after 15 seconds. Without the extension, its features always block the whole site. Can't be turned off during a locked block.")}
+              checked={settings.superStrict}
+              lockedOn={locked}
+              onChange={(superStrict) => save({ superStrict })}
+            />
+            {settings.superStrict && (
+              <p className="-mt-1 mb-3 text-xs text-amber-200">{t("Super strict mode overrides the three options below while a block runs.")}</p>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line py-3">
               <span>
                 <span className="block text-sm font-medium">{t("Without the extension")}</span>
                 <span className="mt-0.5 block text-xs text-muted">
@@ -337,5 +354,80 @@ export function SettingsPage() {
       </div>
       <ResetModal open={resetOpen} onClose={() => setResetOpen(false)} />
     </>
+  );
+}
+
+const PRESET_ICONS: Record<PresetId, typeof Shield> = { relaxed: Feather, balanced: Scale, strict: Shield, superStrict: Zap };
+
+/** Relaxed / Balanced / Strict / Super strict, instead of setting every option by hand. */
+function Presets() {
+  const { snap, run } = useStore();
+  const settings = snap!.state.settings;
+  const status = snap!.status;
+  const locked = status.active.some((b) => b.locked);
+  const current = currentPreset(settings);
+  const [confirm, setConfirm] = useState<PresetId | null>(null);
+  const apply = (id: PresetId) =>
+    run(() => api.saveSettings({ ...settings, ...PRESETS.find((p) => p.id === id)!.settings }), t("“{name}” settings applied.", { name: t(PRESETS.find((p) => p.id === id)!.name) }));
+
+  return (
+    <section className="card mb-5 p-6">
+      <div className="mb-4 flex items-baseline justify-between gap-3">
+        <h2 className="font-semibold">{t("How strict?")}</h2>
+        <span className="text-xs text-muted">{current ? t("Pick a preset; you can still fine-tune every option below.") : t("Custom: your settings don't match a preset.")}</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {PRESETS.map((p) => {
+          const Icon = PRESET_ICONS[p.id];
+          const blocked = locked && loosens(settings, p.settings);
+          return (
+            <button
+              key={p.id}
+              disabled={blocked || current === p.id}
+              title={blocked ? t("Not while a locked block is running: it would loosen blocking.") : undefined}
+              onClick={() => (p.id === "superStrict" ? setConfirm(p.id) : apply(p.id))}
+              className={clsx(
+                "relative flex flex-col justify-start rounded-xl border p-4 text-left transition disabled:cursor-default",
+                current === p.id ? "border-accent bg-accent/10" : "border-line bg-panel hover:border-line-strong",
+                blocked && "opacity-50",
+              )}
+            >
+              <span className="mb-2 flex items-center gap-2 font-medium">
+                <Icon size={16} className={p.id === "superStrict" ? "text-amber-400" : "text-accent"} />
+                {t(p.name)}
+                {current === p.id && <Check size={15} className="ml-auto text-accent" />}
+                {blocked && <Lock size={13} className="ml-auto text-faint" />}
+              </span>
+              <span className="block text-xs leading-relaxed text-muted">{t(p.description)}</span>
+            </button>
+          );
+        })}
+      </div>
+      {confirm && (
+        <Modal open onClose={() => setConfirm(null)} title={t("Turn on super strict mode?")} width={500}>
+          <p className="mb-3 text-sm text-muted">
+            {t("While any block runs, every browser without the OpenBlocker extension, or where it isn't allowed in private windows, is closed 15 seconds after a warning. You can't turn this off during a locked block.")}
+          </p>
+          <p className={clsx("mb-5 text-sm", status.extension.length ? "text-emerald-300" : "text-amber-200")}>
+            {status.extension.length
+              ? t("The extension is running in: {browsers}.", { browsers: status.extension.map((b) => b.name).join(", ") })
+              : t("The extension isn't running in any browser yet: set it up first (below), or every browser will be closed during blocks.")}
+          </p>
+          <div className="flex justify-end gap-2">
+            <button className="btn-ghost" onClick={() => setConfirm(null)}>
+              {t("Cancel")}
+            </button>
+            <button
+              className="btn-primary"
+              onClick={async () => {
+                if (await apply(confirm)) setConfirm(null);
+              }}
+            >
+              {t("Turn on")}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </section>
   );
 }

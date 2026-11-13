@@ -32,6 +32,8 @@ export interface BrowserNotice {
   browser: string;
   closed: boolean;
   reason: "deactivated" | "privateWindows" | "missing";
+  /** How long the warning lasts before the browser is closed. */
+  warningMs?: number;
 }
 
 /** Browser warnings from the backend. The mock fires one via window.mockBrowserWarning(). */

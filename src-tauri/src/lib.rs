@@ -1297,6 +1297,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
                     i18n::tr(lang, "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[])
                 }
                 enforce::CloseReason::Deactivated => i18n::tr(lang, "The OpenBlocker extension was turned off during a block.", &[]),
+                enforce::CloseReason::Missing if settings.super_strict => {
+                    i18n::tr(lang, "Super strict mode: every browser needs the OpenBlocker extension during a block.", &[])
+                }
                 enforce::CloseReason::Missing => i18n::tr(lang, "The OpenBlocker extension isn't running in it.", &[]),
             };
             // The window offers the choices (allow, or don't include private windows).
@@ -1312,6 +1315,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             }
             let title = if n.closed {
                 i18n::tr(lang, "{browser} was closed 🧩", &args)
+            } else if n.warning_ms < 60_000 {
+                let secs = (n.warning_ms / 1000).to_string();
+                i18n::tr(lang, "{browser} will be closed in {n} seconds 🧩", &[("browser", n.browser.as_str()), ("n", secs.as_str())])
             } else {
                 i18n::tr(lang, "{browser} will be closed in a minute 🧩", &args)
             };

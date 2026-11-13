@@ -37,3 +37,12 @@ button {
   background: linear-gradient(135deg, var(--accent), #5b8cf6);
 }
 button.ghost { background: #1e1e2d; border: 1px solid var(--line); color: var(--fg); }
+
+/* Inside an embedded YouTube player on another website. */
+body.embed { padding: 12px; font-size: 14px; min-height: 100vh; }
+body.embed .logo { width: 36px; height: 36px; margin-bottom: 8px; }
+body.embed h1 { font-size: 22px; }
+body.embed .lead { font-size: 14px; }
+body.embed .actions,
+body.embed .quote,
+body.embed .allowed { display: none; }

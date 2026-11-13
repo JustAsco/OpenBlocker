@@ -84,16 +84,17 @@ function normalizeChannel(input) {
   return null;
 }
 
-/** Id of the YouTube video a URL plays (watch, shorts, live, youtu.be), or null. */
+/** Id of the YouTube video a URL plays (watch, shorts, live, embed, youtu.be), or null. */
 function videoIdOf(url) {
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^(www|m|music)\./, "");
     if (host === "youtu.be") return u.pathname.slice(1).split("/")[0] || null;
-    if (host !== "youtube.com") return null;
+    if (host !== "youtube.com" && host !== "youtube-nocookie.com") return null;
     if (u.pathname === "/watch") return u.searchParams.get("v");
-    const m = u.pathname.match(/^\/(shorts|live)\/([\w-]{6,})/);
-    return m ? m[2] : null;
+    // Embedded players; "videoseries" is a playlist without a single video id.
+    const m = u.pathname.match(/^\/(shorts|live|embed|v)\/([\w-]{6,})/);
+    return m && m[2] !== "videoseries" ? m[2] : null;
   } catch {
     return null;
   }

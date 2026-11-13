@@ -355,6 +355,10 @@ pub struct Settings {
     pub private_windows: PrivateWindows,
     /// UI language code ("en", "de"); empty = follow Windows.
     pub language: String,
+    /// Super strict mode: while *any* block runs, every open browser must have
+    /// the extension running (also in private windows), or it's closed after
+    /// a short warning; extension-only features always fall back to strict.
+    pub super_strict: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -406,6 +410,7 @@ impl Default for Settings {
             extension_fallback: ExtensionFallback::Strict,
             private_windows: PrivateWindows::Default,
             language: String::new(),
+            super_strict: false,
         }
     }
 }

@@ -53,6 +53,7 @@ function defaultState(): State {
       language: "",
       extensionFallback: "strict",
       privateWindows: "default",
+      superStrict: false,
     },
     stats,
   };

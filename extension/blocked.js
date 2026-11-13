@@ -4,6 +4,8 @@ const params = new URLSearchParams(location.search);
 const reason = params.get("r");
 const channel = params.get("c");
 const host = reason === "channel" ? "This video" : hostOf(target) || "This site";
+// Shown inside a YouTube player embedded on another site: keep it small, no tab buttons.
+if (params.get("e") === "1") document.body.classList.add("embed");
 const QUOTES = [
   "You chose to focus. Future you says thanks.",
   "The urge passes in about 90 seconds. Breathe.",

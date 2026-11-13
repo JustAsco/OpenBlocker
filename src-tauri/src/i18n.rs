@@ -65,6 +65,10 @@ fn german(en: &str) -> Option<&'static str> {
         "{apps} was closed." => "{apps} wurde geschlossen.",
         "{browser} was closed 🧩" => "{browser} wurde geschlossen 🧩",
         "{browser} will be closed in a minute 🧩" => "{browser} wird in einer Minute geschlossen 🧩",
+        "{browser} will be closed in {n} seconds 🧩" => "{browser} wird in {n} Sekunden geschlossen 🧩",
+        "Super strict mode: every browser needs the OpenBlocker extension during a block." => {
+            "Superstreng-Modus: Während einer Sperre braucht jeder Browser die OpenBlocker-Erweiterung."
+        }
         "The OpenBlocker extension was turned off during a block." => "Die OpenBlocker-Erweiterung wurde während einer Sperre ausgeschaltet.",
         "The OpenBlocker extension isn't running in it." => "Die OpenBlocker-Erweiterung läuft darin nicht.",
         "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details." => {

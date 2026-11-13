@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { CheckCircle2, Info, Lock, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api, isTauri } from "../lib/api";
 import { appSite } from "../lib/catalog";
 import { useStore } from "../lib/store";
@@ -225,7 +226,10 @@ export function Modal({ open, onClose, title, children, width = 480 }: { open: b
     };
   }, [open]);
   if (!open) return null;
-  return (
+  // Rendered into <body>: inside the page, an animated (transformed) parent
+  // would make "fixed" relative to the page instead of the window, and the
+  // dialog would end up off screen on long pages.
+  return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onMouseDown={onClose}>
       <div
         className="card animate-fade-up max-h-[90vh] w-full overflow-auto bg-panel p-6 shadow-2xl"
@@ -242,7 +246,8 @@ export function Modal({ open, onClose, title, children, width = 480 }: { open: b
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

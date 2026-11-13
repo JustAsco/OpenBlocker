@@ -322,6 +322,11 @@ pub fn needs_extension(state: &State, blocks: &[ActiveBlock]) -> bool {
         || !excepted_paths(state, blocks).is_empty()
 }
 
+/// Super strict mode is in force: the setting is on and some block runs.
+pub fn super_strict(state: &State, blocks: &[ActiveBlock]) -> bool {
+    state.settings.super_strict && !blocks.is_empty()
+}
+
 /// Strict fallback without the extension: whole domains the hosts file
 /// blocks instead (the domain of each blocked part of a site, and YouTube
 /// while only some channels are allowed). Website allowlists have no hosts
@@ -740,6 +745,7 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
             || private_rank(n.private_windows) < private_rank(o.private_windows)
             || (o.hide_short_video_feeds && !n.hide_short_video_feeds)
             || (o.require_extension && !n.require_extension)
+            || (o.super_strict && !n.super_strict)
             || n.unlock_text_length < o.unlock_text_length
         {
             return Some("Settings that loosen blocking can't be changed while a locked block is running.".into());
@@ -1450,5 +1456,35 @@ mod tests {
         let mut new = old.clone();
         new.settings.private_windows = PrivateWindows::On;
         assert!(lock_violation(&old, &new, now, &local).is_none());
+    }
+
+    #[test]
+    fn super_strict_mode() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut st = State::default();
+        st.settings.super_strict = true;
+        assert!(!super_strict(&st, &active_blocks(&st, now, &local)), "only while something is blocked");
+        // Any block counts, even one without websites (here: an app-only list).
+        st.lists[2].categories.clear();
+        st.lists[2].apps = vec![AppEntry { name: "Steam".into(), exe: "steam.exe".into(), path: None }];
+        st.sessions.push(Session { id: "s".into(), list_id: "games".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::None });
+        let blocks = active_blocks(&st, now, &local);
+        assert!(enforced_targets(&st, &blocks).0.is_empty());
+        assert!(super_strict(&st, &blocks));
+        // Turning it off: fine without a lock, refused with one.
+        let mut new = st.clone();
+        new.settings.super_strict = false;
+        assert!(lock_violation(&st, &new, now, &local).is_none());
+        let mut locked = st.clone();
+        locked.sessions[0].lock = LockMode::Timer;
+        let mut new = locked.clone();
+        new.settings.super_strict = false;
+        assert!(lock_violation(&locked, &new, now, &local).is_some());
+        let mut on = locked.clone();
+        on.settings.super_strict = false;
+        let mut new = on.clone();
+        new.settings.super_strict = true;
+        assert!(lock_violation(&on, &new, now, &local).is_none(), "turning it on is stricter");
     }
 }

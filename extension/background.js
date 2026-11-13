@@ -384,6 +384,16 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       })
       .then(sendResponse, () => sendResponse(false));
     return true;
+  } else if (msg?.type === "yt-embed" && typeof msg.videoId === "string") {
+    // A YouTube player embedded on another website: may this video play?
+    (async () => {
+      const allowed = await allowedChannels({ waitForSubscriptions: true });
+      if (!allowed) return { allowed: true };
+      const channel = await lookupVideo(msg.videoId);
+      // Unknown channel while channels are restricted: don't play it.
+      return { allowed: !!channel && (await channelAllowed(channel, allowed)), channel };
+    })().then(sendResponse, () => sendResponse({ allowed: false }));
+    return true;
   } else if (msg?.type === "yt-tiles" && Array.isArray(msg.keys)) {
     tilesAllowed(msg.keys.filter((k) => typeof k === "string")).then(sendResponse, () => sendResponse({}));
     return true; // answers asynchronously

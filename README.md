@@ -12,7 +12,7 @@ Block websites and apps on a schedule, run Pomodoro focus sessions, or freeze yo
 | 🏷️ **Categories** | Reusable, editable groups of sites and apps (Social media, Adult, Gambling, …). Ten built-in ones you can customise or restore, plus your own. Edit a category once and every block list using it updates. Import a maintained community list (e.g. ~77,000 adult sites) into any category with one click. |
 | 🧱 **Block lists** | What gets blocked together: tick the categories to include, add your own extras, and leave things out on the *Exceptions* tab (e.g. all social media except Facebook, or all of Reddit except `reddit.com/r/rust`) without touching the categories. Smart autosuggest: type `you` → YouTube (+ youtu.be, ytimg.com), paste any URL and it's normalised, pick installed/running apps. Apps show their real program icon, or the app's website icon when it isn't installed. Block just part of a site, like `youtube.com/shorts` (needs the extension). |
 | 🎞️ **Short videos** | A built-in category that blocks YouTube Shorts, Instagram and Facebook Reels, Snapchat Spotlight and TikTok while the rest of YouTube, Instagram and Facebook keeps working. With the extension, Shorts/Reels shelves and buttons disappear from feeds too. |
-| 📺 **YouTube channels** | Per block list: only allow videos from channels you pick (paste a link or @handle), and/or from the channels you're subscribed to (read in your signed-in browser, no Google account needed in OpenBlocker). Everything else shows the block page; search and the home page keep working. |
+| 📺 **YouTube channels** | Per block list: only allow videos from channels you pick (paste a link or @handle), and/or from the channels you're subscribed to (read in your signed-in browser, no Google account needed in OpenBlocker). Everything else shows the block page, also in videos embedded on other websites; search and the home page keep working. |
 | ⚡ **Quick block** | Block a list right now for 25 min, 1 h, the rest of the day, or any custom duration. |
 | 📅 **Weekly schedule** | A real calendar: drag to create a block, click to edit, overnight blocks (22:00 → 07:00), templates (work hours, bedtime, weekend detox), hours-per-week summary. |
 | ⏳ **Daily limits** | "At most 30 minutes of YouTube a day": time counts while one of a list's apps or websites is in front and you're active; once it's used up, the list is blocked until midnight. Optionally locked. |
@@ -20,6 +20,7 @@ Block websites and apps on a schedule, run Pomodoro focus sessions, or freeze yo
 | ❄️ **Freeze PC** | Full-screen lock on every monitor for a set time, with your own message. Task Manager is blocked while frozen. |
 | 🧩 **Browser extension** | Optional, works alongside the hosts file. Blocks instantly, including tabs that are already open, shows a friendly block page, and sends you back to the site when the block ends. OpenBlocker suggests it when a website block starts without it (can be turned off). Chrome, Edge, Brave, Opera, Vivaldi, Firefox. |
 | ✅ **Allowlists** | Switch any list to "allow only these websites": in browsers everything else is blocked (needs the extension; browsers without it are closed while the allowlist runs). Or "allow only these apps": any other program you bring to the front is closed; Windows itself and OpenBlocker always keep working. |
+| 🎚️ **Presets & super strict mode** | Pick Relaxed, Balanced, Strict or Super strict in Settings instead of setting every option by hand. Super strict: during any block, every browser needs the extension (also in private windows) or it's closed after 15 seconds. |
 | 🔒 **Strictness levels** | *Flexible* (stop any time) · *Type to unlock* (type a long random text or reflection sentences, paste disabled) · *Password* (an account-wide password, ideally kept by someone you trust; locked schedules, limits and focus sessions can also allow it to end them early) · *Locked* (cannot be stopped). Locked lists can only grow, never shrink. Locked schedules can't be edited while running. Starting anything locked shows a warning you have to hold to confirm, with an extra alert for never-ending schedules. |
 | 💾 **Backup** | Export your lists, categories, schedules and settings to a file and import them on another PC. |
 | 📊 **Stats** | Focus time, pomodoros and blocked app launches per day, weekly chart and streaks. |
@@ -93,16 +94,16 @@ src-tauri/
 - [x] Extension: path-level blocking (`youtube.com/shorts`)
 - [x] The extension is optional: blocks that use features only it can enforce explain that when they start; without it you choose *strict* (the whole site is blocked through the hosts file) or *lenient* (it stays open)
 - [x] Browsers are only closed (after a minute's warning) if the extension was switched off in them during a block, if it isn't allowed in private windows (setting: Default with an opt-out, On, Off), or if you turn on "Close browsers without the extension"
-- [ ] **Super strict mode**: during any block, every open browser must have the extension running; any browser without it is closed after a short warning (normal mode keeps the extension optional)
+- [x] **Super strict mode**: during any block, every open browser must have the extension running (also in private windows); any browser without it is closed after a 15-second warning (normal mode keeps the extension optional)
 - [x] Only one app copy at a time (a second start hands over to the running one; the watchdog waits for the Windows autostart right after logon)
-- [ ] **Settings presets** (e.g. relaxed / balanced / strict) instead of setting every option by hand
+- [x] **Settings presets**: Relaxed / Balanced / Strict / Super strict, instead of setting every option by hand
 - [ ] Extension: publish to the Chrome Web Store and Firefox Add-ons (`python3 dev/package_extension.py` builds the zip; needs developer accounts)
 - [x] **Short videos**: built-in "Short videos" category plus hiding Shorts/Reels in feeds
 - [x] **YouTube channel allowlist** per block list
 - [x] Channel allowlist also hides thumbnails and recommendations of other channels, so YouTube only shows allowed channels
 - [x] **Subscribed channels**: allow the channels you're subscribed to. The extension reads your "All subscriptions" page (`youtube.com/feed/channels`) in your signed-in browser every 30 minutes; no Google API key or sign-in in OpenBlocker needed. While a locked block runs, new subscriptions don't count
 - [x] Extension updates itself when the app ships a newer version (store installs ask the store); the app shows when it's outdated
-- [ ] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`): the extension needs to check the channel inside those frames too; today only youtube.com itself is checked
+- [x] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`, embedded playlists)
 - [x] Exceptions per block list (sites, parts of sites, apps)
 - [x] Password lock (account-wide unlock password)
 - [x] Password option for schedules, focus sessions and limits
@@ -125,14 +126,14 @@ src-tauri/
 - [ ] **User accounts**: sign in to sync lists, categories, schedules and settings between devices (optional; everything keeps working offline and without an account)
 - [ ] **Android and iOS apps** synced with the desktop (needs user accounts), so you can, for example, lock your phone from your PC. Far in the future: phones only allow this through their parental-control/Screen Time APIs
 
-Contributions are very welcome. Open an issue to discuss bigger changes.
+Contributions are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [CLA](CLA.md). Open an issue to discuss bigger changes.
 
 ## Known limitations
 
 - Without the extension, hosts-file blocking only affects new connections: already-open tabs can keep working for a while. Install the extension for instant, reliable blocking.
 - Parts of websites (`youtube.com/shorts`), exceptions for parts of a site and the YouTube channel allowlist only work in browsers with the extension. A site with a path exception (`reddit.com/r/rust`) is then blocked by the extension only, not the hosts file.
 - Reels that play inside Instagram's normal feed have ordinary post addresses, so they can't be told apart from other posts. Hiding Shorts/Reels in feeds depends on those sites' page structure and can break when they change it.
-- The channel allowlist doesn't check YouTube videos embedded on other websites yet (see the roadmap). The YouTube apps on phones and TVs aren't covered at all.
+- Embedded YouTube videos are checked in browsers with the extension; while a restriction runs, an embedded player stays hidden until its channel is known. The YouTube apps on phones and TVs aren't covered at all.
 - Subscribed channels are only known in browsers where you're signed in to YouTube (on www.youtube.com; the mobile site isn't read), and reading them depends on YouTube's page format, which changes now and then. If they can't be read, only the channels you picked play and the block page says why.
 - Without the extension, website allowlists can't be enforced at all, and parts of sites and YouTube channels are either blocked as whole sites (strict) or not at all (lenient). A browser that gets closed (see the roadmap entry above) gets a one-minute warning first; only its main process is ended, so it offers to restore your tabs.
 - The extension is loaded unpacked (Developer mode) for now; Firefox only keeps it until restart until it's published on AMO. Private/incognito windows are only covered if you allow the extension there; Settings shows which browsers don't, and while the extension is required those browsers are closed.

@@ -10,9 +10,9 @@ use openblocker_core::model::{ExtensionFallback, PrivateWindows, State};
 use std::collections::BTreeSet;
 
 /// Private windows are checked: extension-only features are active and the
-/// setting isn't Off.
+/// setting isn't Off, or super strict mode is in force.
 pub fn private_windows_required(state: &State, active: &[ActiveBlock]) -> bool {
-    state.settings.private_windows != PrivateWindows::Off && engine::needs_extension(state, active)
+    engine::super_strict(state, active) || (state.settings.private_windows != PrivateWindows::Off && engine::needs_extension(state, active))
 }
 
 pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
@@ -38,12 +38,16 @@ pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
         hide_short_video_feeds: state.settings.hide_short_video_feeds,
         latest_version: bridge::extension_version(),
         private_windows_required: private_windows_required(state, active),
-        private_windows_opt_out: state.settings.private_windows == PrivateWindows::Default,
+        // Super strict mode has no opt-out.
+        private_windows_opt_out: state.settings.private_windows == PrivateWindows::Default && !engine::super_strict(state, active),
     }
 }
 
 /// A browser is closed this long after the warning.
 pub const BROWSER_WARNING_MS: i64 = 60_000;
+/// In super strict mode: just long enough to read the warning (and for a
+/// freshly started browser's extension to check in).
+pub const SUPER_STRICT_WARNING_MS: i64 = 15_000;
 
 /// Why a browser is about to be closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -67,6 +71,13 @@ pub struct BrowserNotice {
     /// true: it was closed now; false: it will be closed in a minute.
     pub closed: bool,
     pub reason: CloseReason,
+    /// How long the warning lasts before the browser is closed.
+    #[serde(default = "default_warning_ms")]
+    pub warning_ms: i64,
+}
+
+fn default_warning_ms() -> i64 {
+    BROWSER_WARNING_MS
 }
 
 #[derive(Default)]
@@ -124,7 +135,8 @@ impl Enforcer {
         // block the whole site (strict) or leave it open (lenient).
         let ext_features = engine::needs_extension(state, &blocks);
         let connected = bridge.connected(now_ms);
-        let strict = ext_features && connected.is_empty() && state.settings.extension_fallback == ExtensionFallback::Strict;
+        let super_strict = engine::super_strict(state, &blocks);
+        let strict = ext_features && connected.is_empty() && (state.settings.extension_fallback == ExtensionFallback::Strict || super_strict);
         if strict {
             sites.extend(engine::strict_fallback_domains(state, &blocks));
         } else {
@@ -167,7 +179,7 @@ impl Enforcer {
         // Closing browsers: never just because the extension isn't installed
         // (unless the user opted in), only when it was switched off during a
         // block, or can't see private windows while that's required.
-        let websites = !engine::enforced_targets(state, &blocks).0.is_empty() || ext_features;
+        let websites = !engine::enforced_targets(state, &blocks).0.is_empty() || ext_features || super_strict;
         if websites {
             self.had_extension.extend(connected.iter().map(|b| b.exe.to_lowercase()));
         } else {
@@ -183,7 +195,7 @@ impl Enforcer {
                 (private_required && bridge.private_windows_missing(exe, now_ms)).then_some(CloseReason::PrivateWindows)
             } else if self.had_extension.contains(exe) {
                 Some(CloseReason::Deactivated)
-            } else if state.settings.require_extension {
+            } else if state.settings.require_extension || super_strict {
                 Some(CloseReason::Missing)
             } else {
                 None
@@ -198,15 +210,16 @@ impl Enforcer {
             .filter_map(|(exe, name)| reason(&exe).map(|r| (exe, name, r)))
             .collect();
         self.warned.retain(|exe, _| found.iter().any(|(e, _, _)| e == exe));
+        let warning_ms = if super_strict { SUPER_STRICT_WARNING_MS } else { BROWSER_WARNING_MS };
         for (exe, name, reason) in found {
             match self.warned.get(&exe) {
                 None => {
                     self.warned.insert(exe, now_ms);
-                    out.browser_notices.push(BrowserNotice { browser: name, closed: false, reason });
+                    out.browser_notices.push(BrowserNotice { browser: name, closed: false, reason, warning_ms });
                 }
-                Some(at) if now_ms - at >= BROWSER_WARNING_MS => {
+                Some(at) if now_ms - at >= warning_ms => {
                     if self.killer.close_browser(&exe) {
-                        out.browser_notices.push(BrowserNotice { browser: name, closed: true, reason });
+                        out.browser_notices.push(BrowserNotice { browser: name, closed: true, reason, warning_ms });
                     }
                     self.warned.remove(&exe);
                     // Closed for good reason; if it comes back without the
