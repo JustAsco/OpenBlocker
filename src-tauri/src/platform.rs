@@ -462,6 +462,12 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 
 /// Executable name of the window the user is looking at.
 pub fn foreground_exe() -> Option<String> {
+    let (_, path) = foreground_process()?;
+    path.rsplit(['\\', '/']).next().map(str::to_string)
+}
+
+/// Process id and full executable path of the foreground window.
+fn foreground_process() -> Option<(u32, String)> {
     #[cfg(windows)]
     unsafe {
         use windows::core::PWSTR;
@@ -485,8 +491,39 @@ pub fn foreground_exe() -> Option<String> {
         if !ok {
             return None;
         }
-        let path = String::from_utf16_lossy(&buf[..len as usize]);
-        path.rsplit('\\').next().map(str::to_string)
+        Some((pid, String::from_utf16_lossy(&buf[..len as usize])))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// App allowlist: closes the program in front unless `allowed(exe)` says it
+/// may be used. Only the foreground program is ever touched, so background
+/// helpers (drivers' tray tools, accessibility tools, sync clients) keep
+/// running. Programs from the Windows folder and everything [`may_close`]
+/// protects are always left alone. Returns the closed program's name.
+pub fn close_foreground_unless(allowed: impl Fn(&str) -> bool) -> Option<String> {
+    let (pid, path) = foreground_process()?;
+    let exe = path.rsplit(['\\', '/']).next()?.to_string();
+    let windows_dir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_lowercase();
+    let lower = path.to_lowercase();
+    if lower.starts_with(&format!("{windows_dir}\\")) || allowed(&exe) {
+        return None;
+    }
+    let own_exe = std::env::current_exe().ok();
+    if !may_close(pid, &exe, Some(std::path::Path::new(&path)), own_exe.as_deref()) {
+        return None;
+    }
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+        let handle = OpenProcess(PROCESS_TERMINATE, false, pid).ok()?;
+        let ok = TerminateProcess(handle, 1).is_ok();
+        let _ = CloseHandle(handle);
+        ok.then(|| pretty_name(&exe))
     }
     #[cfg(not(windows))]
     {
@@ -633,4 +670,62 @@ pub fn launch_ui_in_console_session(args: &str) -> Result<(), String> {
         let _ = args;
         Err("not supported on this platform".into())
     }
+}
+
+// ───────────────────────────── freeze: system keys ─────────────────────────────
+
+#[cfg(windows)]
+static SWALLOW_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While frozen, swallow the keys that would leave the freeze screen: the
+/// Windows keys (Start menu, Win+D, Win+Tab…), Alt+Tab, Alt+Esc, Ctrl+Esc and
+/// Alt+F4. Ctrl+Alt+Del can't be blocked by any program, which is intended.
+/// The hook lives on its own thread and is installed on first use.
+pub fn swallow_system_keys(on: bool) {
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::Ordering;
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        SWALLOW_KEYS.store(on, Ordering::Relaxed);
+        if on {
+            STARTED.call_once(|| {
+                std::thread::spawn(|| unsafe {
+                    use windows::Win32::Foundation::HINSTANCE;
+                    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+                    use windows::Win32::UI::WindowsAndMessaging::{GetMessageW, SetWindowsHookExW, MSG, WH_KEYBOARD_LL};
+                    let module = GetModuleHandleW(None).ok().map(|m| HINSTANCE(m.0));
+                    if SetWindowsHookExW(WH_KEYBOARD_LL, Some(key_hook), module, 0).is_err() {
+                        return;
+                    }
+                    // Low-level hooks are called through this thread's message loop.
+                    let mut msg = MSG::default();
+                    while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+                });
+            });
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = on;
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn key_hook(code: i32, wparam: windows::Win32::Foundation::WPARAM, lparam: windows::Win32::Foundation::LPARAM) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_APPS, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_TAB};
+    use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN};
+    if code == HC_ACTION as i32 && SWALLOW_KEYS.load(std::sync::atomic::Ordering::Relaxed) {
+        let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        let vk = kb.vkCode as u16;
+        let alt = kb.flags.0 & LLKHF_ALTDOWN.0 != 0;
+        let ctrl = GetAsyncKeyState(VK_CONTROL.0 as i32) < 0;
+        let swallow = vk == VK_LWIN.0
+            || vk == VK_RWIN.0
+            || vk == VK_APPS.0
+            || (alt && (vk == VK_TAB.0 || vk == VK_ESCAPE.0 || vk == VK_F4.0))
+            || (ctrl && vk == VK_ESCAPE.0);
+        if swallow {
+            return LRESULT(1);
+        }
+    }
+    CallNextHookEx(None, code, wparam, lparam)
 }

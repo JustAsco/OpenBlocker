@@ -15,8 +15,10 @@ export interface BlockList {
   apps: AppEntry[];
   /** Included category ids. */
   categories: string[];
-  /** "block" the sites, or "allow" only them in browsers (apps are always blocked). */
+  /** "block" the sites, or "allow" only them in browsers. */
   mode: ListMode;
+  /** "block" the apps, or "allow" only them (any other program in front is closed). */
+  appMode?: ListMode;
   /** If not empty: while active, YouTube videos only play from these channels ("@handle", "UC…" id). */
   youtubeChannels?: string[];
   /** Websites left out although a category includes them; a path stays reachable inside a blocked site. */
@@ -54,6 +56,8 @@ export interface UsageLimit {
   /** 0 = Monday … 6 = Sunday */
   days: number[];
   locked: boolean;
+  /** When locked: the unlock password can still end the block early. */
+  password: boolean;
 }
 
 export interface Schedule {
@@ -65,6 +69,8 @@ export interface Schedule {
   start: number;
   end: number;
   locked: boolean;
+  /** When locked: the unlock password can still end it early. */
+  password: boolean;
   label?: string | null;
 }
 
@@ -87,6 +93,8 @@ export interface PomodoroConfig {
   rounds: number;
   listId: string | null;
   locked: boolean;
+  /** When locked: the unlock password can still stop it early. */
+  password: boolean;
   totalRounds: number | null;
 }
 
@@ -119,6 +127,8 @@ export interface Settings {
   hideShortVideoFeeds: boolean;
   /** "Type to unlock": random characters or reflection sentences. */
   unlockTextStyle: "random" | "reflection";
+  /** UI language ("en", "de"); "" = follow the system. */
+  language: string;
 }
 
 export interface DayStats {
@@ -138,6 +148,8 @@ export interface State {
   settings: Settings;
   stats: Record<string, DayStats>;
   limits: UsageLimit[];
+  /** Schedules and limits ended early, until their planned end. */
+  skips: { refId: string; until: number }[];
 }
 
 export type Source = "session" | "schedule" | "pomodoro" | "limit";
@@ -148,6 +160,8 @@ export interface ActiveBlock {
   refId: string;
   endsAt: number;
   locked: boolean;
+  /** Locked, but the unlock password can end it early. */
+  password: boolean;
 }
 
 export interface Status {
@@ -169,6 +183,8 @@ export interface Status {
   usageToday: Record<string, number>;
   /** An unlock password is set. */
   passwordSet: boolean;
+  /** Version of the extension shipped with the app. */
+  extensionLatest?: string;
 }
 
 export interface BrowserSeen {

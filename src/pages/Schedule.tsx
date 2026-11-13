@@ -1,12 +1,14 @@
 import clsx from "clsx";
 import { Lock, Moon, Plus, Sparkles, Sun, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LockWarning } from "../components/LockWarning";
+import { LockWarning, lockedWord } from "../components/LockWarning";
+import { PasswordEscape } from "../components/PasswordEscape";
 import { Modal, PageHeader, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Schedule, State } from "../lib/types";
 import { DAYS, DAYS_LONG, fmtClock, minuteOfDay, parseClock, weekday } from "../lib/util";
+import { t, tx } from "../lib/i18n";
 
 const HOUR_PX = 44;
 const SNAP = 15;
@@ -68,15 +70,16 @@ const blank = (state: State, partial: Partial<Schedule> = {}): Schedule => ({
   start: 9 * 60,
   end: 17 * 60,
   locked: false,
+  password: false,
   label: "",
   ...partial,
 });
 
 const TEMPLATES: { icon: typeof Sun; name: string; desc: string; s: Partial<Schedule> }[] = [
-  { icon: Sun, name: "Work hours", desc: "Mon–Fri · 09:00–17:00", s: { label: "Work hours", days: [0, 1, 2, 3, 4], start: 540, end: 1020 } },
-  { icon: Moon, name: "Bedtime", desc: "Every day · 22:30–07:00", s: { label: "Bedtime", days: [0, 1, 2, 3, 4, 5, 6], start: 1350, end: 420, locked: true } },
-  { icon: Sparkles, name: "Mindful mornings", desc: "Every day · 06:00–09:00", s: { label: "Morning routine", days: [0, 1, 2, 3, 4, 5, 6], start: 360, end: 540 } },
-  { icon: Sun, name: "Weekend detox", desc: "Sat & Sun · all day", s: { label: "Weekend detox", days: [5, 6], start: 0, end: 0 } },
+  { icon: Sun, name: t("Work hours"), desc: t("Mon–Fri · 09:00–17:00"), s: { label: t("Work hours"), days: [0, 1, 2, 3, 4], start: 540, end: 1020 } },
+  { icon: Moon, name: t("Bedtime"), desc: t("Every day · 22:30–07:00"), s: { label: t("Bedtime"), days: [0, 1, 2, 3, 4, 5, 6], start: 1350, end: 420, locked: true } },
+  { icon: Sparkles, name: t("Mindful mornings"), desc: t("Every day · 06:00–09:00"), s: { label: t("Morning routine"), days: [0, 1, 2, 3, 4, 5, 6], start: 360, end: 540 } },
+  { icon: Sun, name: t("Weekend detox"), desc: t("Sat & Sun · all day"), s: { label: t("Weekend detox"), days: [5, 6], start: 0, end: 0 } },
 ];
 
 export function SchedulePage() {
@@ -112,29 +115,29 @@ export function SchedulePage() {
   return (
     <>
       <PageHeader
-        title="Schedule"
-        subtitle="Drag on the calendar to block a time range. Click a block to edit it."
+        title={t("Schedule")}
+        subtitle={t("Drag on the calendar to block a time range. Click a block to edit it.")}
         actions={
           <button className="btn-primary" disabled={!state.lists.length} onClick={() => setEditing(blank(state))}>
-            <Plus size={16} /> New schedule
+            <Plus size={16} /> {t("New schedule")}
           </button>
         }
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {TEMPLATES.map((t) => (
+        {TEMPLATES.map((tpl) => (
           <button
-            key={t.name}
+            key={tpl.name}
             disabled={!state.lists.length}
-            onClick={() => setEditing(blank(state, t.s))}
+            onClick={() => setEditing(blank(state, tpl.s))}
             className="card flex items-center gap-3 p-3.5 text-left transition hover:border-line-strong hover:bg-elevated"
           >
             <span className="grid size-9 place-items-center rounded-xl bg-elevated">
-              <t.icon size={17} className="text-accent" />
+              <tpl.icon size={17} className="text-accent" />
             </span>
             <span>
-              <span className="block text-sm font-medium">{t.name}</span>
-              <span className="text-xs text-muted">{t.desc}</span>
+              <span className="block text-sm font-medium">{tpl.name}</span>
+              <span className="text-xs text-muted">{tpl.desc}</span>
             </span>
           </button>
         ))}
@@ -209,7 +212,7 @@ export function SchedulePage() {
                       </div>
                       {h > 34 && (
                         <div className="truncate text-[11px] opacity-70 tabular-nums">
-                          {fmtClock(seg.s.start)}–{seg.s.start === seg.s.end ? "all day" : fmtClock(seg.s.end)}
+                          {fmtClock(seg.s.start)}–{seg.s.start === seg.s.end ? t("all day") : fmtClock(seg.s.end)}
                         </div>
                       )}
                     </button>
@@ -243,7 +246,7 @@ export function SchedulePage() {
             <span key={l.id} className="chip py-1.5 text-sm">
               <span className="size-2.5 rounded-full" style={{ background: l.color }} />
               {l.icon} {l.name}
-              <span className="text-faint">{Math.round(weeklyHours.get(l.id) ?? 0)} h/week</span>
+              <span className="text-faint">{t("{n} h/week", { n: Math.round(weeklyHours.get(l.id) ?? 0) })}</span>
             </span>
           ))}
         </div>
@@ -255,7 +258,7 @@ export function SchedulePage() {
 }
 
 function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | null; onClose: () => void; state: State }) {
-  const { run } = useStore();
+  const { run, snap } = useStore();
   const [s, setS] = useState<Schedule | null>(schedule);
   const [confirming, setConfirming] = useState(false);
   useEffect(() => setS(schedule), [schedule]);
@@ -277,14 +280,15 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
   const summary = () => {
     const sorted = [...s.days].sort();
     const daysText =
-      sorted.length === 7 ? "every day" : sorted.join() === "0,1,2,3,4" ? "weekdays" : sorted.join() === "5,6" ? "weekends" : sorted.map((d) => DAYS[d]).join(", ");
-    const time = allDay ? "all day" : `${fmtClock(s.start)}–${fmtClock(s.end)}${overnight ? " (next day)" : ""}`;
-    return `Blocks ${list?.name ?? "…"} ${daysText}, ${time} · ${Math.round((len * s.days.length) / 60)} h/week`;
+      sorted.length === 7 ? t("every day") : sorted.join() === "0,1,2,3,4" ? t("weekdays") : sorted.join() === "5,6" ? t("weekends") : sorted.map((d) => DAYS[d]).join(", ");
+    const range = `${fmtClock(s.start)}–${fmtClock(s.end)}`;
+    const time = allDay ? t("all day") : overnight ? t("{range} (next day)", { range }) : range;
+    return t("Blocks {list} {days}, {time} · {hours} h/week", { list: list?.name ?? "…", days: daysText, time, hours: Math.round((len * s.days.length) / 60) });
   };
 
   return (
-    <Modal open onClose={onClose} title={s.id ? "Edit schedule" : "New schedule"} width={560}>
-      <span className="label">Block list</span>
+    <Modal open onClose={onClose} title={s.id ? t("Edit schedule") : t("New schedule")} width={560}>
+      <span className="label">{t("Block list")}</span>
       <div className="mb-5 flex flex-wrap gap-2">
         {state.lists.map((l) => (
           <button
@@ -298,15 +302,15 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
         ))}
       </div>
 
-      <span className="label">Label (optional)</span>
-      <input className="input mb-5" value={s.label ?? ""} onChange={(e) => setS({ ...s, label: e.target.value })} placeholder="e.g. Deep work" />
+      <span className="label">{t("Label (optional)")}</span>
+      <input className="input mb-5" value={s.label ?? ""} onChange={(e) => setS({ ...s, label: e.target.value })} placeholder={t("e.g. Deep work")} />
 
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="label mb-0">Days</span>
+        <span className="label mb-0">{t("Days")}</span>
         <div className="flex gap-3 text-xs text-muted">
-          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4])}>Weekdays</button>
-          <button className="hover:text-fg" onClick={() => setDays([5, 6])}>Weekend</button>
-          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4, 5, 6])}>Every day</button>
+          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4])}>{t("Weekdays")}</button>
+          <button className="hover:text-fg" onClick={() => setDays([5, 6])}>{t("Weekend")}</button>
+          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4, 5, 6])}>{t("Every day")}</button>
         </div>
       </div>
       <div className="mb-5 grid grid-cols-7 gap-1.5">
@@ -324,24 +328,25 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
 
       <div className="mb-2 grid grid-cols-2 gap-3">
         <div>
-          <span className="label">From</span>
+          <span className="label">{t("From")}</span>
           <input type="time" className="input" disabled={allDay} value={fmtClock(s.start)} onChange={(e) => setS({ ...s, start: parseClock(e.target.value) })} />
         </div>
         <div>
-          <span className="label">Until</span>
+          <span className="label">{t("Until")}</span>
           <input type="time" className="input" disabled={allDay} value={fmtClock(s.end)} onChange={(e) => setS({ ...s, end: parseClock(e.target.value) })} />
         </div>
       </div>
-      {overnight && <p className="mb-2 flex items-center gap-1.5 text-xs text-cyan-300"><Moon size={12} /> Runs overnight and ends the next morning.</p>}
+      {overnight && <p className="mb-2 flex items-center gap-1.5 text-xs text-cyan-300"><Moon size={12} /> {t("Runs overnight and ends the next morning.")}</p>}
 
       <div className="divide-y divide-line">
-        <Toggle label="All day" checked={allDay} onChange={(v) => setS(v ? { ...s, start: 0, end: 0 } : { ...s, start: 540, end: 1020 })} />
+        <Toggle label={t("All day")} checked={allDay} onChange={(v) => setS(v ? { ...s, start: 0, end: 0 } : { ...s, start: 540, end: 1020 })} />
         <Toggle
-          label="Lock while running"
-          hint="Once it starts, this schedule and its list can't be edited, removed or stopped until it ends."
+          label={t("Lock while running")}
+          hint={t("Once it starts, this schedule and its list can't be edited, removed or stopped until it ends.")}
           checked={s.locked}
           onChange={(locked) => setS({ ...s, locked })}
         />
+        {s.locked && <PasswordEscape what={t("this schedule")} checked={s.password} onChange={(password) => setS({ ...s, password })} />}
       </div>
 
       <p className="mt-4 rounded-xl bg-panel px-4 py-3 text-sm text-muted">{summary()}</p>
@@ -349,26 +354,29 @@ function ScheduleEditor({ schedule, onClose, state }: { schedule: Schedule | nul
       <div className="mt-6 flex items-center gap-2">
         {s.id && (
           <button className="btn-danger" onClick={() => run(() => api.deleteSchedule(s.id), "Schedule deleted.").then((ok) => ok && onClose())}>
-            <Trash2 size={15} /> Delete
+            <Trash2 size={15} /> {t("Delete")}
           </button>
         )}
         <div className="flex-1" />
         <button className="btn-ghost" onClick={onClose}>
-          Cancel
+          {t("Cancel")}
         </button>
         <button className="btn-primary" disabled={!s.days.length || !s.listId} onClick={() => (lockIsNew ? setConfirming(true) : save())}>
-          {s.locked && <Lock size={15} />} Save
+          {s.locked && <Lock size={15} />} {t("Save")}
         </button>
       </div>
       <LockWarning
         open={confirming}
-        what={`Every time this schedule runs, ${list?.name ?? "its list"}`}
-        until={<>until that run ends ({allDay ? "midnight" : fmtClock(s.end)})</>}
+        summary={tx("Every time this schedule runs, {list} is {locked} until that run ends ({end}).", {
+          list: list?.name ?? t("its list"),
+          locked: lockedWord(),
+          end: allDay ? t("midnight") : fmtClock(s.end),
+        })}
+        escape={s.password && snap!.status.passwordSet}
         severe={
           neverEnds ? (
             <>
-              <span className="font-medium">This schedule never ends.</span> It blocks around the clock, every day of the week, so once it starts you'll never be able
-              to edit or delete it again. Leave at least one gap, or turn the lock off.
+              <span className="font-medium">{t("This schedule never ends.")}</span> {t("It blocks around the clock, every day of the week, so once it starts you'll never be able to edit or delete it again. Leave at least one gap, or turn the lock off.")}
             </>
           ) : undefined
         }

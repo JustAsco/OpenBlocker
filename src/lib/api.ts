@@ -62,6 +62,8 @@ export const api = {
   extendSession: (id: string, minutes: number) => call<Snapshot>("extend_session", { id, minutes }),
   unlockChallenge: (id: string) => call<string>("unlock_challenge", { id }),
   stopSession: (id: string, answer?: string) => call<Snapshot>("stop_session", { id, answer }),
+  /** Ends a running schedule, used-up limit or the focus timer early. */
+  endBlock: (id: string, password?: string) => call<Snapshot>("end_block", { id, password }),
   pomodoroStart: (config: PomodoroConfig) => call<Snapshot>("pomodoro_start", { config }),
   pomodoroPause: () => call<Snapshot>("pomodoro_pause"),
   pomodoroResume: () => call<Snapshot>("pomodoro_resume"),

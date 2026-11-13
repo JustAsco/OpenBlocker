@@ -37,6 +37,7 @@ pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
         lists,
         youtube_channels: engine::youtube_channels(state, active).map(|c| c.into_iter().collect()),
         hide_short_video_feeds: state.settings.hide_short_video_feeds,
+        latest_version: bridge::extension_version(),
     }
 }
 

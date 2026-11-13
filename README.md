@@ -19,8 +19,8 @@ Block websites and apps on a schedule, run Pomodoro focus sessions, or freeze yo
 | 🍅 **Focus timer** | Pomodoro with presets (25/5, 50/10, 90/20…), automatically blocks a list during focus rounds, optional auto-stop after N rounds. |
 | ❄️ **Freeze PC** | Full-screen lock on every monitor for a set time, with your own message. Task Manager is blocked while frozen. |
 | 🧩 **Browser extension** | Optional, works alongside the hosts file. Blocks instantly, including tabs that are already open, shows a friendly block page, and sends you back to the site when the block ends. OpenBlocker suggests it when a website block starts without it (can be turned off). Chrome, Edge, Brave, Opera, Vivaldi, Firefox. |
-| ✅ **Allowlists** | Switch any list to "allow only these websites": in browsers everything else is blocked (needs the extension; browsers without it are closed while the allowlist runs). |
-| 🔒 **Strictness levels** | *Flexible* (stop any time) · *Type to unlock* (type a long random text or reflection sentences, paste disabled) · *Password* (an account-wide password, ideally kept by someone you trust) · *Locked* (cannot be stopped). Locked lists can only grow, never shrink. Locked schedules can't be edited while running. Starting anything locked shows a warning you have to hold to confirm, with an extra alert for never-ending schedules. |
+| ✅ **Allowlists** | Switch any list to "allow only these websites": in browsers everything else is blocked (needs the extension; browsers without it are closed while the allowlist runs). Or "allow only these apps": any other program you bring to the front is closed; Windows itself and OpenBlocker always keep working. |
+| 🔒 **Strictness levels** | *Flexible* (stop any time) · *Type to unlock* (type a long random text or reflection sentences, paste disabled) · *Password* (an account-wide password, ideally kept by someone you trust; locked schedules, limits and focus sessions can also allow it to end them early) · *Locked* (cannot be stopped). Locked lists can only grow, never shrink. Locked schedules can't be edited while running. Starting anything locked shows a warning you have to hold to confirm, with an extra alert for never-ending schedules. |
 | 💾 **Backup** | Export your lists, categories, schedules and settings to a file and import them on another PC. |
 | 📊 **Stats** | Focus time, pomodoros and blocked app launches per day, weekly chart and streaks. |
 | 🛡️ **Robust** | A background service keeps blocking while the app is closed or killed, restarts the app during locks, and can't be stopped while something is locked. Uninstalling or updating is refused during a lock, and settings that would loosen blocking are locked too. No administrator prompt for the app. |
@@ -95,24 +95,29 @@ src-tauri/
 - [ ] Extension: publish to the Chrome Web Store and Firefox Add-ons (`python3 dev/package_extension.py` builds the zip; needs developer accounts)
 - [x] **Short videos**: built-in "Short videos" category plus hiding Shorts/Reels in feeds
 - [x] **YouTube channel allowlist** per block list
+- [x] Channel allowlist also hides thumbnails and recommendations of other channels, so YouTube only shows allowed channels
+- [x] Extension updates itself when the app ships a newer version (store installs ask the store); the app shows when it's outdated
 - [ ] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`): the extension needs to check the channel inside those frames too; today only youtube.com itself is checked
 - [x] Exceptions per block list (sites, parts of sites, apps)
 - [x] Password lock (account-wide unlock password)
-- [ ] Password option for schedules, focus sessions and limits (today: quick blocks)
-- [x] Reflection texts for "Type to unlock"
+- [x] Password option for schedules, focus sessions and limits
+- [x] Reflection texts for "Type to unlock" (deliberately uncomfortable; English and German)
+- [x] Remember the last choices (quick block, focus timer, freeze, selected list and tab)
+- [x] Freeze screen shows the current time instead of a countdown; Windows key, Alt+Tab, Ctrl+Esc and Alt+F4 are blocked while frozen (Ctrl+Alt+Del can't be, by design)
 - [x] Security hardening and tests (see [SECURITY.md](SECURITY.md))
 - [x] **Background Windows service + watchdog**: blocks survive killing the app, no admin prompt for the UI
 - [x] Uninstall/settings protection during locked blocks
 - [x] Allowlist mode for websites
-- [ ] Allowlist mode for apps
+- [x] Allowlist mode for apps
 - [x] Usage limits ("max 30 min of YouTube per day")
 - [x] Importable community category lists (large adult/gambling/news domain lists)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
 - [x] Light theme (Settings → App → Theme; dark, light or follow Windows)
-- [ ] Translations (i18n)
+- [x] Translations: English and German (Settings → App → Language). To add a language, copy `src/locales/de.ts` and the table in `src-tauri/src/i18n.rs`
 - [x] Export/import settings
 - [x] Warning before starting a locked block, hidden emergency reset
 - [ ] **User accounts**: sign in to sync lists, categories, schedules and settings between devices (optional; everything keeps working offline and without an account)
+- [ ] **Android and iOS apps** synced with the desktop (needs user accounts), so you can, for example, lock your phone from your PC. Far in the future: phones only allow this through their parental-control/Screen Time APIs
 
 Contributions are very welcome. Open an issue to discuss bigger changes.
 
@@ -125,6 +130,7 @@ Contributions are very welcome. Open an issue to discuss bigger changes.
 - The extension is loaded unpacked (Developer mode) for now; Firefox only keeps it until restart until it's published on AMO. Private/incognito windows are only covered if you allow the extension there; Settings shows which browsers don't, and while the extension is required those browsers are closed.
 - An administrator who is determined enough can still get around it (e.g. disable the service and reboot). The service makes it much harder, not impossible.
 - Daily limits are counted by the app, so time only counts while it runs (it starts with Windows if you enable that, and the service restarts it during locks). Websites only count in browsers with the extension.
+- App allowlists close programs only when they come to the front, so things already running in the background (music, sync tools) keep running. Like daily limits this is done by the app, which the service restarts during locks. Store apps that run inside Windows' own frame (Calculator, Photos, …) aren't caught yet.
 - The service keeps one shared copy of the blocks, so OpenBlocker assumes one Windows user per PC for now.
 - Some antivirus tools warn about hosts-file changes. OpenBlocker only edits its own marked section.
 

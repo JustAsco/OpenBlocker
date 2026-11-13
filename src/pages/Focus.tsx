@@ -1,24 +1,27 @@
 import clsx from "clsx";
-import { Coffee, Lock, Pause, Play, SkipForward, Square, Target } from "lucide-react";
+import { Coffee, KeyRound, Lock, Pause, Play, SkipForward, Square, Target } from "lucide-react";
 import { useState } from "react";
-import { LockWarning } from "../components/LockWarning";
-import { PageHeader, Toggle } from "../components/ui";
+import { LockWarning, lockedWord } from "../components/LockWarning";
+import { PasswordEscape } from "../components/PasswordEscape";
+import { PasswordModal } from "../components/UnlockModal";
+import { PageHeader, Toggle, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { PomodoroConfig } from "../lib/types";
-import { fmtTimer } from "../lib/util";
+import { fmtMinutes, fmtTimer } from "../lib/util";
+import { t, tx } from "../lib/i18n";
 
 const PRESETS: { name: string; desc: string; cfg: Partial<PomodoroConfig> }[] = [
-  { name: "Classic", desc: "25 / 5 · long 15", cfg: { focusMin: 25, breakMin: 5, longBreakMin: 15, rounds: 4 } },
-  { name: "Deep work", desc: "50 / 10 · long 20", cfg: { focusMin: 50, breakMin: 10, longBreakMin: 20, rounds: 3 } },
-  { name: "Flow", desc: "90 / 20 · long 30", cfg: { focusMin: 90, breakMin: 20, longBreakMin: 30, rounds: 2 } },
-  { name: "Sprint", desc: "15 / 3 · long 10", cfg: { focusMin: 15, breakMin: 3, longBreakMin: 10, rounds: 4 } },
+  { name: t("Classic"), desc: t("25 / 5 · long 15"), cfg: { focusMin: 25, breakMin: 5, longBreakMin: 15, rounds: 4 } },
+  { name: t("Deep work"), desc: t("50 / 10 · long 20"), cfg: { focusMin: 50, breakMin: 10, longBreakMin: 20, rounds: 3 } },
+  { name: t("Flow"), desc: t("90 / 20 · long 30"), cfg: { focusMin: 90, breakMin: 20, longBreakMin: 30, rounds: 2 } },
+  { name: t("Sprint"), desc: t("15 / 3 · long 10"), cfg: { focusMin: 15, breakMin: 3, longBreakMin: 10, rounds: 4 } },
 ];
 
 const PHASE = {
-  focus: { label: "Focus", color: "#8b5cf6", icon: Target },
-  break: { label: "Short break", color: "#10b981", icon: Coffee },
-  longBreak: { label: "Long break", color: "#06b6d4", icon: Coffee },
+  focus: { label: t("Focus"), color: "#8b5cf6", icon: Target },
+  break: { label: t("Short break"), color: "#10b981", icon: Coffee },
+  longBreak: { label: t("Long break"), color: "#06b6d4", icon: Coffee },
 };
 
 export function FocusPage() {
@@ -26,7 +29,7 @@ export function FocusPage() {
   const p = snap!.state.pomodoro;
   return (
     <>
-      <PageHeader title="Focus timer" subtitle="Pomodoro sessions that automatically block your distractions while you focus." />
+      <PageHeader title={t("Focus timer")} subtitle={t("Pomodoro sessions that automatically block your distractions while you focus.")} />
       {p ? <Running /> : <Setup />}
     </>
   );
@@ -41,6 +44,7 @@ function Running() {
   const frac = Math.max(0, Math.min(1, 1 - left / total));
   const meta = PHASE[p.phase];
   const lockedNow = p.config.locked && p.phase === "focus";
+  const [asking, setAsking] = useState(false);
   const R = 130;
   const C = 2 * Math.PI * R;
   const roundInCycle = ((p.round - 1) % p.config.rounds) + 1;
@@ -50,8 +54,8 @@ function Running() {
       <div className="absolute top-1/2 left-1/2 size-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-25 blur-3xl" style={{ background: meta.color }} />
       <div className="relative flex flex-col items-center">
         <span className="chip mb-6 py-1.5 text-sm" style={{ color: meta.color, borderColor: `color-mix(in srgb, ${meta.color} 40%, transparent)` }}>
-          <meta.icon size={14} /> {meta.label} · round {p.round}
-          {p.config.totalRounds ? ` of ${p.config.totalRounds}` : ""}
+          <meta.icon size={14} /> {meta.label} ·{" "}
+          {p.config.totalRounds ? t("round {n} of {total}", { n: p.round, total: p.config.totalRounds }) : t("round {n}", { n: p.round })}
         </span>
         <div className="relative">
           <svg width={300} height={300} className="-rotate-90">
@@ -72,7 +76,7 @@ function Running() {
           <div className="absolute inset-0 grid place-items-center text-center">
             <div>
               <div className="font-display text-6xl font-semibold tracking-tight tabular-nums">{fmtTimer(left)}</div>
-              <div className="mt-1 text-sm text-muted">{p.pausedRemaining !== null ? "Paused" : p.phase === "focus" ? (list ? `Blocking ${list.icon} ${list.name}` : "No blocking") : "Relax — nothing is blocked"}</div>
+              <div className="mt-1 text-sm text-muted">{p.pausedRemaining !== null ? t("Paused") : p.phase === "focus" ? (list ? `Blocking ${list.icon} ${list.name}` : t("No blocking")) : t("Relax — nothing is blocked")}</div>
             </div>
           </div>
         </div>
@@ -84,24 +88,37 @@ function Running() {
         <div className="mt-8 flex gap-3">
           {p.pausedRemaining !== null ? (
             <button className="btn-primary px-6" onClick={() => run(api.pomodoroResume)}>
-              <Play size={16} /> Resume
+              <Play size={16} /> {t("Resume")}
             </button>
           ) : (
             <button className="btn-ghost px-6" disabled={lockedNow} onClick={() => run(api.pomodoroPause)}>
-              <Pause size={16} /> Pause
+              <Pause size={16} /> {t("Pause")}
             </button>
           )}
           <button className="btn-ghost" disabled={lockedNow} onClick={() => run(api.pomodoroSkip)}>
-            <SkipForward size={16} /> Skip
+            <SkipForward size={16} /> {t("Skip")}
           </button>
-          <button className="btn-ghost" disabled={lockedNow} onClick={() => run(api.pomodoroStop, "Focus session ended.")}>
-            <Square size={16} /> Stop
-          </button>
+          {lockedNow && p.config.password ? (
+            <button className="btn-ghost" onClick={() => setAsking(true)}>
+              <KeyRound size={16} /> {t("Stop")}
+            </button>
+          ) : (
+            <button className="btn-ghost" disabled={lockedNow} onClick={() => run(api.pomodoroStop, "Focus session ended.")}>
+              <Square size={16} /> {t("Stop")}
+            </button>
+          )}
         </div>
         {lockedNow && (
           <p className="mt-4 flex items-center gap-1.5 text-sm text-amber-300">
-            <Lock size={14} /> Locked until this focus round ends.
+            <Lock size={14} />  {p.config.password ? t("Locked until this focus round ends, unless the unlock password is entered.") : t("Locked until this focus round ends.")}
           </p>
+        )}
+        {asking && (
+          <PasswordModal
+            text={t("This focus session is locked. Only the unlock password can stop it early.")}
+            onClose={() => setAsking(false)}
+            onSubmit={(password) => run(() => api.endBlock("pomodoro", password), "Focus session ended.")}
+          />
         )}
       </div>
     </div>
@@ -123,15 +140,11 @@ function NumberField({ label, value, onChange, suffix = "min" }: { label: string
 function Setup() {
   const { snap, run } = useStore();
   const lists = snap!.state.lists;
-  const [cfg, setCfg] = useState<PomodoroConfig>({
-    focusMin: 25,
-    breakMin: 5,
-    longBreakMin: 15,
-    rounds: 4,
-    listId: lists[0]?.id ?? null,
-    locked: false,
-    totalRounds: 4,
-  });
+  const [saved, setCfg] = usePref<Partial<PomodoroConfig>>("focus-config", {});
+  const defaults: PomodoroConfig = { focusMin: 25, breakMin: 5, longBreakMin: 15, rounds: 4, listId: lists[0]?.id ?? null, locked: false, password: false, totalRounds: 4 };
+  const merged = { ...defaults, ...saved };
+  // A remembered list that was deleted since: fall back to the first one.
+  const cfg: PomodoroConfig = { ...merged, listId: merged.listId === null || lists.some((l) => l.id === merged.listId) ? merged.listId : defaults.listId };
   const set = (p: Partial<PomodoroConfig>) => setCfg({ ...cfg, ...p });
   const [confirming, setConfirming] = useState(false);
   const start = () => run(() => api.pomodoroStart(cfg), "Focus mode on. Let's go! 🎯");
@@ -142,7 +155,7 @@ function Setup() {
   return (
     <div className="grid gap-5 lg:grid-cols-5">
       <div className="card p-6 lg:col-span-3">
-        <span className="label">Preset</span>
+        <span className="label">{t("Preset")}</span>
         <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {PRESETS.map((pr) => {
             const on = pr.cfg.focusMin === cfg.focusMin && pr.cfg.breakMin === cfg.breakMin;
@@ -155,16 +168,16 @@ function Setup() {
           })}
         </div>
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <NumberField label="Focus" value={cfg.focusMin} onChange={(focusMin) => set({ focusMin })} />
-          <NumberField label="Break" value={cfg.breakMin} onChange={(breakMin) => set({ breakMin })} />
-          <NumberField label="Long break" value={cfg.longBreakMin} onChange={(longBreakMin) => set({ longBreakMin })} />
-          <NumberField label="Cycle length" value={cfg.rounds} onChange={(rounds) => set({ rounds })} suffix="rounds" />
+          <NumberField label={t("Focus")} value={cfg.focusMin} onChange={(focusMin) => set({ focusMin })} />
+          <NumberField label={t("Break")} value={cfg.breakMin} onChange={(breakMin) => set({ breakMin })} />
+          <NumberField label={t("Long break")} value={cfg.longBreakMin} onChange={(longBreakMin) => set({ longBreakMin })} />
+          <NumberField label={t("Cycle length")} value={cfg.rounds} onChange={(rounds) => set({ rounds })} suffix={t("rounds")} />
         </div>
 
-        <span className="label">Block during focus</span>
+        <span className="label">{t("Block during focus")}</span>
         <div className="mb-6 flex flex-wrap gap-2">
           <button onClick={() => set({ listId: null })} className={clsx("rounded-xl border px-3 py-2 text-sm", cfg.listId === null ? "border-accent bg-accent/10" : "border-line bg-panel text-muted")}>
-            Nothing
+            {t("Nothing")}
           </button>
           {lists.map((l) => (
             <button
@@ -180,8 +193,8 @@ function Setup() {
 
         <div className="divide-y divide-line border-t border-line">
           <Toggle
-            label="Stop after a number of rounds"
-            hint={cfg.totalRounds ? `Ends after ${cfg.totalRounds} focus rounds (≈ ${Math.floor(totalMin! / 60)}h ${totalMin! % 60}m)` : "Runs until you stop it"}
+            label={t("Stop after a number of rounds")}
+            hint={cfg.totalRounds ? t("Ends after {n} focus rounds (≈ {duration})", { n: cfg.totalRounds, duration: fmtMinutes(totalMin!) }) : t("Runs until you stop it")}
             checked={cfg.totalRounds !== null}
             onChange={(v) => set({ totalRounds: v ? 4 : null })}
           />
@@ -190,22 +203,27 @@ function Setup() {
               <input type="range" min={1} max={12} value={cfg.totalRounds} onChange={(e) => set({ totalRounds: Number(e.target.value) })} className="w-full accent-violet-500" />
             </div>
           )}
-          <Toggle label="Lock focus rounds" hint="You can't pause, skip or stop while a focus round is running." checked={cfg.locked} onChange={(locked) => set({ locked })} />
+          <Toggle label={t("Lock focus rounds")} hint={t("You can't pause, skip or stop while a focus round is running.")} checked={cfg.locked} onChange={(locked) => set({ locked })} />
+          {cfg.locked && <PasswordEscape what={t("a focus round")} checked={!!cfg.password} onChange={(password) => set({ password })} />}
         </div>
       </div>
 
       <div className="card flex flex-col items-center justify-center p-8 text-center lg:col-span-2">
         <div className="font-display text-7xl font-semibold tracking-tight tabular-nums">{String(cfg.focusMin).padStart(2, "0")}:00</div>
         <p className="mt-2 text-sm text-muted">
-          {cfg.totalRounds ?? "∞"} × {cfg.focusMin} min focus
+          {t("{rounds} × {min} min focus", { rounds: cfg.totalRounds ?? "∞", min: cfg.focusMin })}
         </p>
         <button className="btn-primary mt-8 w-full py-3 text-base" onClick={() => (cfg.locked ? setConfirming(true) : start())}>
-          {cfg.locked ? <Lock size={18} /> : <Play size={18} />} Start focusing
+          {cfg.locked ? <Lock size={18} /> : <Play size={18} />} {t("Start focusing")}
         </button>
         <LockWarning
           open={confirming}
-          what={cfg.listId ? `Every focus round (${cfg.focusMin} min)` : `Every focus round (${cfg.focusMin} min) of this timer`}
-          until={<>until the round ends{cfg.totalRounds ? `, for all ${cfg.totalRounds} rounds` : ", and the timer runs until you stop it during a break"}</>}
+          summary={
+            cfg.totalRounds
+              ? tx("Every focus round ({min} min) is {locked} until it ends, for all {rounds} rounds.", { min: cfg.focusMin, rounds: cfg.totalRounds, locked: lockedWord() })
+              : tx("Every focus round ({min} min) is {locked} until it ends. The timer runs until you stop it during a break.", { min: cfg.focusMin, locked: lockedWord() })
+          }
+          escape={!!cfg.password && !!snap?.status.passwordSet}
           onClose={() => setConfirming(false)}
           onConfirm={() => {
             setConfirming(false);

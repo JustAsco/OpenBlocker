@@ -6,6 +6,7 @@
 mod bridge;
 mod enforce;
 mod http;
+mod i18n;
 mod password;
 mod platform;
 pub mod service;
@@ -93,6 +94,9 @@ struct Status {
     usage_today: BTreeMap<String, u64>,
     /// An unlock password is set (the hash itself never goes to the UI).
     password_set: bool,
+    /// Version of the extension shipped with this app; browsers reporting an
+    /// older one are shown as outdated.
+    extension_latest: &'static str,
 }
 
 #[derive(Clone, Serialize)]
@@ -221,6 +225,7 @@ impl Inner {
                 },
                 usage_today: self.state.usage.get(&today_key()).cloned().unwrap_or_default(),
                 password_set: self.state.password.is_some(),
+                extension_latest: bridge::extension_version(),
                 active,
             },
         }
@@ -324,7 +329,8 @@ fn save_list(shared: tauri::State<'_, Shared>, mut list: BlockList) -> Res<Snaps
             .retain(|c| i.state.categories.iter().any(|x| &x.id == c) && seen_cats.insert(c.clone()));
         if let Some(old) = i.state.lists.iter().find(|l| l.id == list.id).cloned() {
             if let Some(until) = i.list_locked_until(&list.id) {
-                if !engine::is_strict_superset(&old, &list) {
+                // Allowlists get stricter by shrinking; the general lock check covers them.
+                if old.mode == ListMode::Block && old.app_mode == ListMode::Block && !engine::is_strict_superset(&old, &list) {
                     return Err(format!(
                         "“{}” is locked until {}. You can add items, but not remove them.",
                         old.name,
@@ -567,6 +573,40 @@ fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<Str
     })
 }
 
+/// Ends a running schedule, used-up limit or the focus timer early. Locked
+/// ones only with the unlock password, and only if they allow it.
+#[tauri::command]
+fn end_block(shared: tauri::State<'_, Shared>, id: String, password: Option<String>) -> Res<Snapshot> {
+    with_unguarded(&shared, |i| {
+        let Some(block) = i.blocks().into_iter().find(|b| b.ref_id == id) else {
+            // A focus timer without a block list: nothing is blocked, so only
+            // the app is involved.
+            let p = i.state.pomodoro.as_ref().filter(|_| id == "pomodoro").ok_or("This block isn't running.")?;
+            if p.config.locked && p.phase == PomodoroPhase::Focus {
+                if !p.config.password {
+                    return Err("This focus session is locked. You can do it!".into());
+                }
+                let hash = i.state.password.clone();
+                i.throttle.check(password.as_deref(), hash.as_deref(), now_ms())?;
+            }
+            i.state.pomodoro = None;
+            return Ok(i.commit());
+        };
+        if block.locked && !block.password {
+            return Err(format!("Locked until {}. Stay strong 💪", fmt_until(block.ends_at)));
+        }
+        if block.locked && i.svc.is_some() {
+            // The service checks the password and ends the block on its side too.
+            i.svc_gen = Some(service::client::unlock(&id, password)?);
+        } else if block.locked {
+            let hash = i.state.password.clone();
+            i.throttle.check(password.as_deref(), hash.as_deref(), now_ms())?;
+        }
+        engine::end_block(&mut i.state, &id, now_ms(), &local_now())?;
+        Ok(i.commit())
+    })
+}
+
 #[tauri::command]
 fn pomodoro_start(shared: tauri::State<'_, Shared>, config: PomodoroConfig) -> Res<Snapshot> {
     with(&shared, |i| {
@@ -657,8 +697,12 @@ fn start_freeze(shared: tauri::State<'_, Shared>, minutes: u32, message: String)
 }
 
 #[tauri::command]
-fn save_settings(shared: tauri::State<'_, Shared>, settings: Settings) -> Res<Snapshot> {
+fn save_settings(shared: tauri::State<'_, Shared>, mut settings: Settings) -> Res<Snapshot> {
     with(&shared, |i| {
+        // A language code like "de" or "pt-BR"; anything else means "like Windows".
+        if settings.language.len() > 8 || !settings.language.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            settings.language.clear();
+        }
         i.state.settings = settings;
         Ok(i.commit())
     })
@@ -835,7 +879,7 @@ fn remove_category_source(shared: tauri::State<'_, Shared>, id: String) -> Res<S
 #[tauri::command]
 fn set_password(shared: tauri::State<'_, Shared>, current: Option<String>, new: Option<String>) -> Res<Snapshot> {
     with_unguarded(&shared, |i| {
-        if new.is_none() && i.state.sessions.iter().any(|s| s.lock == LockMode::Password && s.ends_at > now_ms()) {
+        if new.is_none() && i.blocks().iter().any(|b| b.password) {
             return Err("A password-locked block is running. You can remove the password once it ends.".into());
         }
         if i.svc.is_some() {
@@ -942,21 +986,24 @@ fn notify(app: &AppHandle, enabled: bool, title: &str, body: &str) {
 }
 
 fn describe(event: &Event, state: &State) -> Option<(String, String)> {
+    let lang = i18n::language(&state.settings.language);
+    let tr = |en: &str, args: &[(&str, &str)]| i18n::tr(lang, en, args);
     let list_name = |id: &str| state.list(id).map(|l| l.name.clone()).unwrap_or_default();
     Some(match event {
-        Event::SessionEnded { list_id } => ("Block finished".into(), format!("“{}” is unblocked again.", list_name(list_id))),
+        Event::SessionEnded { list_id } => (tr("Block finished", &[]), tr("“{name}” is unblocked again.", &[("name", &list_name(list_id))])),
         Event::PomodoroPhase { phase, round } => match phase {
-            PomodoroPhase::Focus => ("Back to focus 🎯".into(), format!("Round {round} has started.")),
-            PomodoroPhase::Break => ("Short break ☕".into(), "Stand up, stretch, drink water.".into()),
-            PomodoroPhase::LongBreak => ("Long break 🌿".into(), "Great work! Take a proper rest.".into()),
+            PomodoroPhase::Focus => (tr("Back to focus 🎯", &[]), tr("Round {round} has started.", &[("round", &round.to_string())])),
+            PomodoroPhase::Break => (tr("Short break ☕", &[]), tr("Stand up, stretch, drink water.", &[])),
+            PomodoroPhase::LongBreak => (tr("Long break 🌿", &[]), tr("Great work! Take a proper rest.", &[])),
         },
-        Event::PomodoroFinished => ("Pomodoro complete 🎉".into(), "All rounds done. Nicely focused!".into()),
-        Event::FreezeEnded => ("Freeze ended".into(), "Your computer is unlocked.".into()),
+        Event::PomodoroFinished => (tr("Pomodoro complete 🎉", &[]), tr("All rounds done. Nicely focused!", &[])),
+        Event::FreezeEnded => (tr("Freeze ended", &[]), tr("Your computer is unlocked.", &[])),
         Event::PomodoroFocusCompleted => return None,
     })
 }
 
 fn sync_freeze_windows(app: &AppHandle, frozen: bool) {
+    platform::swallow_system_keys(frozen);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         let existing: Vec<_> = app2
@@ -1063,7 +1110,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             i.usage_carry_ms %= 1000;
             for id in engine::add_usage(&mut i.state, &local, secs, &activity) {
                 if let Some(name) = i.state.limits.iter().find(|l| l.id == id).and_then(|l| i.state.list(&l.list_id)).map(|l| l.name.clone()) {
-                    notes.push(("Daily limit reached ⏳".into(), format!("“{name}” is blocked until midnight.")));
+                    let lang = i18n::language(&i.state.settings.language);
+                    notes.push((i18n::tr(lang, "Daily limit reached ⏳", &[]), i18n::tr(lang, "“{name}” is blocked until midnight.", &[("name", &name)])));
                 }
                 i.publish_now = true;
                 dirty = true;
@@ -1075,7 +1123,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
                 let key = format!("{day}/{}", l.id);
                 if engine::limit_applies(&l, &local) && allowed > 600 && used + 300 >= allowed && used < allowed && i.limit_warned.insert(key) {
                     if let Some(list) = i.state.list(&l.list_id) {
-                        notes.push(("5 minutes left ⏳".into(), format!("Your daily time for “{}” is almost up.", list.name)));
+                        let lang = i18n::language(&i.state.settings.language);
+                        notes.push((i18n::tr(lang, "5 minutes left ⏳", &[]), i18n::tr(lang, "Your daily time for “{name}” is almost up.", &[("name", &list.name)])));
                     }
                 }
             }
@@ -1151,14 +1200,44 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             closed = out.closed_browsers;
         }
 
+        // 4. App allowlist: the service can't see the user's windows, so the
+        //    app closes programs that aren't allowed when they come to the front.
+        let allowed = {
+            let i = shared.lock().unwrap();
+            engine::allowed_apps(&i.state, &i.blocks())
+        };
+        if let Some(allowed) = allowed {
+            if let Some(name) = platform::close_foreground_unless(|exe| engine::app_allowed(&allowed, exe)) {
+                killed.push(name);
+            }
+        }
+
         if !killed.is_empty() {
             shared.lock().unwrap().day().blocked_launches += killed.len() as u32;
             let _ = app.emit("app-blocked", &killed);
-            notes.push(("Blocked 🚫".into(), format!("{} was closed.", killed.join(", "))));
+            let lang = i18n::language(&settings.language);
+            notes.push((i18n::tr(lang, "Blocked 🚫", &[]), i18n::tr(lang, "{apps} was closed.", &[("apps", &killed.join(", "))])));
         }
         if !closed.is_empty() && now - last_browser_note > 60_000 {
             last_browser_note = now;
-            notes.push(("Browser closed 🧩".into(), format!("{} doesn't have the OpenBlocker extension running.", closed.join(", "))));
+            let lang = i18n::language(&settings.language);
+            // Running, but not allowed in private windows, is a different fix.
+            let (private, missing): (Vec<_>, Vec<_>) = closed
+                .iter()
+                .partition(|name| browsers.iter().any(|b| &&b.name == name && b.incognito == Some(false)));
+            let join = |v: &[&String]| v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            if !missing.is_empty() {
+                notes.push((
+                    i18n::tr(lang, "Browser closed 🧩", &[]),
+                    i18n::tr(lang, "{browsers} doesn't have the OpenBlocker extension running.", &[("browsers", &join(&missing))]),
+                ));
+            }
+            if !private.is_empty() {
+                notes.push((
+                    i18n::tr(lang, "Browser closed 🧩", &[]),
+                    i18n::tr(lang, "{browsers}: the OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[("browsers", &join(&private))]),
+                ));
+            }
         }
         for (title, body) in notes {
             notify(&app, settings.notifications, &title, &body);
@@ -1218,8 +1297,9 @@ pub fn run() {
             // The app serves the extension only while the service doesn't.
             std::thread::spawn(move || bridge::run(bridge, move || !svc_up.load(Ordering::Relaxed)));
 
-            let open = MenuItem::with_id(app, "open", "Open OpenBlocker", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let lang = i18n::language(&shared.lock().unwrap().state.settings.language);
+            let open = MenuItem::with_id(app, "open", i18n::tr(lang, "Open OpenBlocker", &[]), true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", i18n::tr(lang, "Quit", &[]), true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().cloned().expect("app icon"))
@@ -1285,6 +1365,7 @@ pub fn run() {
             extend_session,
             unlock_challenge,
             stop_session,
+            end_block,
             pomodoro_start,
             pomodoro_pause,
             pomodoro_resume,

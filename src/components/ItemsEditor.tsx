@@ -8,6 +8,7 @@ import type { AppEntry, InstalledApp } from "../lib/types";
 import { LIST_COLORS, LIST_EMOJIS, isPathSite, normalizeSite } from "../lib/util";
 import { Autocomplete, type SuggestionGroup } from "./Autocomplete";
 import { AppIcon, SiteIcon } from "./ui";
+import { t } from "../lib/i18n";
 
 /**
  * Local editable copy of a server object. The backend pushes a fresh snapshot
@@ -26,7 +27,7 @@ export function IconColorPicker({ icon, color, onIcon, onColor }: { icon: string
   return (
     <div className="grid gap-5 sm:grid-cols-2">
       <div>
-        <span className="label">Icon</span>
+        <span className="label">{t("Icon")}</span>
         <div className="flex flex-wrap gap-1">
           {LIST_EMOJIS.map((e) => (
             <button key={e} onClick={() => onIcon(e)} className={clsx("grid size-8 place-items-center rounded-lg text-base", icon === e ? "bg-elevated ring-1 ring-line-strong" : "hover:bg-elevated/60")}>
@@ -36,7 +37,7 @@ export function IconColorPicker({ icon, color, onIcon, onColor }: { icon: string
         </div>
       </div>
       <div>
-        <span className="label">Color</span>
+        <span className="label">{t("Color")}</span>
         <div className="flex flex-wrap gap-2">
           {LIST_COLORS.map((c) => (
             <button
@@ -116,7 +117,7 @@ export function EditorShell({
             className="grid size-12 shrink-0 place-items-center rounded-2xl text-2xl ring-line-strong transition hover:ring-2"
             style={{ background: `color-mix(in srgb, ${color} 22%, transparent)` }}
             onClick={() => setPicker(!picker)}
-            title="Change icon & color"
+            title={t("Change icon & color")}
           >
             {icon}
           </button>
@@ -131,27 +132,27 @@ export function EditorShell({
             className="font-display w-full rounded-lg bg-transparent px-1 py-0.5 text-xl font-semibold outline-none hover:bg-elevated/60 focus:bg-elevated"
             value={name}
             onChange={(e) => onName(e.target.value)}
-            aria-label="Name"
+            aria-label={t("Name")}
           />
           <p className="px-1 text-sm text-muted">{subtitle}</p>
         </div>
         {dirty ? (
           <>
             <button className="btn-ghost" onClick={onDiscard}>
-              <Undo2 size={16} /> Discard
+              <Undo2 size={16} /> {t("Discard")}
             </button>
-            <button className="btn-primary" onClick={onSave} title="Ctrl+S">
-              <Save size={16} /> Save
+            <button className="btn-primary" onClick={onSave} title={t("Ctrl+S")}>
+              <Save size={16} /> {t("Save")}
             </button>
           </>
         ) : (
           <>
             {onReset && (
-              <button className="btn-ghost px-3" onClick={onReset} title="Restore the built-in contents">
+              <button className="btn-ghost px-3" onClick={onReset} title={t("Restore the built-in contents")}>
                 <RotateCcw size={16} />
               </button>
             )}
-            <button className="btn-ghost px-3 text-red-300" onClick={onDelete} disabled={deleteDisabled} title="Delete">
+            <button className="btn-ghost px-3 text-red-300" onClick={onDelete} disabled={deleteDisabled} title={t("Delete")}>
               <Trash2 size={16} />
             </button>
           </>
@@ -248,17 +249,17 @@ export function ItemsEditor({
         .map((x) => ({
           key: `typed-${x}`,
           icon: <SiteIcon domain={x} />,
-          title: isPathSite(x) ? `Only ${x}` : x,
-          subtitle: isPathSite(x) ? "Just this part of the website and everything below it · needs the browser extension" : "The whole website, including www. and m.",
+          title: isPathSite(x) ? t("Only {site}", { site: x }) : x,
+          subtitle: isPathSite(x) ? t("Just this part of the website and everything below it · needs the browser extension") : t("The whole website, including www. and m."),
           onPick: () => addSites([x]),
         }));
-      const typedGroup: SuggestionGroup | null = typedItems.length ? { label: "Add website", items: typedItems } : null;
+      const typedGroup: SuggestionGroup | null = typedItems.length ? { label: t("Add website"), items: typedItems } : null;
       // "chess.co" is probably the start of "chess.com": prefer the known site.
       const partial = !!typed && matches.some(({ s }) => s.domain !== typed && s.domain.startsWith(typed));
       if (typedGroup && !partial) groups.push(typedGroup);
       groups.push(...(extraSiteGroups?.(q) ?? []));
       groups.push({
-        label: q ? "Suggestions" : "Popular",
+        label: q ? t("Suggestions") : t("Popular"),
         items: matches.map(({ s }) => ({
           key: s.domain,
           icon: <SiteIcon domain={s.domain} />,
@@ -287,25 +288,25 @@ export function ItemsEditor({
       if (/\.exe$/i.test(exe) && !hasApp(exe)) {
         const base = exe.split(/[\\/]/).pop()!;
         groups.push({
-          label: "Add program",
-          items: [{ key: "typed", icon: <AppWindow size={18} className="text-muted" />, title: base, subtitle: "Closed whenever it starts", onPick: () => addApp({ name: base.replace(/\.exe$/i, ""), exe: base }) }],
+          label: t("Add program"),
+          items: [{ key: "typed", icon: <AppWindow size={18} className="text-muted" />, title: base, subtitle: t("Closed whenever it starts"), onPick: () => addApp({ name: base.replace(/\.exe$/i, ""), exe: base }) }],
         });
       }
       const inst = installed.filter((a) => !hasApp(a.exe));
       groups.push({
-        label: "On this computer",
+        label: t("On this computer"),
         items: rank(inst, (a) => [a.name, a.exe], q ? 8 : 6).map((a) => ({
           key: `i-${a.exe}`,
           icon: <AppIcon name={a.name} path={a.path} size={20} />,
           title: a.name,
           subtitle: a.exe,
-          badge: a.running ? <span className="chip border-emerald-500/30 bg-emerald-500/10 py-0 text-[10px] text-emerald-300">running</span> : undefined,
+          badge: a.running ? <span className="chip border-emerald-500/30 bg-emerald-500/10 py-0 text-[10px] text-emerald-300">{t("running")}</span> : undefined,
           onPick: () => addApp({ name: a.name, exe: a.exe, path: a.path }),
         })),
       });
       const known = new Set(inst.map((a) => a.exe.toLowerCase()));
       groups.push({
-        label: q ? "Known apps" : "Popular distractions",
+        label: q ? t("Known apps") : t("Popular distractions"),
         items: rank(APPS.filter((a) => !hasApp(a.exe) && !known.has(a.exe.toLowerCase())), (a) => [a.name, a.exe], q ? 8 : 6).map((a) => ({
           key: `c-${a.exe}`,
           icon: <AppIcon name={a.name} size={20} />,
@@ -327,7 +328,7 @@ export function ItemsEditor({
           <span className="font-normal text-faint">{sites.length}</span>
         </h3>
         {siteHint}
-        <Autocomplete placeholder="Search or paste a URL — e.g. “youtube”, “reddit.com” or “youtube.com/shorts”" getGroups={siteGroups} />
+        <Autocomplete placeholder={t("Search or paste a URL — e.g. “youtube”, “reddit.com” or “youtube.com/shorts”")} getGroups={siteGroups} />
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleSites.map((d) => (
             <span key={d} className="chip py-1.5 pr-1.5 pl-2 text-sm">
@@ -335,8 +336,8 @@ export function ItemsEditor({
               <span>{d}</span>
               {siteName(d) && <span className="text-xs text-faint">{siteName(d)}</span>}
               {isPathSite(d) && (
-                <span className="text-xs text-faint" title="Only this part of the website. Blocked by the browser extension; without it the page stays reachable.">
-                  part · needs extension
+                <span className="text-xs text-faint" title={t("Only this part of the website. Blocked by the browser extension; without it the page stays reachable.")}>
+                  {t("part · needs extension")}
                 </span>
               )}
               {lockedSites.has(d) ? (
@@ -351,10 +352,10 @@ export function ItemsEditor({
           {sites.length > COLLAPSED && (
             <button className="chip py-1.5 text-sm text-muted hover:text-fg" onClick={() => setShowAll(!showAll)}>
               <ChevronDown size={14} className={clsx("transition", showAll && "rotate-180")} />
-              {showAll ? "Show less" : `Show all ${sites.length}`}
+              {showAll ? t("Show less") : t("Show all {n}", { n: sites.length })}
             </button>
           )}
-          {!sites.length && <p className="text-sm text-faint">None yet — start typing above.</p>}
+          {!sites.length && <p className="text-sm text-faint">{t("None yet — start typing above.")}</p>}
         </div>
       </section>
 
@@ -363,7 +364,7 @@ export function ItemsEditor({
           <Package size={16} className="text-accent" /> {appTitle}
           <span className="font-normal text-faint">{apps.length}</span>
         </h3>
-        <Autocomplete placeholder="Search installed apps or type a program name (e.g. steam.exe)" getGroups={appGroups} />
+        <Autocomplete placeholder={t("Search installed apps or type a program name (e.g. steam.exe)")} getGroups={appGroups} />
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {apps.map((a) => (
             <div key={a.exe} className="flex items-center gap-3 rounded-xl border border-line bg-panel p-2.5">
@@ -381,7 +382,7 @@ export function ItemsEditor({
               )}
             </div>
           ))}
-          {!apps.length && <p className="text-sm text-faint">None yet.</p>}
+          {!apps.length && <p className="text-sm text-faint">{t("None yet.")}</p>}
         </div>
       </section>
     </>

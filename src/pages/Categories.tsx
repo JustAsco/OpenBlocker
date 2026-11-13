@@ -3,21 +3,27 @@ import { Download, Library, Lock, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import { EditorShell, ItemsEditor, useDraft } from "../components/ItemsEditor";
-import { Modal, PageHeader } from "../components/ui";
+import { Modal, PageHeader, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { factoryCategory } from "../lib/catalog";
 import { useStore } from "../lib/store";
 import type { Category, State } from "../lib/types";
 import { LIST_COLORS, fmtTime, uid } from "../lib/util";
+import { t } from "../lib/i18n";
 
 export function CategoriesPage({ go }: { go: (p: Page) => void }) {
   const { snap, run } = useStore();
   const { state } = snap!;
-  const [selected, setSelected] = useState<string | null>(() => {
+  const [savedSelected, setSelected] = usePref<string | null>("categories-selected", null);
+  // "Edit" on a category elsewhere jumps here with that category.
+  useEffect(() => {
     const wanted = localStorage.getItem("ob-category");
-    localStorage.removeItem("ob-category");
-    return wanted ?? state.categories[0]?.id ?? null;
-  });
+    if (wanted) {
+      localStorage.removeItem("ob-category");
+      setSelected(wanted);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const selected = state.categories.some((c) => c.id === savedSelected) ? savedSelected : (state.categories[0]?.id ?? null);
   const category = state.categories.find((c) => c.id === selected) ?? null;
 
   useEffect(() => {
@@ -25,26 +31,26 @@ export function CategoriesPage({ go }: { go: (p: Page) => void }) {
   }, [category, state.categories]);
 
   const create = async () => {
-    const c: Category = { id: uid(), name: "New category", icon: "🌐", color: LIST_COLORS[state.categories.length % LIST_COLORS.length], sites: [], apps: [] };
+    const c: Category = { id: uid(), name: t("New category"), icon: "🌐", color: LIST_COLORS[state.categories.length % LIST_COLORS.length], sites: [], apps: [] };
     if (await run(() => api.saveCategory(c))) setSelected(c.id);
   };
 
   return (
     <>
       <PageHeader
-        title="Categories"
-        subtitle="Reusable groups of websites and apps. Edit a category once and every block list that includes it updates."
+        title={t("Categories")}
+        subtitle={t("Reusable groups of websites and apps. Edit a category once and every block list that includes it updates.")}
         actions={
           <button className="btn-primary" onClick={create}>
-            <Plus size={16} /> New category
+            <Plus size={16} /> {t("New category")}
           </button>
         }
       />
       <div className="grid items-start gap-5 lg:grid-cols-[280px_1fr]">
         <div className="card p-2">
           {[
-            { label: "Built-in", items: state.categories.filter((c) => factoryCategory(c.id)) },
-            { label: "Your categories", items: state.categories.filter((c) => !factoryCategory(c.id)) },
+            { label: t("Built-in"), items: state.categories.filter((c) => factoryCategory(c.id)) },
+            { label: t("Your categories"), items: state.categories.filter((c) => !factoryCategory(c.id)) },
           ]
             .filter((g) => g.items.length)
             .map((g) => (
@@ -64,8 +70,8 @@ export function CategoriesPage({ go }: { go: (p: Page) => void }) {
                       <span className="grid size-7 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in srgb, ${c.color} 22%, transparent)` }}>
                         {c.icon}
                       </span>
-                      <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
-                      {usedBy > 0 && <span className="size-1.5 shrink-0 rounded-full bg-accent" title={`Used by ${usedBy} block list(s)`} />}
+                      <span className="min-w-0 flex-1 truncate font-medium">{t(c.name)}</span>
+                      {usedBy > 0 && <span className="size-1.5 shrink-0 rounded-full bg-accent" title={t("Used by {n} block list(s)", { n: usedBy })} />}
                       <span className="w-10 shrink-0 text-right text-xs text-faint tabular-nums">{fmtCount(c.sites.length + c.apps.length + (c.source?.count ?? 0))}</span>
                     </button>
                   );
@@ -76,7 +82,7 @@ export function CategoriesPage({ go }: { go: (p: Page) => void }) {
         {category ? (
           <CategoryEditor key={category.id} category={category} state={state} go={go} />
         ) : (
-          <div className="card grid place-items-center p-12 text-sm text-muted">No categories yet.</div>
+          <div className="card grid place-items-center p-12 text-sm text-muted">{t("No categories yet.")}</div>
         )}
       </div>
     </>
@@ -106,10 +112,11 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
       name={draft.name}
       subtitle={
         <>
-          {draft.sites.length} websites{category.source && ` + ${category.source.count.toLocaleString()} from a community list`} · {draft.apps.length} apps ·{" "}
+          {t("{n} websites", { n: draft.sites.length })}
+          {category.source && t(" + {n} from a community list", { n: category.source.count.toLocaleString() })} · {t("{n} apps", { n: draft.apps.length })} ·{" "}
           {usedBy.length ? (
             <>
-              used in{" "}
+              {t("used in")}{" "}
               {usedBy.map((l, i) => (
                 <span key={l.id}>
                   {i > 0 && ", "}
@@ -120,9 +127,9 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
               ))}
             </>
           ) : (
-            "not used by any list yet"
+            t("not used by any list yet")
           )}
-          {factory && !isFactory && " · customised"}
+          {factory && !isFactory && t(" · customised")}
         </>
       }
       dirty={dirty}
@@ -139,7 +146,7 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
           {lockEnds && (
             <div className="mb-5 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
               <Lock size={16} className="shrink-0" />
-              Used by a locked block until {fmtTime(lockEnds)}. You can add more, but can't remove anything until then.
+              {t("Used by a locked block until {time}. You can add more, but can't remove anything until then.", { time: fmtTime(lockEnds) })}
             </div>
           )}
         </>
@@ -155,29 +162,33 @@ function CategoryEditor({ category, state, go }: { category: Category; state: St
         lockedApps={lockedApps}
       />
 
-      <Modal open={confirm === "delete"} onClose={() => setConfirm(null)} title={`Delete “${category.name}”?`}>
+      <Modal open={confirm === "delete"} onClose={() => setConfirm(null)} title={t("Delete “{name}”?", { name: category.name })}>
         <p className="text-sm text-muted">
           {usedBy.length
-            ? `It will be removed from ${usedBy.map((l) => `“${l.name}”`).join(", ")}, which will stop blocking its ${category.sites.length} sites and ${category.apps.length} apps.`
-            : "It isn't used by any block list."}
+            ? t("It will be removed from {lists}, which will stop blocking its {sites} sites and {apps} apps.", {
+                lists: usedBy.map((l) => `“${l.name}”`).join(", "),
+                sites: category.sites.length,
+                apps: category.apps.length,
+              })
+            : t("It isn't used by any block list.")}
         </p>
         <div className="mt-6 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setConfirm(null)}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button className="btn-danger" onClick={() => run(() => api.deleteCategory(category.id), "Category deleted.").then(() => setConfirm(null))}>
-            Delete
+            {t("Delete")}
           </button>
         </div>
       </Modal>
-      <Modal open={confirm === "reset"} onClose={() => setConfirm(null)} title="Restore built-in contents?">
-        <p className="text-sm text-muted">Your changes to “{category.name}” will be replaced with the original {factory?.sites.length} sites and {factory?.apps.length} apps.</p>
+      <Modal open={confirm === "reset"} onClose={() => setConfirm(null)} title={t("Restore built-in contents?")}>
+        <p className="text-sm text-muted">{t("Your changes to “{name}” will be replaced with the original {sites} sites and {apps} apps.", { name: category.name, sites: factory?.sites.length ?? 0, apps: factory?.apps.length ?? 0 })}</p>
         <div className="mt-6 flex justify-end gap-2">
           <button className="btn-ghost" onClick={() => setConfirm(null)}>
-            Cancel
+            {t("Cancel")}
           </button>
           <button className="btn-primary" onClick={() => run(() => api.saveCategory(factory!), "Restored.").then(() => setConfirm(null))}>
-            Restore
+            {t("Restore")}
           </button>
         </div>
       </Modal>
@@ -211,36 +222,36 @@ function CommunityList({ category, locked }: { category: Category; locked: boole
   return (
     <section className="mb-7 rounded-xl border border-line bg-panel p-4">
       <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-        <Library size={16} className="text-accent-2" /> Community list
+        <Library size={16} className="text-accent-2" /> {t("Community list")}
       </h3>
       {src ? (
         <div className="flex flex-wrap items-center gap-3">
           <p className="min-w-0 flex-1 text-sm text-muted">
-            <span className="text-fg">{src.name}</span> · {src.count.toLocaleString()} websites · updated {new Date(src.updatedAt).toLocaleDateString()}
+            <span className="text-fg">{src.name}</span> · {t("{n} websites · updated {date}", { n: src.count.toLocaleString(), date: new Date(src.updatedAt).toLocaleDateString() })}
           </p>
           <button className="btn-ghost py-1.5" disabled={busy} onClick={() => load(src.url, src.name)}>
-            <RefreshCw size={14} className={clsx(busy && "animate-spin")} /> Update
+            <RefreshCw size={14} className={clsx(busy && "animate-spin")} /> {t("Update")}
           </button>
           <button
             className="btn-ghost py-1.5"
             disabled={busy || locked}
-            title={locked ? "Used by a locked block" : undefined}
+            title={locked ? t("Used by a locked block") : undefined}
             onClick={() => run(() => api.removeCategorySource(category.id), "Community list removed.")}
           >
-            <Trash2 size={14} /> Remove
+            <Trash2 size={14} /> {t("Remove")}
           </button>
         </div>
       ) : (
         <>
           <p className="mb-3 text-sm text-muted">
-            Add thousands of known websites at once from a maintained list. It's downloaded once now; update it whenever you like.
+            {t("Add thousands of known websites at once from a maintained list. It's downloaded once now; update it whenever you like.")}
           </p>
           <div className="mb-3 grid gap-2 sm:grid-cols-2">
             {presets.map((p) => (
               <button
                 key={p.url}
                 disabled={busy}
-                onClick={() => load(p.url, `${p.name} (Steven Black)`)}
+                onClick={() => load(p.url, `${t(p.name)} (Steven Black)`)}
                 className={clsx(
                   "flex items-center gap-3 rounded-xl border px-3 py-2 text-left text-sm transition disabled:opacity-50",
                   p.forCategory === category.id ? "border-accent/60 bg-accent/10" : "border-line bg-card hover:border-line-strong",
@@ -248,8 +259,8 @@ function CommunityList({ category, locked }: { category: Category; locked: boole
               >
                 <Download size={15} className="shrink-0 text-muted" />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-medium">{p.name}</span>
-                  <span className="block text-xs text-muted">{p.size} websites</span>
+                  <span className="block font-medium">{t(p.name)}</span>
+                  <span className="block text-xs text-muted">{t("{n} websites", { n: p.size })}</span>
                 </span>
               </button>
             ))}
@@ -257,15 +268,15 @@ function CommunityList({ category, locked }: { category: Category; locked: boole
           <div className="flex gap-2">
             <input
               className="input"
-              placeholder="Or paste the URL of a hosts file or domain list"
+              placeholder={t("Or paste the URL of a hosts file or domain list")}
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
             />
             <button className="btn-ghost shrink-0" disabled={busy || !/^https:\/\//.test(custom.trim())} onClick={() => load(custom.trim(), new URL(custom.trim()).hostname)}>
-              {busy ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />} Import
+              {busy ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />} {t("Import")}
             </button>
           </div>
-          <p className="mt-2 text-xs text-faint">Lists come from GitHub (Steven Black, MIT license). Downloading is the only time OpenBlocker contacts them.</p>
+          <p className="mt-2 text-xs text-faint">{t("Lists come from GitHub (Steven Black, MIT license). Downloading is the only time OpenBlocker contacts them.")}</p>
         </>
       )}
     </section>

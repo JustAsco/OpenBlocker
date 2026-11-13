@@ -28,6 +28,8 @@ pub struct ActiveBlock {
     pub ref_id: String,
     pub ends_at: i64,
     pub locked: bool,
+    /// Locked, but the unlock password can end it early.
+    pub password: bool,
 }
 
 /// Something noteworthy that happened during a [`tick`].
@@ -120,6 +122,7 @@ pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<A
                 ref_id: s.id.clone(),
                 ends_at: s.ends_at,
                 locked: s.lock != LockMode::None,
+                password: s.lock == LockMode::Password,
             });
         }
     }
@@ -131,6 +134,7 @@ pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<A
                 ref_id: sch.id.clone(),
                 ends_at: now_ms + left,
                 locked: sch.locked,
+                password: sch.locked && sch.password,
             });
         }
     }
@@ -143,6 +147,7 @@ pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<A
                     ref_id: "pomodoro".into(),
                     ends_at: p.phase_ends_at,
                     locked: p.config.locked,
+                    password: p.config.locked && p.config.password,
                 });
             }
         }
@@ -155,12 +160,36 @@ pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<A
                 ref_id: l.id.clone(),
                 ends_at: now_ms + ms_until_midnight(local),
                 locked: l.locked,
+                password: l.locked && l.password,
             });
         }
     }
-    // Drop blocks referencing deleted lists.
-    out.retain(|b| state.list(&b.list_id).is_some());
+    // Drop blocks referencing deleted lists, and those ended early.
+    out.retain(|b| state.list(&b.list_id).is_some() && !is_skipped(state, &b.ref_id, now_ms));
     out
+}
+
+fn is_skipped(state: &State, ref_id: &str, now_ms: i64) -> bool {
+    state.skips.iter().any(|s| s.ref_id == ref_id && now_ms < s.until)
+}
+
+/// Ends a running block early: removes a quick block, stops the focus timer,
+/// or skips the current run of a schedule or a used-up limit. Doesn't check
+/// locks; callers do (the service checks the password).
+pub fn end_block(state: &mut State, ref_id: &str, now_ms: i64, local: &NaiveDateTime) -> Result<(), String> {
+    let block = active_blocks(state, now_ms, local)
+        .into_iter()
+        .find(|b| b.ref_id == ref_id)
+        .ok_or("This block isn't running.")?;
+    match block.source {
+        Source::Session => state.sessions.retain(|s| s.id != ref_id),
+        Source::Pomodoro => state.pomodoro = None,
+        Source::Schedule | Source::Limit => {
+            state.skips.retain(|s| s.until > now_ms);
+            state.skips.push(Skip { ref_id: ref_id.to_string(), until: block.ends_at });
+        }
+    }
+    Ok(())
 }
 
 /// Union of every domain and executable that must be blocked.
@@ -170,11 +199,13 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str())) {
         let (list_sites, list_apps) = list_items(state, list);
-        // Allowlist sites are *allowed*, not blocked; their apps are still blocked.
+        // Allowlist items are *allowed*, not blocked.
         if list.mode == ListMode::Block {
             sites.extend(list_sites);
         }
-        apps.extend(list_apps);
+        if list.app_mode == ListMode::Block {
+            apps.extend(list_apps);
+        }
     }
     apps.retain(|a| !is_protected_exe(a));
     (sites, apps)
@@ -265,6 +296,23 @@ pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<S
             .extend(sites.iter().map(|s| crate::hosts::site_domain(s).to_string()));
     }
     allowed
+}
+
+/// If an app allowlist is active: the only programs that may be used
+/// (normalised exe names, union of all active app allowlists; protected
+/// Windows programs are always allowed on top). `None` = no app allowlist.
+pub fn allowed_apps(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<String>> {
+    let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+    let mut allowed: Option<BTreeSet<String>> = None;
+    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && l.app_mode == ListMode::Allow) {
+        allowed.get_or_insert_with(BTreeSet::new).extend(list_items(state, list).1);
+    }
+    allowed
+}
+
+/// May `exe` be used while `allowed` (from [`allowed_apps`]) is in force?
+pub fn app_allowed(allowed: &BTreeSet<String>, exe: &str) -> bool {
+    is_protected_exe(exe) || allowed.iter().any(|a| exe_matches(exe, a))
 }
 
 /// If an active list restricts YouTube to chosen channels: the channels
@@ -490,6 +538,7 @@ pub fn tick(state: &mut State, now_ms: i64) -> Vec<Event> {
         state.freeze = None;
         events.push(Event::FreezeEnded);
     }
+    state.skips.retain(|s| s.until > now_ms);
     events
 }
 
@@ -564,7 +613,7 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
     for b in &locked {
         let kept = new_blocks
             .iter()
-            .any(|n| n.locked && n.list_id == b.list_id && n.ends_at >= b.ends_at - SLACK_MS);
+            .any(|n| n.locked && (b.password || !n.password) && n.list_id == b.list_id && n.ends_at >= b.ends_at - SLACK_MS);
         if !kept {
             return Some("A locked block can't be stopped or shortened.".into());
         }
@@ -574,12 +623,15 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
         let (Some(o), Some(n)) = (old.list(id), new.list(id)) else {
             return Some("A locked list can't be deleted.".into());
         };
-        if o.mode != n.mode {
+        if o.mode != n.mode || o.app_mode != n.app_mode {
             return Some(format!("“{}” is locked: its mode can't change.", o.name));
         }
         let (os, oa) = list_items(old, o);
         let (ns, na) = list_items(new, n);
-        let apps_ok = oa.iter().all(|a| na.iter().any(|x| exe_matches(x, a)));
+        let apps_ok = match o.app_mode {
+            ListMode::Block => oa.iter().all(|a| na.iter().any(|x| exe_matches(x, a))),
+            ListMode::Allow => na.iter().all(|a| oa.iter().any(|x| exe_matches(x, a))),
+        };
         let sites_ok = match o.mode {
             ListMode::Block => os.is_subset(&ns),
             ListMode::Allow => ns.is_subset(&os),
@@ -592,6 +644,9 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
         }
         if !list_excepted_paths(new, n).is_subset(&list_excepted_paths(old, o)) {
             return Some(format!("“{}” is locked: no new exceptions until it ends.", o.name));
+        }
+        if !apps_ok && o.app_mode == ListMode::Allow {
+            return Some(format!("“{}” is locked: you can remove allowed apps, but not add any.", o.name));
         }
         if !apps_ok || !sites_ok {
             return Some(match o.mode {
@@ -737,6 +792,7 @@ mod tests {
             start,
             end,
             locked: false,
+            password: false,
             label: None,
         }
     }
@@ -840,6 +896,7 @@ mod tests {
             youtube_channels: vec![],
             except_sites: vec![],
             except_apps: vec![],
+            app_mode: ListMode::Block,
         });
         let local = at(9, 12, 0);
         assert_eq!(allowed_sites(&st, &active_blocks(&st, 0, &local)), None);
@@ -917,6 +974,7 @@ mod tests {
             ref_id: "x".into(),
             ends_at: 1,
             locked: false,
+            password: false,
         }];
         assert_eq!(allowed_sites(&state, &blocks), Some(["youtube.com".to_string()].into()));
     }
@@ -959,7 +1017,7 @@ mod tests {
     }
 
     fn limit(minutes: u32, locked: bool) -> UsageLimit {
-        UsageLimit { id: "lim".into(), list_id: "video".into(), minutes, days: (0..7).collect(), locked }
+        UsageLimit { id: "lim".into(), list_id: "video".into(), minutes, days: (0..7).collect(), locked, password: false }
     }
 
     #[test]
@@ -1162,9 +1220,82 @@ mod tests {
             .iter()
             .map(|e| AppEntry { name: e.to_string(), exe: e.to_string(), path: None })
             .collect();
-        let blocks = vec![ActiveBlock { list_id: "social".into(), source: Source::Session, ref_id: "x".into(), ends_at: 1, locked: false }];
+        let blocks = vec![ActiveBlock { list_id: "social".into(), source: Source::Session, ref_id: "x".into(), ends_at: 1, locked: false, password: false }];
         let (_, apps) = enforced_targets(&state, &blocks);
         assert_eq!(apps, ["steam.exe".to_string(), "taskmgr.exe".to_string()].into());
         assert!(is_protected_exe("C:\\Windows\\explorer.exe"));
+    }
+
+    #[test]
+    fn ending_blocks_early() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        let mut s = sched(&[2], 600, 840); // Wednesdays 10:00-14:00
+        s.locked = true;
+        old.schedules.push(s);
+        assert!(end_block(&mut old.clone(), "nope", now, &local).is_err());
+
+        // A skip hides the block until its planned end, and can't be published
+        // by the app for a locked block.
+        let mut new = old.clone();
+        end_block(&mut new, "s", now, &local).unwrap();
+        assert!(active_blocks(&new, now, &local).is_empty());
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        assert_eq!(new.skips[0].until, now + 2 * 60 * MINUTE_MS);
+
+        // Turning on the password escape while locked would loosen it.
+        let mut new = old.clone();
+        new.schedules[0].password = true;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "adding a password escape");
+        // Taking it away is fine.
+        let mut pw = old.clone();
+        pw.schedules[0].password = true;
+        assert!(active_blocks(&pw, now, &local)[0].password);
+        assert!(lock_violation(&pw, &old, now, &local).is_none(), "removing the escape");
+
+        // The focus timer is stopped, not skipped.
+        let mut st = State::default();
+        let cfg = PomodoroConfig { list_id: Some("social".into()), ..Default::default() };
+        st.pomodoro = Some(new_pomodoro(cfg, now));
+        end_block(&mut st, "pomodoro", now, &local).unwrap();
+        assert!(st.pomodoro.is_none());
+
+        // Old skips are cleaned up.
+        let mut st = new.clone();
+        tick(&mut st, now + 24 * 60 * MINUTE_MS);
+        assert!(st.skips.is_empty());
+    }
+
+    #[test]
+    fn app_allowlist() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        let app = |exe: &str| AppEntry { name: exe.into(), exe: exe.into(), path: None };
+        old.lists[2].app_mode = ListMode::Allow;
+        old.lists[2].categories.clear();
+        old.lists[2].apps = vec![app("code.exe"), app("firefox.exe")];
+        old.sessions.push(Session { id: "s".into(), list_id: "games".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Timer });
+        let blocks = active_blocks(&old, now, &local);
+        // Allowed apps aren't blocked, and only they (plus Windows) may run.
+        assert!(enforced_targets(&old, &blocks).1.is_empty());
+        let allowed = allowed_apps(&old, &blocks).unwrap();
+        assert!(app_allowed(&allowed, "Code.exe"));
+        assert!(app_allowed(&allowed, "explorer.exe"));
+        assert!(app_allowed(&allowed, "openblocker.exe"));
+        assert!(!app_allowed(&allowed, "steam.exe"));
+        assert_eq!(allowed_apps(&State::default(), &blocks), None);
+
+        // Locked: allowed apps can be removed, not added; the mode is fixed.
+        let mut new = old.clone();
+        new.lists[2].apps.pop();
+        assert!(lock_violation(&old, &new, now, &local).is_none());
+        let mut new = old.clone();
+        new.lists[2].apps.push(app("steam.exe"));
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        let mut new = old.clone();
+        new.lists[2].app_mode = ListMode::Block;
+        assert!(lock_violation(&old, &new, now, &local).is_some());
     }
 }

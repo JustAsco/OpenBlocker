@@ -24,6 +24,11 @@ use std::time::Duration;
 pub const PORT: u16 = 47613;
 /// A browser counts as protected if its extension checked in this recently.
 pub const HEARTBEAT_TIMEOUT_MS: i64 = 45_000;
+/// A browser is only closed for a missing extension after this much silence:
+/// browsers may suspend the extension's background script or delay its
+/// wake-up alarm for a while, and closing someone's browser by mistake is
+/// far worse than a short gap.
+pub const CLOSE_AFTER_SILENCE_MS: i64 = 120_000;
 /// The reported active tab is trusted for usage limits this long.
 pub const ACTIVE_TAB_TIMEOUT_MS: i64 = 6_000;
 
@@ -89,6 +94,20 @@ pub struct Rules {
     pub youtube_channels: Option<Vec<String>>,
     /// Hide Shorts/Reels shelves in feeds while their pages are blocked.
     pub hide_short_video_feeds: bool,
+    /// Version of the extension that ships with this app. An older extension
+    /// reloads itself (an unpacked one then picks up the updated files).
+    pub latest_version: &'static str,
+}
+
+/// Version in `extension/manifest.json`, the extension this build ships with.
+pub fn extension_version() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        serde_json::from_str::<serde_json::Value>(include_str!("../../extension/manifest.json"))
+            .ok()
+            .and_then(|m| m["version"].as_str().map(str::to_string))
+            .unwrap_or_default()
+    })
 }
 
 #[derive(Default)]
@@ -121,7 +140,7 @@ impl Bridge {
             .lock()
             .unwrap()
             .get(&exe.to_lowercase())
-            .is_some_and(|b| now_ms - b.last_seen < HEARTBEAT_TIMEOUT_MS && b.incognito != Some(false))
+            .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS && b.incognito != Some(false))
     }
 
     /// Publishes new rules. Serialising once here keeps big community lists

@@ -1,8 +1,12 @@
+import { language, t } from "./i18n";
 import type { ActiveBlock, AppEntry, BlockList, Schedule, State } from "./types";
 
 export const MINUTE = 60_000;
-export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-export const DAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// Weekday names in the UI language, Monday first (2024-01-01 was a Monday).
+const weekdays = (style: "short" | "long") =>
+  Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i).toLocaleDateString(language(), { weekday: style }));
+export const DAYS = weekdays("short");
+export const DAYS_LONG = weekdays("long");
 
 /** 0 = Monday */
 export const weekday = (d: Date) => (d.getDay() + 6) % 7;
@@ -25,7 +29,7 @@ export function fmtDuration(ms: number, seconds = true): string {
   const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  if (d > 0) return `${d}d ${h}h`;
+  if (d > 0) return `${t("{n}d", { n: d })} ${h}h`;
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   if (m > 0) return seconds ? `${m}m ${String(s).padStart(2, "0")}s` : `${m}m`;
   return seconds ? `${s}s` : "<1m";
@@ -46,7 +50,7 @@ export function fmtTime(ts: number): string {
   const d = new Date(ts);
   const sameDay = new Date().toDateString() === d.toDateString();
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+  return sameDay ? time : `${d.toLocaleDateString(language(), { weekday: "short" })} ${time}`;
 }
 
 export function dateKey(d: Date): string {
@@ -80,22 +84,23 @@ export function activeBlocks(state: State, now = Date.now(), usage: Record<strin
   const out: ActiveBlock[] = [];
   for (const s of state.sessions)
     if (s.startedAt <= now && now < s.endsAt)
-      out.push({ listId: s.listId, source: "session", refId: s.id, endsAt: s.endsAt, locked: s.lock !== "none" });
+      out.push({ listId: s.listId, source: "session", refId: s.id, endsAt: s.endsAt, locked: s.lock !== "none", password: s.lock === "password" });
   const date = new Date(now);
   for (const sch of state.schedules) {
     const left = scheduleRemaining(sch, date);
     if (left !== null)
-      out.push({ listId: sch.listId, source: "schedule", refId: sch.id, endsAt: now + left, locked: sch.locked });
+      out.push({ listId: sch.listId, source: "schedule", refId: sch.id, endsAt: now + left, locked: sch.locked, password: sch.locked && !!sch.password });
   }
   const p = state.pomodoro;
   if (p && p.phase === "focus" && p.pausedRemaining === null && p.config.listId)
-    out.push({ listId: p.config.listId, source: "pomodoro", refId: "pomodoro", endsAt: p.phaseEndsAt, locked: p.config.locked });
+    out.push({ listId: p.config.listId, source: "pomodoro", refId: "pomodoro", endsAt: p.phaseEndsAt, locked: p.config.locked, password: p.config.locked && !!p.config.password });
   const midnight = new Date(now);
   midnight.setHours(24, 0, 0, 0);
   for (const l of state.limits ?? [])
     if (l.days.includes(weekday(date)) && (usage[l.id] ?? 0) >= l.minutes * 60)
-      out.push({ listId: l.listId, source: "limit", refId: l.id, endsAt: midnight.getTime(), locked: l.locked });
-  return out.filter((b) => state.lists.some((l) => l.id === b.listId));
+      out.push({ listId: l.listId, source: "limit", refId: l.id, endsAt: midnight.getTime(), locked: l.locked, password: l.locked && !!l.password });
+  const skipped = (id: string) => (state.skips ?? []).some((s) => s.refId === id && now < s.until);
+  return out.filter((b) => state.lists.some((l) => l.id === b.listId) && !skipped(b.refId));
 }
 
 /** Port of hosts::normalize_domain. */
@@ -136,6 +141,14 @@ export function normalizeSite(input: string): string | null {
 }
 
 /** Is this site entry only part of a website ("youtube.com/shorts")? */
+/** Is version a older than b ("0.2.0" < "0.10.0")? */
+export function olderVersion(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  return false;
+}
+
 export const isPathSite = (site: string) => site.includes("/");
 
 export function uid(): string {
@@ -152,7 +165,7 @@ export function fmtMinutes(min: number): string {
   const d = Math.floor(min / 1440);
   const h = Math.floor((min % 1440) / 60);
   const m = Math.round(min % 60);
-  return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "0m";
+  return [d && t("{n}d", { n: d }), h && `${h}h`, m && `${m}m`].filter(Boolean).join(" ") || "0m";
 }
 
 /** Everything a list blocks: its own items plus those of its categories. */

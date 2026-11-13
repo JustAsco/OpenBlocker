@@ -2,18 +2,20 @@ import clsx from "clsx";
 import { Hourglass, Lock, Plus, Puzzle, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Page } from "../App";
-import { LockWarning } from "../components/LockWarning";
+import { LockWarning, lockedWord } from "../components/LockWarning";
+import { PasswordEscape } from "../components/PasswordEscape";
 import { ListBadge, Modal, PageHeader, Segmented, Toggle } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { State, UsageLimit } from "../lib/types";
 import { DAYS, DAYS_LONG, fmtMinutes, weekday } from "../lib/util";
+import { t, tx } from "../lib/i18n";
 
 const PRESETS = [15, 30, 45, 60, 90, 120];
 
 function daysText(days: number[]) {
   const d = [...days].sort().join();
-  return d === "0,1,2,3,4,5,6" ? "Every day" : d === "0,1,2,3,4" ? "Weekdays" : d === "5,6" ? "Weekends" : days.map((x) => DAYS[x]).join(", ");
+  return d === "0,1,2,3,4,5,6" ? t("Every day") : d === "0,1,2,3,4" ? t("Weekdays") : d === "5,6" ? t("Weekends") : days.map((x) => DAYS[x]).join(", ");
 }
 
 export function LimitsPage({ go }: { go: (p: Page) => void }) {
@@ -22,16 +24,16 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
   const [editing, setEditing] = useState<UsageLimit | null>(null);
   const blockLists = state.lists.filter((l) => l.mode === "block");
   const today = weekday(new Date(now));
-  const blank = (): UsageLimit => ({ id: "", listId: blockLists[0]?.id ?? "", minutes: 30, days: [0, 1, 2, 3, 4, 5, 6], locked: false });
+  const blank = (): UsageLimit => ({ id: "", listId: blockLists[0]?.id ?? "", minutes: 30, days: [0, 1, 2, 3, 4, 5, 6], locked: false, password: false });
 
   return (
     <>
       <PageHeader
-        title="Daily limits"
-        subtitle="Give a block list a daily allowance. Time counts while one of its apps or websites is in front and you're active; once it's used up, it's blocked until midnight."
+        title={t("Daily limits")}
+        subtitle={t("Give a block list a daily allowance. Time counts while one of its apps or websites is in front and you're active; once it's used up, it's blocked until midnight.")}
         actions={
           <button className="btn-primary" disabled={!blockLists.length} onClick={() => setEditing(blank())}>
-            <Plus size={16} /> New limit
+            <Plus size={16} /> {t("New limit")}
           </button>
         }
       />
@@ -39,9 +41,9 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
       {status.extension.length === 0 && (
         <div className="mb-5 flex items-center gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
           <Puzzle size={16} className="shrink-0" />
-          <span className="flex-1">Time on websites can only be counted with the browser extension. Apps are counted either way.</span>
+          <span className="flex-1">{t("Time on websites can only be counted with the browser extension. Apps are counted either way.")}</span>
           <button className="btn-ghost py-1" onClick={() => go("settings")}>
-            Set up extension
+            {t("Set up extension")}
           </button>
         </div>
       )}
@@ -50,10 +52,10 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
         <div className="card grid place-items-center gap-3 p-12 text-center">
           <Hourglass size={28} className="text-accent" />
           <p className="max-w-md text-sm text-muted">
-            For example: 30 minutes of YouTube a day, or an hour of games on weekdays. You can use any block list you already have.
+            {t("For example: 30 minutes of YouTube a day, or an hour of games on weekdays. You can use any block list you already have.")}
           </p>
           <button className="btn-primary mt-2" disabled={!blockLists.length} onClick={() => setEditing(blank())}>
-            <Plus size={16} /> New limit
+            <Plus size={16} /> {t("New limit")}
           </button>
         </div>
       ) : (
@@ -71,8 +73,8 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
                 <div className="mb-3 flex items-center gap-2">
                   <ListBadge list={list} />
                   <span className="ml-auto flex items-center gap-1.5 text-sm text-muted">
-                    {l.locked && <Lock size={13} className="text-amber-400" aria-label="Locked once used up" />}
-                    {fmtMinutes(l.minutes)} / day
+                    {l.locked && <Lock size={13} className="text-amber-400" aria-label={t("Locked once used up")} />}
+                    {t("{duration} / day", { duration: fmtMinutes(l.minutes) })}
                   </span>
                 </div>
                 <div className="mb-2 h-2 overflow-hidden rounded-full bg-elevated">
@@ -81,10 +83,10 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
                 <div className="flex justify-between text-xs text-muted">
                   <span>
                     {!applies
-                      ? "No limit today"
+                      ? t("No limit today")
                       : done
-                        ? "Used up · blocked until midnight"
-                        : `${fmtMinutes(Math.floor(used / 60))} used · ${fmtMinutes(Math.ceil((allowed - used) / 60))} left`}
+                        ? t("Used up · blocked until midnight")
+                        : t("{used} used · {left} left", { used: fmtMinutes(Math.floor(used / 60)), left: fmtMinutes(Math.ceil((allowed - used) / 60)) })}
                   </span>
                   <span>{daysText(l.days)}</span>
                 </div>
@@ -100,7 +102,7 @@ export function LimitsPage({ go }: { go: (p: Page) => void }) {
 }
 
 function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | null; state: State; usedUp: boolean; onClose: () => void }) {
-  const { run } = useStore();
+  const { run, snap } = useStore();
   const [l, setL] = useState<UsageLimit | null>(limit);
   const [custom, setCustom] = useState("");
   const [confirming, setConfirming] = useState(false);
@@ -117,13 +119,13 @@ function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | nu
   const save = () => run(() => api.saveLimit(l), "Limit saved.").then((ok) => ok && onClose());
 
   return (
-    <Modal open onClose={onClose} title={l.id ? "Edit limit" : "New limit"} width={560}>
+    <Modal open onClose={onClose} title={l.id ? t("Edit limit") : t("New limit")} width={560}>
       {usedUp && before?.locked && (
         <div className="mb-5 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          <Lock size={16} className="shrink-0" /> Used up and locked until midnight. You can make it stricter, but not looser.
+          <Lock size={16} className="shrink-0" /> {t("Used up and locked until midnight. You can make it stricter, but not looser.")}
         </div>
       )}
-      <span className="label">Block list</span>
+      <span className="label">{t("Block list")}</span>
       <div className="mb-5 flex flex-wrap gap-2">
         {state.lists
           .filter((x) => x.mode === "block")
@@ -139,7 +141,7 @@ function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | nu
           ))}
       </div>
 
-      <span className="label">Time per day</span>
+      <span className="label">{t("Time per day")}</span>
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <Segmented
           value={custom ? 0 : l.minutes}
@@ -154,7 +156,7 @@ function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | nu
             className="input pr-12"
             type="number"
             min={1}
-            placeholder="Custom"
+            placeholder={t("Custom")}
             value={custom}
             onChange={(e) => {
               const v = e.target.value.replace(/\D/g, "");
@@ -162,16 +164,16 @@ function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | nu
               if (Number(v) > 0) setL({ ...l, minutes: Number(v) });
             }}
           />
-          <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-faint">min</span>
+          <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-faint">{t("min")}</span>
         </div>
       </div>
 
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="label mb-0">Days</span>
+        <span className="label mb-0">{t("Days")}</span>
         <div className="flex gap-3 text-xs text-muted">
-          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4])}>Weekdays</button>
-          <button className="hover:text-fg" onClick={() => setDays([5, 6])}>Weekend</button>
-          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4, 5, 6])}>Every day</button>
+          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4])}>{t("Weekdays")}</button>
+          <button className="hover:text-fg" onClick={() => setDays([5, 6])}>{t("Weekend")}</button>
+          <button className="hover:text-fg" onClick={() => setDays([0, 1, 2, 3, 4, 5, 6])}>{t("Every day")}</button>
         </div>
       </div>
       <div className="mb-5 grid grid-cols-7 gap-1.5">
@@ -189,31 +191,36 @@ function LimitEditor({ limit, state, usedUp, onClose }: { limit: UsageLimit | nu
 
       <div className="divide-y divide-line border-t border-line">
         <Toggle
-          label="Lock once used up"
-          hint="When today's time runs out, the block can't be stopped and the limit can't be raised or removed until midnight."
+          label={t("Lock once used up")}
+          hint={t("When today's time runs out, the block can't be stopped and the limit can't be raised or removed until midnight.")}
           checked={l.locked}
           onChange={(locked) => setL({ ...l, locked })}
         />
+        {l.locked && <PasswordEscape what={t("the block")} checked={l.password} onChange={(password) => setL({ ...l, password })} />}
       </div>
 
       <div className="mt-6 flex items-center gap-2">
         {l.id && (
           <button className="btn-danger" onClick={() => run(() => api.deleteLimit(l.id), "Limit deleted.").then((ok) => ok && onClose())}>
-            <Trash2 size={15} /> Delete
+            <Trash2 size={15} /> {t("Delete")}
           </button>
         )}
         <div className="flex-1" />
         <button className="btn-ghost" onClick={onClose}>
-          Cancel
+          {t("Cancel")}
         </button>
         <button className="btn-primary" disabled={!l.listId || !l.days.length || !l.minutes} onClick={() => (lockIsNew ? setConfirming(true) : save())}>
-          {l.locked && <Lock size={15} />} Save
+          {l.locked && <Lock size={15} />} {t("Save")}
         </button>
       </div>
       <LockWarning
         open={confirming}
-        what={`Once today's ${fmtMinutes(l.minutes)} are used up, ${list?.name ?? "the list"}`}
-        until="until midnight"
+        summary={tx("Once today's {minutes} are used up, {list} is {locked} until midnight.", {
+          minutes: fmtMinutes(l.minutes),
+          list: list?.name ?? t("the list"),
+          locked: lockedWord(),
+        })}
+        escape={l.password && snap!.status.passwordSet}
         onClose={() => setConfirming(false)}
         onConfirm={() => {
           setConfirming(false);

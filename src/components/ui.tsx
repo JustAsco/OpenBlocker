@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { BlockList } from "../lib/types";
+import { t } from "../lib/i18n";
 
 // ─── preferences stored only in the UI ───────────────────────────────
 
@@ -120,20 +121,22 @@ export function Toggle({
   label,
   hint,
   lockedOn,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
   hint?: ReactNode;
   lockedOn?: boolean;
+  disabled?: boolean;
 }) {
-  const frozen = !!lockedOn && checked;
+  const frozen = (!!lockedOn && checked) || !!disabled;
   return (
-    <label className={clsx("flex items-start justify-between gap-6 py-3", frozen ? "cursor-not-allowed" : "cursor-pointer")}>
+    <label className={clsx("flex items-start justify-between gap-6 py-3", frozen ? "cursor-not-allowed" : "cursor-pointer", disabled && "opacity-60")}>
       <span>
         <span className="flex items-center gap-1.5 text-sm font-medium">
           {label}
-          {frozen && <Lock size={12} className="text-amber-400" aria-label="Can't be turned off while a locked block is running" />}
+          {frozen && !disabled && <Lock size={12} className="text-amber-400" aria-label={t("Can't be turned off while a locked block is running")} />}
         </span>
         {hint && <span className="mt-0.5 block text-xs text-muted">{hint}</span>}
       </span>
@@ -142,7 +145,7 @@ export function Toggle({
         role="switch"
         aria-checked={checked}
         disabled={frozen}
-        title={frozen ? "Can't be turned off while a locked block is running" : undefined}
+        title={frozen && !disabled ? t("Can't be turned off while a locked block is running") : undefined}
         onClick={() => onChange(!checked)}
         className={clsx(
           "relative mt-0.5 h-6 w-11 shrink-0 rounded-full border transition disabled:opacity-60",
@@ -216,7 +219,7 @@ export function Modal({ open, onClose, title, children, width = 480 }: { open: b
       >
         <div className="mb-5 flex items-center justify-between gap-4">
           <h2 className="font-display text-lg font-semibold">{title}</h2>
-          <button className="rounded-lg p-1 text-muted hover:bg-elevated hover:text-fg" onClick={onClose} aria-label="Close">
+          <button className="rounded-lg p-1 text-muted hover:bg-elevated hover:text-fg" onClick={onClose} aria-label={t("Close")}>
             <X size={18} />
           </button>
         </div>
@@ -267,22 +270,22 @@ export function Toasts() {
   const { toasts } = useStore();
   return (
     <div className="pointer-events-none fixed right-5 bottom-5 z-[60] flex w-96 flex-col gap-2">
-      {toasts.map((t) => (
+      {toasts.map((toast) => (
         <div
-          key={t.id}
+          key={toast.id}
           className={clsx(
             "animate-fade-up pointer-events-auto flex items-start gap-3 rounded-xl border bg-panel/95 px-4 py-3 text-sm shadow-2xl backdrop-blur",
-            t.kind === "error" ? "border-red-500/40" : t.kind === "success" ? "border-emerald-500/40" : "border-line-strong",
+            toast.kind === "error" ? "border-red-500/40" : toast.kind === "success" ? "border-emerald-500/40" : "border-line-strong",
           )}
         >
-          {t.kind === "error" ? (
+          {toast.kind === "error" ? (
             <XCircle size={18} className="mt-px shrink-0 text-red-400" />
-          ) : t.kind === "success" ? (
+          ) : toast.kind === "success" ? (
             <CheckCircle2 size={18} className="mt-px shrink-0 text-emerald-400" />
           ) : (
             <Info size={18} className="mt-px shrink-0 text-cyan-400" />
           )}
-          <span>{t.text}</span>
+          <span>{toast.text}</span>
         </div>
       ))}
     </div>

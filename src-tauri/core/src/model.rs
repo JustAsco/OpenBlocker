@@ -51,6 +51,10 @@ pub struct BlockList {
     /// Apps left out of this list even though a category includes them.
     #[serde(default)]
     pub except_apps: Vec<AppEntry>,
+    /// Block the listed apps, or (allowlist) allow *only* them: any other
+    /// program brought to the front is closed while the list is active.
+    #[serde(default)]
+    pub app_mode: ListMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -159,6 +163,9 @@ pub struct Schedule {
     /// When locked, the schedule cannot be edited or deleted while it is running.
     #[serde(default)]
     pub locked: bool,
+    /// When locked: the unlock password can still end it early.
+    #[serde(default)]
+    pub password: bool,
     #[serde(default)]
     pub label: Option<String>,
 }
@@ -192,6 +199,9 @@ pub struct UsageLimit {
     /// or removed until midnight.
     #[serde(default)]
     pub locked: bool,
+    /// When locked: the unlock password can still end the block early.
+    #[serde(default)]
+    pub password: bool,
 }
 
 /// A manually started, one-off block ("Block Instagram for 2 hours").
@@ -230,6 +240,9 @@ pub struct PomodoroConfig {
     /// If true, the pomodoro cannot be stopped/skipped during a focus phase.
     #[serde(default)]
     pub locked: bool,
+    /// When locked: the unlock password can still stop it early.
+    #[serde(default)]
+    pub password: bool,
     /// Stop automatically after this many focus rounds (None = run forever).
     #[serde(default)]
     pub total_rounds: Option<u32>,
@@ -244,6 +257,7 @@ impl Default for PomodoroConfig {
             rounds: 4,
             list_id: None,
             locked: false,
+            password: false,
             total_rounds: None,
         }
     }
@@ -261,6 +275,17 @@ pub struct Pomodoro {
     /// Remaining ms when paused.
     #[serde(default)]
     pub paused_remaining: Option<i64>,
+}
+
+/// A schedule or usage limit that was ended early (with the password, or
+/// because it wasn't locked): it stays off until `until`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Skip {
+    /// Id of the schedule or limit.
+    pub ref_id: String,
+    /// Unix ms; the block's planned end.
+    pub until: i64,
 }
 
 /// "Freeze" locks the whole computer behind a full-screen screen.
@@ -298,6 +323,8 @@ pub struct Settings {
     pub hide_short_video_feeds: bool,
     /// What to type for "Type to unlock".
     pub unlock_text_style: UnlockTextStyle,
+    /// UI language code ("en", "de"); empty = follow Windows.
+    pub language: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -323,6 +350,7 @@ impl Default for Settings {
             suggest_extension: true,
             hide_short_video_feeds: true,
             unlock_text_style: UnlockTextStyle::Random,
+            language: String::new(),
         }
     }
 }
@@ -357,6 +385,8 @@ pub struct State {
     /// Hash (Argon2 PHC string) of the unlock password, if one is set. Only
     /// changed through its own command, which checks the current password.
     pub password: Option<String>,
+    /// Schedules and limits that were ended early.
+    pub skips: Vec<Skip>,
     /// Domains of each category's community list (normalised), loaded from
     /// their own files. Never serialised.
     #[serde(skip)]
@@ -381,6 +411,7 @@ impl Default for State {
                     youtube_channels: vec![],
                     except_sites: vec![],
                     except_apps: vec![],
+                    app_mode: ListMode::Block,
                 },
                 BlockList {
                     id: "video".into(),
@@ -394,6 +425,7 @@ impl Default for State {
                     youtube_channels: vec![],
                     except_sites: vec![],
                     except_apps: vec![],
+                    app_mode: ListMode::Block,
                 },
                 BlockList {
                     id: "games".into(),
@@ -407,6 +439,7 @@ impl Default for State {
                     youtube_channels: vec![],
                     except_sites: vec![],
                     except_apps: vec![],
+                    app_mode: ListMode::Block,
                 },
             ],
             schedules: vec![],
@@ -418,6 +451,7 @@ impl Default for State {
             limits: vec![],
             usage: BTreeMap::new(),
             password: None,
+            skips: vec![],
             source_sites: BTreeMap::new(),
         }
     }
