@@ -58,6 +58,7 @@ async function fetchRules() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     let rules = await res.json();
     maybeUpdate(rules.latestVersion);
+    if (rules.extensionRequired && !incognito) explainPrivateWindows();
     if (rules.unchanged && lastRules?.rev === rules.rev) {
       // Big community lists aren't resent every two seconds.
       rules = lastRules;
@@ -109,6 +110,16 @@ async function maybeUpdate(latest) {
   api.runtime.reload();
 }
 api.runtime.onUpdateAvailable?.addListener(() => api.runtime.reload());
+
+/** Opens the "allow in private windows" page, once per browser session. */
+let privateExplained = false;
+async function explainPrivateWindows() {
+  if (privateExplained) return;
+  privateExplained = true;
+  const url = api.runtime.getURL("private.html");
+  const open = await api.tabs.query({ url }).catch(() => []);
+  if (!open.length) api.tabs.create({ url }).catch(() => {});
+}
 
 function buildRules(rules) {
   const redirect = { type: "redirect", redirect: { regexSubstitution: BLOCK_PAGE + "#\\0" } };

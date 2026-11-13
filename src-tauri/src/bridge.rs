@@ -97,6 +97,9 @@ pub struct Rules {
     /// Version of the extension that ships with this app. An older extension
     /// reloads itself (an unpacked one then picks up the updated files).
     pub latest_version: &'static str,
+    /// Browsers without the extension (or without it in private windows) are
+    /// being closed; the extension explains how to fix that.
+    pub extension_required: bool,
 }
 
 /// Version in `extension/manifest.json`, the extension this build ships with.
@@ -141,6 +144,15 @@ impl Bridge {
             .unwrap()
             .get(&exe.to_lowercase())
             .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS && b.incognito != Some(false))
+    }
+
+    /// The extension runs in this browser but isn't allowed in private windows.
+    pub fn private_windows_missing(&self, exe: &str, now_ms: i64) -> bool {
+        self.seen
+            .lock()
+            .unwrap()
+            .get(&exe.to_lowercase())
+            .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS && b.incognito == Some(false))
     }
 
     /// Publishes new rules. Serialising once here keeps big community lists

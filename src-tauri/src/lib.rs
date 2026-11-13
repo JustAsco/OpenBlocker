@@ -1068,7 +1068,6 @@ fn current_activity(browsers: &[bridge::BrowserSeen], now: i64) -> engine::Activ
 
 fn engine_loop(app: AppHandle, shared: Shared) {
     let mut enforcer = enforce::Enforcer::new();
-    let mut last_browser_note = 0i64;
     let mut kill_seq: Option<u64> = None;
     loop {
         let now = now_ms();
@@ -1165,11 +1164,12 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             }
         }
         let mut killed = vec![];
-        let mut closed = vec![];
+        let mut browser_notices = vec![];
         match service::client::status(kill_seq.unwrap_or(u64::MAX)) {
             Ok(status) => {
                 if kill_seq.is_some() {
                     killed = status.killed.clone();
+                    browser_notices = status.browser_notices.clone();
                 }
                 kill_seq = Some(status.seq);
                 let mut i = shared.lock().unwrap();
@@ -1197,7 +1197,7 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             let out = enforcer.run(&state, &bridge, now, &local);
             shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
             killed = out.killed;
-            closed = out.closed_browsers;
+            browser_notices = out.browser_notices;
         }
 
         // 4. App allowlist: the service can't see the user's windows, so the
@@ -1218,26 +1218,20 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             let lang = i18n::language(&settings.language);
             notes.push((i18n::tr(lang, "Blocked 🚫", &[]), i18n::tr(lang, "{apps} was closed.", &[("apps", &killed.join(", "))])));
         }
-        if !closed.is_empty() && now - last_browser_note > 60_000 {
-            last_browser_note = now;
+        for n in &browser_notices {
             let lang = i18n::language(&settings.language);
-            // Running, but not allowed in private windows, is a different fix.
-            let (private, missing): (Vec<_>, Vec<_>) = closed
-                .iter()
-                .partition(|name| browsers.iter().any(|b| &&b.name == name && b.incognito == Some(false)));
-            let join = |v: &[&String]| v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
-            if !missing.is_empty() {
-                notes.push((
-                    i18n::tr(lang, "Browser closed 🧩", &[]),
-                    i18n::tr(lang, "{browsers} doesn't have the OpenBlocker extension running.", &[("browsers", &join(&missing))]),
-                ));
-            }
-            if !private.is_empty() {
-                notes.push((
-                    i18n::tr(lang, "Browser closed 🧩", &[]),
-                    i18n::tr(lang, "{browsers}: the OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[("browsers", &join(&private))]),
-                ));
-            }
+            let args = [("browser", n.browser.as_str())];
+            let why = if n.private_windows {
+                i18n::tr(lang, "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[])
+            } else {
+                i18n::tr(lang, "The OpenBlocker extension isn't running in it.", &[])
+            };
+            let title = if n.closed {
+                i18n::tr(lang, "{browser} was closed 🧩", &args)
+            } else {
+                i18n::tr(lang, "{browser} will be closed in a minute 🧩", &args)
+            };
+            notes.push((title, why));
         }
         for (title, body) in notes {
             notify(&app, settings.notifications, &title, &body);
