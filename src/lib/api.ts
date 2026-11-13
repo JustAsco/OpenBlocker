@@ -109,6 +109,7 @@ export const api = {
   setAutostart: (enabled: boolean) => call<boolean>("set_autostart", { enabled }),
   extensionPath: () => call<string | null>("extension_path"),
   openExtensionFolder: () => call<void>("open_extension_folder"),
+  clearScreenTime: () => call<Snapshot>("clear_screen_time"),
   relaunchAsAdmin: () => call<void>("relaunch_as_admin"),
   /** Asks where to save, then writes lists, categories, schedules and settings. False if cancelled. */
   exportSettings: async (): Promise<boolean> => {

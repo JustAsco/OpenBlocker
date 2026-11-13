@@ -59,6 +59,9 @@ pub struct Status {
     /// Browser warnings and closings after `since`.
     #[serde(default)]
     pub browser_notices: Vec<enforce::BrowserNotice>,
+    /// Websites whose block page was shown after `since` (for statistics).
+    #[serde(default)]
+    pub site_hits: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -228,6 +231,7 @@ struct Svc {
     challenges: HashMap<String, String>,
     killed: VecDeque<(u64, String)>,
     notices: VecDeque<(u64, enforce::BrowserNotice)>,
+    site_hits: VecDeque<(u64, String)>,
     seq: u64,
     hosts_error: Option<String>,
     bridge: Arc<bridge::Bridge>,
@@ -313,6 +317,7 @@ impl Svc {
             challenges: HashMap::new(),
             killed: VecDeque::new(),
             notices: VecDeque::new(),
+            site_hits: VecDeque::new(),
             seq: 0,
             hosts_error: None,
             bridge,
@@ -475,6 +480,7 @@ impl Svc {
             seq: self.seq,
             killed: self.killed.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
             browser_notices: self.notices.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
+            site_hits: self.site_hits.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
         }
     }
 }
@@ -608,6 +614,14 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
                 s.killed.push_back((seq, name));
                 if s.killed.len() > 100 {
                     s.killed.pop_front();
+                }
+            }
+            for site in out.site_hits {
+                s.seq += 1;
+                let seq = s.seq;
+                s.site_hits.push_back((seq, site));
+                if s.site_hits.len() > 500 {
+                    s.site_hits.pop_front();
                 }
             }
             for notice in out.browser_notices {

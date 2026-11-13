@@ -145,12 +145,28 @@ export interface Settings {
   privateWindows: "default" | "on" | "off";
   /** While any block runs, every browser must have the extension (else closed after 15 s). */
   superStrict: boolean;
+  /** Record which programs and websites are in front (statistics, local only). */
+  recordScreenTime: boolean;
 }
 
 export interface DayStats {
   focusSeconds: number;
   blockedLaunches: number;
   pomodoros: number;
+  /** Focus seconds per hour of the day (24 entries once used). */
+  focusHours?: number[];
+  /** Seconds at the computer (not idle). */
+  activeSeconds?: number;
+  /** Of those, seconds on things in a block list (blocked or not). */
+  distractedSeconds?: number;
+  /** Seconds in front per program (exe) / per website (domain). */
+  apps?: Record<string, number>;
+  sites?: Record<string, number>;
+  /** Times each program was closed / each website's block page was shown. */
+  closedApps?: Record<string, number>;
+  blockedSites?: Record<string, number>;
+  /** Blocks ended early. */
+  earlyStops?: number;
 }
 
 export interface State {

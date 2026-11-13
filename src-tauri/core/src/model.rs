@@ -359,6 +359,9 @@ pub struct Settings {
     /// the extension running (also in private windows), or it's closed after
     /// a short warning; extension-only features always fall back to strict.
     pub super_strict: bool,
+    /// Record screen time: which programs and websites are in front while
+    /// you're at the computer (kept on this PC only, for the statistics).
+    pub record_screen_time: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -410,6 +413,7 @@ impl Default for Settings {
             extension_fallback: ExtensionFallback::Strict,
             private_windows: PrivateWindows::Default,
             language: String::new(),
+            record_screen_time: true,
             super_strict: false,
         }
     }
@@ -424,6 +428,84 @@ pub struct DayStats {
     pub blocked_launches: u32,
     /// Completed pomodoro focus rounds.
     pub pomodoros: u32,
+    /// `focus_seconds` per hour of the day (24 entries once used).
+    pub focus_hours: Vec<u32>,
+    /// Seconds at the computer (keyboard or mouse used within the last minute).
+    pub active_seconds: u64,
+    /// Of those, seconds on programs or websites that are in a block list,
+    /// whether they were blocked at the time or not.
+    pub distracted_seconds: u64,
+    /// Seconds in front per program (exe name, lower case).
+    pub apps: BTreeMap<String, u32>,
+    /// Seconds in front per website (domain), in browsers with the extension.
+    pub sites: BTreeMap<String, u32>,
+    /// Times each program was closed by a block.
+    pub closed_apps: BTreeMap<String, u32>,
+    /// Times each website showed the block page (browsers with the extension).
+    pub blocked_sites: BTreeMap<String, u32>,
+    /// Blocks you ended early: stopped quick blocks, ended schedules and
+    /// limits, stopped or skipped focus rounds.
+    pub early_stops: u32,
+}
+
+/// Programs and websites kept per day; the rest is dropped (smallest first).
+pub const STATS_TOP_N: usize = 40;
+/// Days of statistics kept.
+pub const STATS_DAYS: usize = 400;
+
+impl DayStats {
+    pub fn add_focus(&mut self, hour: u32, seconds: u64) {
+        self.focus_seconds += seconds;
+        if self.focus_hours.len() != 24 {
+            self.focus_hours.resize(24, 0);
+        }
+        let h = (hour as usize).min(23);
+        self.focus_hours[h] = self.focus_hours[h].saturating_add(seconds as u32);
+    }
+
+    /// Takes the larger value of everything (merging two copies of the same day).
+    pub fn merge_max(&mut self, other: &DayStats) {
+        self.focus_seconds = self.focus_seconds.max(other.focus_seconds);
+        self.blocked_launches = self.blocked_launches.max(other.blocked_launches);
+        self.pomodoros = self.pomodoros.max(other.pomodoros);
+        self.active_seconds = self.active_seconds.max(other.active_seconds);
+        self.distracted_seconds = self.distracted_seconds.max(other.distracted_seconds);
+        self.early_stops = self.early_stops.max(other.early_stops);
+        if self.focus_hours.len() < other.focus_hours.len() {
+            self.focus_hours.resize(other.focus_hours.len(), 0);
+        }
+        for (i, v) in other.focus_hours.iter().enumerate() {
+            self.focus_hours[i] = self.focus_hours[i].max(*v);
+        }
+        for (mine, theirs) in [
+            (&mut self.apps, &other.apps),
+            (&mut self.sites, &other.sites),
+            (&mut self.closed_apps, &other.closed_apps),
+            (&mut self.blocked_sites, &other.blocked_sites),
+        ] {
+            for (k, v) in theirs {
+                let e = mine.entry(k.clone()).or_default();
+                *e = (*e).max(*v);
+            }
+        }
+    }
+}
+
+/// Adds `n` to `key`, keeping only the [`STATS_TOP_N`] largest entries.
+pub fn bump(map: &mut BTreeMap<String, u32>, key: &str, n: u32) {
+    let e = map.entry(key.to_string()).or_default();
+    *e = e.saturating_add(n);
+    if map.len() > STATS_TOP_N + 10 {
+        let mut values: Vec<u32> = map.values().copied().collect();
+        values.sort_unstable_by(|a, b| b.cmp(a));
+        let cut = values[STATS_TOP_N - 1];
+        let mut kept = 0;
+        map.retain(|_, v| {
+            let keep = *v >= cut && kept < STATS_TOP_N;
+            kept += keep as usize;
+            keep
+        });
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -46,11 +46,17 @@ async function activeUrl() {
 
 let lastRules = null; // last full rules (with rev), to reuse when unchanged
 
+// Websites whose block page was shown, not yet reported to the app.
+const pendingHits = {};
+
 async function fetchRules() {
   try {
     const incognito = await api.extension.isAllowedIncognitoAccess().catch(() => false);
     const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl(), i: incognito ? "1" : "0" });
     if (lastRules?.rev) params.set("r", lastRules.rev);
+    // Block-page views for the statistics, sent until the app has them.
+    const hits = Object.entries(pendingHits).slice(0, 50);
+    if (hits.length) params.set("bh", hits.map(([d, n]) => `${d}*${n}`).join(","));
     if (lastRules?.youtubeSubscriptions) {
       const subs = await subscriptions();
       if (subs) params.set("ys", subs.status === "ok" ? String(subs.ids.length) : "-1");
@@ -60,6 +66,10 @@ async function fetchRules() {
       cache: "no-store",
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    for (const [d, n] of hits) {
+      pendingHits[d] -= n;
+      if (pendingHits[d] <= 0) delete pendingHits[d];
+    }
     let rules = await res.json();
     maybeUpdate(rules.latestVersion);
     if (rules.privateWindowsRequired && !incognito) explainPrivateWindows();
@@ -384,6 +394,12 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       })
       .then(sendResponse, () => sendResponse(false));
     return true;
+  } else if (msg?.type === "blocked-view" && typeof msg.site === "string" && sender.url?.startsWith(BLOCK_PAGE)) {
+    // Count it for the blocked entry that matched (m.youtube.com → youtube.com).
+    const host = msg.site.toLowerCase().slice(0, 253);
+    const entries = [...(current?.blocked || []), ...(current?.blockedPaths || []).map((p) => p.split("/")[0])];
+    const site = entries.find((d) => host === d || host.endsWith("." + d)) ?? host;
+    if (/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(site) && Object.keys(pendingHits).length < 500) pendingHits[site] = (pendingHits[site] || 0) + 1;
   } else if (msg?.type === "yt-embed" && typeof msg.videoId === "string") {
     // A YouTube player embedded on another website: may this video play?
     (async () => {

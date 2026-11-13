@@ -4,6 +4,11 @@ const params = new URLSearchParams(location.search);
 const reason = params.get("r");
 const channel = params.get("c");
 const host = reason === "channel" ? "This video" : hostOf(target) || "This site";
+// For the statistics: which site showed the block page (counted once per page).
+{
+  const site = reason === "channel" ? "youtube.com" : hostOf(target);
+  if (site) api.runtime.sendMessage({ type: "blocked-view", site }).catch(() => {});
+}
 // Shown inside a YouTube player embedded on another site: keep it small, no tab buttons.
 if (params.get("e") === "1") document.body.classList.add("embed");
 const QUOTES = [

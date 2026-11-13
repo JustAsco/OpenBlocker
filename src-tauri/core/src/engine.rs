@@ -631,6 +631,43 @@ fn activity_matches(state: &State, list: &BlockList, activity: &Activity) -> boo
     list.mode == ListMode::Block && (site_hit || app_hit)
 }
 
+/// Is the activity on something in any block list? Expands every list
+/// (community lists can hold tens of thousands of sites), so callers should
+/// cache the answer per program and website.
+pub fn is_distracting(state: &State, activity: &Activity) -> bool {
+    state.lists.iter().any(|l| activity_matches(state, l, activity))
+}
+
+/// Screen time for the statistics: `seconds` at the computer, on the
+/// program and website in `activity`, and whether that's something in a
+/// block list ([`is_distracting`]). Nothing is recorded while idle or with
+/// screen time off.
+pub fn record_activity(state: &mut State, local: &NaiveDateTime, seconds: u64, activity: &Activity, distracting: bool) {
+    if seconds == 0 || !state.settings.record_screen_time || (activity.exe.is_none() && activity.url.is_none()) {
+        return;
+    }
+    let site = activity.url.as_deref().and_then(crate::hosts::normalize_domain);
+    let day = state.stats.entry(date_key(local)).or_default();
+    day.active_seconds += seconds;
+    if distracting {
+        day.distracted_seconds += seconds;
+    }
+    if let Some(exe) = &activity.exe {
+        bump(&mut day.apps, &normalize_exe(exe), seconds as u32);
+    }
+    if let Some(site) = site {
+        bump(&mut day.sites, &site, seconds as u32);
+    }
+}
+
+/// Drops statistics older than [`STATS_DAYS`] days.
+pub fn prune_stats(state: &mut State) {
+    while state.stats.len() > STATS_DAYS {
+        let oldest = state.stats.keys().next().cloned().unwrap();
+        state.stats.remove(&oldest);
+    }
+}
+
 /// Adds `seconds` of usage to every limit that applies today and covers
 /// `activity`. Returns ids of limits that were used up by this call.
 pub fn add_usage(state: &mut State, local: &NaiveDateTime, seconds: u64, activity: &Activity) -> Vec<String> {
@@ -1456,6 +1493,53 @@ mod tests {
         let mut new = old.clone();
         new.settings.private_windows = PrivateWindows::On;
         assert!(lock_violation(&old, &new, now, &local).is_none());
+    }
+
+    #[test]
+    fn statistics() {
+        let local = at(4, 14, 30);
+        let mut st = State::default();
+        let yt = Activity { exe: Some("Chrome.exe".into()), url: Some("https://www.youtube.com/watch?v=x".into()) };
+        let code = Activity { exe: Some("Code.exe".into()), url: None };
+        assert!(is_distracting(&st, &yt), "youtube.com is in the Video list");
+        assert!(!is_distracting(&st, &code));
+        record_activity(&mut st, &local, 5, &yt, true);
+        record_activity(&mut st, &local, 3, &code, false);
+        record_activity(&mut st, &local, 4, &Activity::default(), false); // idle
+        let day = &st.stats[&date_key(&local)];
+        assert_eq!((day.active_seconds, day.distracted_seconds), (8, 5));
+        assert_eq!(day.sites.get("youtube.com"), Some(&5));
+        assert_eq!(day.apps.get("chrome.exe"), Some(&5));
+        assert_eq!(day.apps.get("code.exe"), Some(&3));
+        // Off: nothing recorded.
+        st.settings.record_screen_time = false;
+        record_activity(&mut st, &local, 5, &code, false);
+        assert_eq!(st.stats[&date_key(&local)].active_seconds, 8);
+
+        // Focus by hour, and merging two copies of a day.
+        let mut a = DayStats::default();
+        a.add_focus(14, 60);
+        a.add_focus(99, 1);
+        assert_eq!((a.focus_seconds, a.focus_hours[14], a.focus_hours[23]), (61, 60, 1));
+        let mut b = DayStats { early_stops: 2, ..Default::default() };
+        bump(&mut b.closed_apps, "steam.exe", 3);
+        b.merge_max(&a);
+        assert_eq!((b.focus_seconds, b.focus_hours[14], b.early_stops, b.closed_apps["steam.exe"]), (61, 60, 2, 3));
+
+        // Only the biggest entries are kept per day.
+        let mut m = std::collections::BTreeMap::new();
+        for i in 0..200u32 {
+            bump(&mut m, &format!("site{i}.com"), i);
+        }
+        assert!(m.len() <= STATS_TOP_N + 10);
+        assert!(m.contains_key("site199.com") && !m.contains_key("site1.com"));
+
+        // History is capped.
+        for d in 0..(STATS_DAYS + 5) {
+            st.stats.insert(format!("2020-{:04}", d), DayStats::default());
+        }
+        prune_stats(&mut st);
+        assert_eq!(st.stats.len(), STATS_DAYS);
     }
 
     #[test]

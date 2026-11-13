@@ -35,7 +35,7 @@ export function Dashboard({ go }: { go: (p: Page) => void }) {
           <QuickBlock state={state} go={go} />
         </div>
         <div className="flex flex-col gap-5 lg:col-span-2">
-          <StatsCard state={state} />
+          <StatsCard state={state} go={go} />
           <TodayTimeline state={state} go={go} />
         </div>
       </div>
@@ -338,7 +338,7 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
   );
 }
 
-function StatsCard({ state }: { state: State }) {
+function StatsCard({ state, go }: { state: State; go: (p: Page) => void }) {
   const today = state.stats[dateKey(new Date())] ?? { focusSeconds: 0, blockedLaunches: 0, pomodoros: 0 };
   const week = useMemo(() => {
     const out = [];
@@ -364,7 +364,12 @@ function StatsCard({ state }: { state: State }) {
   return (
     <div className="card p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-display text-lg font-semibold">{t("Your focus")}</h2>
+        <h2 className="font-display text-lg font-semibold">
+          {t("Your focus")}
+          <button className="ml-3 text-xs font-normal text-muted hover:text-fg" onClick={() => go("stats")}>
+            {t("All statistics →")}
+          </button>
+        </h2>
         {streak > 0 && (
           <span className="chip border-orange-500/30 bg-orange-500/10 text-orange-300">
             <Flame size={13} /> {t("{n}-day streak", { n: streak })}
