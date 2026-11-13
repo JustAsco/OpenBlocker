@@ -132,9 +132,30 @@ pub struct Bridge {
     /// (revision, serialised rules with the revision included)
     rules: Mutex<Arc<(String, String)>>,
     pub error: Mutex<Option<String>>,
+    /// Websites whose block page was shown, as reported by the extension,
+    /// not yet picked up for the statistics.
+    site_hits: Mutex<Vec<String>>,
+}
+
+/// Parses the extension's block-page report: `domain*count,domain*count`.
+/// Only plausible domains and counts are taken.
+pub fn parse_site_hits(raw: &str) -> Vec<String> {
+    let mut out = vec![];
+    for item in raw.split(',').take(50) {
+        let (domain, n) = item.split_once('*').unwrap_or((item, "1"));
+        let Some(domain) = openblocker_core::hosts::normalize_domain(domain) else { continue };
+        let n = n.parse::<usize>().unwrap_or(1).clamp(1, 100);
+        out.extend(std::iter::repeat_n(domain, n));
+    }
+    out
 }
 
 impl Bridge {
+    /// Block-page views reported since the last call.
+    pub fn take_site_hits(&self) -> Vec<String> {
+        std::mem::take(&mut *self.site_hits.lock().unwrap())
+    }
+
     /// Browsers with a recent heartbeat.
     pub fn connected(&self, now_ms: i64) -> Vec<BrowserSeen> {
         let mut v: Vec<_> = self
@@ -245,6 +266,13 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
         return;
     }
     let hint = http::query_param(&url, "b").unwrap_or("");
+    if let Some(raw) = http::query_param(&url, "bh") {
+        let hits = parse_site_hits(&http::percent_decode(raw));
+        let mut pending = bridge.site_hits.lock().unwrap();
+        if pending.len() < 10_000 {
+            pending.extend(hits);
+        }
+    }
     let version = http::query_param(&url, "v").unwrap_or("").chars().take(20).collect::<String>();
     let active_url = http::query_param(&url, "a")
         .map(http::percent_decode)
@@ -318,4 +346,18 @@ fn owning_exe(client_port: u16) -> Option<String> {
 #[cfg(not(windows))]
 fn owning_exe(_client_port: u16) -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod site_hit_tests {
+    use super::parse_site_hits;
+
+    #[test]
+    fn parses_block_page_reports() {
+        assert_eq!(parse_site_hits("youtube.com*2,www.reddit.com"), ["youtube.com", "youtube.com", "reddit.com"]);
+        // Junk is dropped, counts are capped.
+        assert!(parse_site_hits("not a domain*5,,*").is_empty());
+        assert_eq!(parse_site_hits("x.com*999999").len(), 100);
+        assert_eq!(parse_site_hits(&"a.com,".repeat(500)).len(), 50);
+    }
 }

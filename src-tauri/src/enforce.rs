@@ -86,6 +86,8 @@ pub struct Outcome {
     pub killed: Vec<String>,
     /// Browsers about to be closed, or closed, for lacking the extension.
     pub browser_notices: Vec<BrowserNotice>,
+    /// Websites whose block page was shown (one entry per view).
+    pub site_hits: Vec<String>,
 }
 
 pub struct Enforcer {
@@ -174,6 +176,7 @@ impl Enforcer {
         bridge.set_rules(&extension_rules(state, &blocks));
         let mut out = Outcome {
             killed: self.killer.enforce(&apps),
+            site_hits: bridge.take_site_hits(),
             ..Default::default()
         };
         // Closing browsers: never just because the extension isn't installed

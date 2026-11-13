@@ -11,13 +11,46 @@ const KEY = "openblocker-mock-state-v2";
 function defaultState(): State {
   const today = new Date();
   const stats: State["stats"] = {};
-  for (let i = 0; i < 7; i++) {
+  // Three months of plausible demo statistics (deterministic, so screenshots are stable).
+  const wave = (i: number, k: number) => Math.abs(Math.sin(i * k + 1));
+  for (let i = 0; i < 90; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
+    if (i > 3 && wave(i, 2.3) < 0.12) continue; // a few days without data
+    const weekend = d.getDay() === 0 || d.getDay() === 6;
+    const focusH = (weekend ? 0.8 : 2) + wave(i, 1.7) * (weekend ? 1.5 : 4);
+    // Focus mostly in the morning and early afternoon.
+    const shape = [0, 0, 0, 0, 0, 0, 0, 0.2, 0.6, 1, 1, 0.8, 0.3, 0.6, 0.9, 0.8, 0.6, 0.4, 0.2, 0.2, 0.3, 0.2, 0.1, 0];
+    const sum = shape.reduce((a, b) => a + b, 0);
+    const focusHours = shape.map((v) => Math.round(((v / sum) * focusH * 3600) * (0.7 + wave(i + v, 3.1) * 0.6)));
+    const active = Math.round((focusH + 2 + wave(i, 0.9) * 3) * 3600);
+    const distracted = Math.round(active * (0.12 + wave(i, 1.3) * 0.25));
     stats[dateKey(d)] = {
-      focusSeconds: Math.round((1.5 + Math.abs(Math.sin(i * 1.7)) * 4) * 3600),
-      blockedLaunches: Math.round(Math.abs(Math.cos(i)) * 9),
-      pomodoros: Math.round(Math.abs(Math.sin(i + 1)) * 8),
+      focusSeconds: focusHours.reduce((a, b) => a + b, 0),
+      blockedLaunches: Math.round(wave(i, 1.1) * 9),
+      pomodoros: Math.round(wave(i, 0.7) * 8),
+      focusHours,
+      activeSeconds: active,
+      distractedSeconds: distracted,
+      apps: {
+        "code.exe": Math.round(active * 0.32),
+        "chrome.exe": Math.round(active * 0.3),
+        "discord.exe": Math.round(active * 0.08 * wave(i, 2)),
+        "spotify.exe": Math.round(active * 0.05),
+        "obsidian.exe": Math.round(active * 0.07 * wave(i, 1.5)),
+        "steam.exe": weekend ? Math.round(active * 0.15) : 0,
+      },
+      sites: {
+        "github.com": Math.round(active * 0.12),
+        "youtube.com": Math.round(distracted * 0.55),
+        "reddit.com": Math.round(distracted * 0.25),
+        "stackoverflow.com": Math.round(active * 0.05),
+        "docs.rs": Math.round(active * 0.03 * wave(i, 2.2)),
+        "x.com": Math.round(distracted * 0.1),
+      },
+      closedApps: { "steam.exe": Math.round(wave(i, 1.1) * 5), "discord.exe": Math.round(wave(i, 0.4) * 3) },
+      blockedSites: { "youtube.com": Math.round(wave(i, 1.9) * 7), "reddit.com": Math.round(wave(i, 0.8) * 4), "instagram.com": Math.round(wave(i, 2.7) * 2) },
+      earlyStops: wave(i, 3.3) > 0.85 ? 1 : 0,
     };
   }
   return {
@@ -54,6 +87,7 @@ function defaultState(): State {
       extensionFallback: "strict",
       privateWindows: "default",
       superStrict: false,
+      recordScreenTime: true,
     },
     stats,
   };
@@ -358,6 +392,14 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       return FAKE_APPS;
     case "app_icon":
       return null;
+    case "clear_screen_time":
+      for (const day of Object.values(state.stats)) {
+        day.apps = {};
+        day.sites = {};
+        day.activeSeconds = 0;
+        day.distractedSeconds = 0;
+      }
+      return commit();
     case "get_autostart":
       return localStorage.getItem("mock-autostart") === "1";
     case "set_autostart":

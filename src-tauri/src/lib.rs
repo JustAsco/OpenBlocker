@@ -11,7 +11,7 @@ mod password;
 mod platform;
 pub mod service;
 
-use chrono::{Local, NaiveDateTime};
+use chrono::{Local, NaiveDateTime, Timelike};
 use openblocker_core::engine::{self, ActiveBlock, Event};
 use openblocker_core::hosts;
 use openblocker_core::model::*;
@@ -258,10 +258,7 @@ impl Inner {
         theirs.migrate();
         theirs.source_sites = load_sources(&self.sources_dir, &theirs);
         for (day, mine) in &self.state.stats {
-            let t = theirs.stats.entry(day.clone()).or_default();
-            t.focus_seconds = t.focus_seconds.max(mine.focus_seconds);
-            t.blocked_launches = t.blocked_launches.max(mine.blocked_launches);
-            t.pomodoros = t.pomodoros.max(mine.pomodoros);
+            theirs.stats.entry(day.clone()).or_default().merge_max(mine);
         }
         self.state = theirs;
         self.save();
@@ -598,6 +595,7 @@ fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<Str
         i.challenges.remove(&id);
         i.state.sessions.retain(|s| s.id != id);
         i.state.permanent.retain(|p| p.id != id);
+        i.day().early_stops += 1;
         Ok(i.commit())
     })
 }
@@ -619,6 +617,7 @@ fn end_block(shared: tauri::State<'_, Shared>, id: String, password: Option<Stri
                 i.throttle.check(password.as_deref(), hash.as_deref(), now_ms())?;
             }
             i.state.pomodoro = None;
+            i.day().early_stops += 1;
             return Ok(i.commit());
         };
         if block.locked && !block.password {
@@ -632,6 +631,22 @@ fn end_block(shared: tauri::State<'_, Shared>, id: String, password: Option<Stri
             i.throttle.check(password.as_deref(), hash.as_deref(), now_ms())?;
         }
         engine::end_block(&mut i.state, &id, now_ms(), &local_now())?;
+        i.day().early_stops += 1;
+        Ok(i.commit())
+    })
+}
+
+/// Deletes the recorded screen time (programs, websites, time at the
+/// computer) from all statistics. Focus time and blocked counts stay.
+#[tauri::command]
+fn clear_screen_time(shared: tauri::State<'_, Shared>) -> Res<Snapshot> {
+    with(&shared, |i| {
+        for day in i.state.stats.values_mut() {
+            day.apps.clear();
+            day.sites.clear();
+            day.active_seconds = 0;
+            day.distracted_seconds = 0;
+        }
         Ok(i.commit())
     })
 }
@@ -690,6 +705,9 @@ fn pomodoro_skip(shared: tauri::State<'_, Shared>) -> Res<Snapshot> {
     with(&shared, |i| {
         pomodoro_guard(i)?;
         let p = i.state.pomodoro.clone().unwrap();
+        if p.phase == PomodoroPhase::Focus {
+            i.day().early_stops += 1;
+        }
         // Skipping does not count as a completed pomodoro.
         let (next, _) = engine::advance_pomodoro(&p, now_ms());
         i.state.pomodoro = next;
@@ -701,6 +719,9 @@ fn pomodoro_skip(shared: tauri::State<'_, Shared>) -> Res<Snapshot> {
 fn pomodoro_stop(shared: tauri::State<'_, Shared>) -> Res<Snapshot> {
     with(&shared, |i| {
         pomodoro_guard(i)?;
+        if i.state.pomodoro.as_ref().is_some_and(|p| p.phase == PomodoroPhase::Focus) {
+            i.day().early_stops += 1;
+        }
         i.state.pomodoro = None;
         Ok(i.commit())
     })
@@ -1141,6 +1162,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
     let mut enforcer = enforce::Enforcer::new();
     let mut kill_seq: Option<u64> = None;
     let mut was_frozen: Option<bool> = None;
+    // (program|website, is it in a block list, when that was checked)
+    let mut distract_cache = (String::new(), false, 0i64);
     loop {
         let now = now_ms();
         let local = local_now();
@@ -1172,13 +1195,22 @@ fn engine_loop(app: AppHandle, shared: Shared) {
                 let secs = i.focus_carry_ms / 1000;
                 if secs > 0 {
                     i.focus_carry_ms %= 1000;
-                    i.day().focus_seconds += secs as u64;
+                    i.day().add_focus(local.hour(), secs as u64);
                 }
             }
 
             i.usage_carry_ms += elapsed;
             let secs = (i.usage_carry_ms / 1000) as u64;
             i.usage_carry_ms %= 1000;
+            // Screen time. Whether something is in a block list is cached per
+            // program and website: checking expands every list, including
+            // big community lists.
+            let key = format!("{}|{}", activity.exe.as_deref().unwrap_or(""), activity.url.as_deref().and_then(openblocker_core::hosts::normalize_domain).unwrap_or_default());
+            if distract_cache.0 != key || now - distract_cache.2 > 60_000 {
+                distract_cache = (key, engine::is_distracting(&i.state, &activity), now);
+            }
+            engine::record_activity(&mut i.state, &local, secs, &activity, distract_cache.1);
+            engine::prune_stats(&mut i.state);
             for id in engine::add_usage(&mut i.state, &local, secs, &activity) {
                 if let Some(name) = i.state.limits.iter().find(|l| l.id == id).and_then(|l| i.state.list(&l.list_id)).map(|l| l.name.clone()) {
                     let lang = i18n::language(&i.state.settings.language);
@@ -1237,11 +1269,13 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         }
         let mut killed = vec![];
         let mut browser_notices = vec![];
+        let mut site_hits = vec![];
         match service::client::status(kill_seq.unwrap_or(u64::MAX)) {
             Ok(status) => {
                 if kill_seq.is_some() {
                     killed = status.killed.clone();
                     browser_notices = status.browser_notices.clone();
+                    site_hits = status.site_hits.clone();
                 }
                 kill_seq = Some(status.seq);
                 let mut i = shared.lock().unwrap();
@@ -1270,6 +1304,7 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
             killed = out.killed;
             browser_notices = out.browser_notices;
+            site_hits = out.site_hits;
         }
 
         // 4. App allowlist: the service can't see the user's windows, so the
@@ -1284,8 +1319,22 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             }
         }
 
+        if !site_hits.is_empty() {
+            let mut i = shared.lock().unwrap();
+            let day = i.day();
+            for site in &site_hits {
+                bump(&mut day.blocked_sites, site, 1);
+            }
+        }
         if !killed.is_empty() {
-            shared.lock().unwrap().day().blocked_launches += killed.len() as u32;
+            {
+                let mut i = shared.lock().unwrap();
+                let day = i.day();
+                day.blocked_launches += killed.len() as u32;
+                for exe in &killed {
+                    bump(&mut day.closed_apps, &engine::normalize_exe(exe), 1);
+                }
+            }
             let _ = app.emit("app-blocked", &killed);
             let lang = i18n::language(&settings.language);
             notes.push((i18n::tr(lang, "Blocked 🚫", &[]), i18n::tr(lang, "{apps} was closed.", &[("apps", &killed.join(", "))])));
@@ -1499,6 +1548,7 @@ pub fn run() {
             remove_category_source,
             installed_apps,
             app_icon,
+            clear_screen_time,
             get_autostart,
             set_autostart,
             extension_path,

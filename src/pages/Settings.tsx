@@ -256,6 +256,25 @@ export function SettingsPage() {
                 }
               />
             )}
+            <Toggle
+              label={t("Record screen time")}
+              hint={
+                <>
+                  {t("For the statistics: which programs and websites you use, and for how long. Kept on this PC only.")}{" "}
+                  <button
+                    className="underline underline-offset-2 hover:text-fg"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (confirm(t("Delete all recorded screen time? Focus time and blocked counts stay."))) run(api.clearScreenTime, "Screen time history deleted.");
+                    }}
+                  >
+                    {t("Delete history")}
+                  </button>
+                </>
+              }
+              checked={settings.recordScreenTime}
+              onChange={(recordScreenTime) => save({ recordScreenTime })}
+            />
             <Toggle label={t("Notifications")} hint={t("Pomodoro phases, finished blocks and closed apps.")} checked={settings.notifications} onChange={(notifications) => save({ notifications })} />
             <Toggle label={t("Keep running in the tray")} hint={t("Closing the window keeps your blocks active.")} checked={settings.closeToTray} onChange={(closeToTray) => save({ closeToTray })} />
             <Toggle label={t("Show website icons")} hint={t("Icons are loaded from Google's favicon service.")} checked={siteIcons} onChange={setSiteIcons} />

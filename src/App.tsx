@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CalendarDays, Hourglass, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
+import { BarChart3, CalendarDays, Hourglass, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
 import { BrowserWarning } from "./components/BrowserWarning";
 import { ExtensionPrompt } from "./components/ExtensionPrompt";
@@ -10,13 +10,14 @@ import { CategoriesPage } from "./pages/Categories";
 import { Dashboard } from "./pages/Dashboard";
 import { FocusPage } from "./pages/Focus";
 import { FreezePage } from "./pages/Freeze";
+import { StatsPage } from "./pages/Stats";
 import { LimitsPage } from "./pages/Limits";
 import { ListsPage } from "./pages/Lists";
 import { SchedulePage } from "./pages/Schedule";
 import { SettingsPage } from "./pages/Settings";
 import { t } from "./lib/i18n";
 
-export type Page = "today" | "lists" | "categories" | "schedule" | "limits" | "focus" | "freeze" | "settings";
+export type Page = "today" | "lists" | "categories" | "schedule" | "limits" | "focus" | "freeze" | "stats" | "settings";
 
 const NAV: { id: Page; label: string; icon: typeof Timer }[] = [
   { id: "today", label: t("Today"), icon: LayoutDashboard },
@@ -26,6 +27,7 @@ const NAV: { id: Page; label: string; icon: typeof Timer }[] = [
   { id: "limits", label: t("Daily limits"), icon: Hourglass },
   { id: "focus", label: t("Focus timer"), icon: Timer },
   { id: "freeze", label: t("Freeze PC"), icon: Snowflake },
+  { id: "stats", label: t("Statistics"), icon: BarChart3 },
   { id: "settings", label: t("Settings"), icon: SettingsIcon },
 ];
 
@@ -129,6 +131,7 @@ export default function App() {
           {page === "categories" && <CategoriesPage go={setPage} />}
           {page === "schedule" && <SchedulePage />}
           {page === "limits" && <LimitsPage go={setPage} />}
+          {page === "stats" && <StatsPage go={setPage} />}
           {page === "focus" && <FocusPage />}
           {page === "freeze" && <FreezePage />}
           {page === "settings" && <SettingsPage />}
