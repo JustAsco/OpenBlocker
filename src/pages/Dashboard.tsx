@@ -94,11 +94,15 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
           const locked = blocks.some((b) => b.locked);
           const sessionBlock = blocks.find((b) => b.source === "session");
           const session = sessionBlock ? state.sessions.find((s) => s.id === sessionBlock.refId) : undefined;
-          const others = blocks.filter((b) => b.source !== "session");
+          const permBlock = blocks.find((b) => b.source === "permanent");
+          const perm = permBlock ? state.permanent.find((p) => p.id === permBlock.refId) : undefined;
+          const others = blocks.filter((b) => b.source !== "session" && b.source !== "permanent");
           const othersEnd = others.length ? Math.max(...others.map((b) => b.endsAt)) : 0;
           const labels = blocks.map((b) =>
             b.source === "session"
               ? t("Quick block")
+              : b.source === "permanent"
+                ? t("Permanent")
               : b.source === "pomodoro"
                 ? t("Focus timer")
                 : b.source === "limit"
@@ -117,14 +121,22 @@ function ActiveCard({ active, state, onUnlock, go }: { active: ActiveBlock[]; st
               </div>
               <div className="mt-3 flex items-end justify-between gap-3">
                 <div>
-                  <div className="font-display text-2xl font-semibold tabular-nums">{fmtDuration(endsAt - now)}</div>
+                  <div className="font-display text-2xl font-semibold tabular-nums">{perm ? t("Always on") : fmtDuration(endsAt - now)}</div>
                   <div className="text-xs text-muted">
-                    {t("until {time}", { time: fmtTime(endsAt) })} ·{" "}
+                    {perm ? t("until you turn it off") : t("until {time}", { time: fmtTime(endsAt) })} ·{" "}
                     {list.mode === "allow" ? t("only {n} sites allowed", { n: targets.sites.size }) : t("{n} sites", { n: targets.sites.size })} ·{" "}
                     {list.appMode === "allow" ? t("only {n} apps allowed", { n: targets.apps.size }) : t("{n} apps", { n: targets.apps.size })}
                   </div>
                 </div>
-                {!session && others.length > 0 && others.every((b) => !b.locked || b.password) && (
+                {perm && (
+                  <button
+                    className="btn-ghost px-3 py-1.5"
+                    onClick={() => (perm.lock === "none" ? run(() => api.stopSession(perm.id), "Permanent block turned off.") : onUnlock(perm.id))}
+                  >
+                    {perm.lock === "password" ? <KeyRound size={14} /> : perm.lock === "text" ? <TypeIcon size={14} /> : <Square size={14} />} {t("Turn off")}
+                  </button>
+                )}
+                {!session && !perm && others.length > 0 && others.every((b) => !b.locked || b.password) && (
                   <button
                     className="btn-ghost px-3 py-1.5"
                     title={others.some((b) => b.password) ? t("Needs the unlock password") : t("Ends it for now; it starts again next time")}
@@ -188,6 +200,7 @@ const PRESETS = [
   { label: "2h", min: 120 },
   { label: "4h", min: 240 },
   { label: t("Rest of day"), min: -1 },
+  { label: t("Always"), min: -2 },
 ];
 
 function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
@@ -199,12 +212,17 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
   const [minutes, setMinutes] = usePref("quick-minutes", 60);
   const [custom, setCustom] = usePref("quick-custom", "");
   const [savedLock, setLock] = usePref<LockMode>("quick-lock", "none");
-  const lock = savedLock === "password" && !snapStatus.passwordSet ? "none" : savedLock;
+  const always = minutes === -2 && !custom;
+  // A permanent block is never locked outright: that would be a trap.
+  const lock = (savedLock === "password" && !snapStatus.passwordSet) || (always && savedLock === "timer") ? "none" : savedLock;
   const [confirming, setConfirming] = useState(false);
   const [settingPassword, setSettingPassword] = useState(false);
 
   const effective = minutes === -1 ? Math.max(1, 1440 - minuteOfDay(new Date())) : custom ? Number(custom) : minutes;
-  const start = () => run(() => api.startSession(listId, effective, lock), t("Blocking for {duration}. You've got this!", { duration: fmtMinutes(effective) }));
+  const start = () =>
+    always
+      ? run(() => api.startPermanent(listId, lock), "Permanent block on.")
+      : run(() => api.startSession(listId, effective, lock), t("Blocking for {duration}. You've got this!", { duration: fmtMinutes(effective) }));
 
   if (state.lists.length === 0) {
     return (
@@ -280,7 +298,12 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
             label: <><KeyRound size={14} /> {t("Password")}</>,
             title: snapStatus.passwordSet ? t("Stopping requires the unlock password") : t("Set an unlock password first (someone you trust can type it)"),
           },
-          { value: "timer", label: <><Lock size={14} /> {t("Locked")}</>, title: t("Cannot be stopped until the time is over") },
+          {
+            value: "timer",
+            label: <><Lock size={14} /> {t("Locked")}</>,
+            title: always ? t("A permanent block can't be locked: it would never end.") : t("Cannot be stopped until the time is over"),
+            disabled: always,
+          },
         ]}
       />
 
@@ -289,7 +312,8 @@ function QuickBlock({ state, go }: { state: State; go: (p: Page) => void }) {
         disabled={!listId || !effective}
         onClick={() => (lock === "timer" ? setConfirming(true) : start())}
       >
-        {lock === "timer" ? <Lock size={18} /> : <Play size={18} />} {t("Start blocking · {duration}", { duration: fmtMinutes(effective) })}
+        {lock === "timer" ? <Lock size={18} /> : <Play size={18} />}{" "}
+        {always ? t("Block permanently") : t("Start blocking · {duration}", { duration: fmtMinutes(effective) })}
       </button>
       <LockWarning
         open={confirming}

@@ -653,6 +653,58 @@ const de: Record<string, string> = {
   "“{name}” is locked: no new exceptions until it ends.": "„{name}“ ist gesperrt: Bis zum Ende keine neuen Ausnahmen.",
   "“{name}” is locked: you can remove allowed apps, but not add any.":
     "„{name}“ ist gesperrt: Du kannst erlaubte Apps entfernen, aber keine hinzufügen.",
+
+  // ── Extension optional, private windows, permanent blocks ──
+  "A browser whose extension isn't allowed in private windows is closed after a minute's warning, while features need the extension.":
+    "Ein Browser, dessen Erweiterung in privaten Fenstern nicht erlaubt ist, wird nach einer Minute Vorwarnung geschlossen, solange Funktionen die Erweiterung brauchen.",
+  "A permanent block can't be locked: it would never end.": "Eine Dauersperre kann nicht gesperrt werden: Sie würde nie enden.",
+  "A website allowlist can't be enforced without the extension either way. You can change this later in Settings.":
+    "Eine Website-Positivliste lässt sich ohne Erweiterung in keinem Fall durchsetzen. Du kannst das später in den Einstellungen ändern.",
+  Always: "Immer",
+  "Always on": "Immer an",
+  "Block permanently": "Dauerhaft sperren",
+  "Block the whole site": "Die ganze Website sperren",
+  Default: "Standard",
+  "Don't include private windows": "Private Fenster nicht einbeziehen",
+  "Leave it open": "Offen lassen",
+  Lenient: "Locker",
+  "Lenient: leave it open": "Locker: offen lassen",
+  "Like “On”, but the warning lets you choose to not include private windows.":
+    "Wie „An“, aber in der Warnung kannst du wählen, private Fenster nicht einzubeziehen.",
+  "Not checked: private windows aren't covered by the extension's features.":
+    "Nicht geprüft: Private Fenster sind von den Funktionen der Erweiterung nicht abgedeckt.",
+  OK: "OK",
+  Off: "Aus",
+  On: "An",
+  "Parts of websites, YouTube channels and website allowlists need the extension. In browsers without it, block those whole sites, or leave them open.":
+    "Teile von Websites, YouTube-Kanäle und Website-Positivlisten brauchen die Erweiterung. In Browsern ohne sie werden diese Websites ganz gesperrt oder offen gelassen.",
+  Permanent: "Dauerhaft",
+  "Private windows": "Private Fenster",
+  "Some of this block needs the browser extension. Until it's installed, those parts aren't blocked.":
+    "Ein Teil dieser Sperre braucht die Browsererweiterung. Bis sie installiert ist, werden diese Teile nicht gesperrt.",
+  "Some of this block needs the browser extension. Until it's installed, those sites are blocked completely.":
+    "Ein Teil dieser Sperre braucht die Browsererweiterung. Bis sie installiert ist, werden diese Websites ganz gesperrt.",
+  Strict: "Streng",
+  "Strict mode: while websites are blocked, browsers without the extension are closed after a minute's warning. Off by default: then a browser is only closed if the extension was switched off in it during a block.":
+    "Strenger Modus: Solange Websites gesperrt sind, werden Browser ohne die Erweiterung nach einer Minute Vorwarnung geschlossen. Standardmäßig aus: Dann wird ein Browser nur geschlossen, wenn die Erweiterung darin während einer Sperre ausgeschaltet wurde.",
+  "Strict: block the whole site": "Streng: ganze Website sperren",
+  "The OpenBlocker extension isn't allowed in private windows, so they'd get around this block. Turn on “Allow in Incognito” in the extension's details (a page in the browser shows how).":
+    "Die OpenBlocker-Erweiterung ist in privaten Fenstern nicht erlaubt, damit ließe sich diese Sperre umgehen. Aktiviere „Im Inkognitomodus zulassen“ in den Details der Erweiterung (eine Seite im Browser zeigt, wie).",
+  "The OpenBlocker extension isn't running in this browser, and “Close browsers without the extension” is on.":
+    "Die OpenBlocker-Erweiterung läuft in diesem Browser nicht, und „Browser ohne die Erweiterung schließen“ ist an.",
+  "The OpenBlocker extension was turned off in this browser during a block. Turn it back on to keep the browser open.":
+    "Die OpenBlocker-Erweiterung wurde in diesem Browser während einer Sperre ausgeschaltet. Schalte sie wieder ein, damit der Browser offen bleibt.",
+  "This block uses features only the extension can enforce: parts of websites (like youtube.com/shorts), YouTube channels or a website allowlist. Without the extension:":
+    "Diese Sperre nutzt Funktionen, die nur die Erweiterung durchsetzen kann: Teile von Websites (wie youtube.com/shorts), YouTube-Kanäle oder eine Website-Positivliste. Ohne die Erweiterung:",
+  "Those features simply don't apply": "Diese Funktionen greifen dann einfach nicht",
+  "Turn off": "Ausschalten",
+  "Without the extension": "Ohne die Erweiterung",
+  "e.g. all of YouTube while only some channels are allowed": "z. B. ganz YouTube, solange nur einige Kanäle erlaubt sind",
+  "until you turn it off": "bis du sie ausschaltest",
+  "{browser} will be closed in {n} s": "{browser} wird in {n} s geschlossen",
+  "Permanent block on.": "Dauersperre an.",
+  "Permanent block turned off.": "Dauersperre ausgeschaltet.",
+  "Private windows aren't included any more.": "Private Fenster werden nicht mehr einbezogen.",
 };
 
 export default de;

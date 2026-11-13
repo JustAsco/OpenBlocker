@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { CalendarDays, Hourglass, LayoutDashboard, Puzzle, Settings as SettingsIcon, ShieldAlert, ShieldBan, Snowflake, Tags, Timer } from "lucide-react";
 import { useEffect, useState } from "react";
+import { BrowserWarning } from "./components/BrowserWarning";
 import { ExtensionPrompt } from "./components/ExtensionPrompt";
 import { Toasts, usePref } from "./components/ui";
 import { api, isTauri } from "./lib/api";
@@ -109,11 +110,13 @@ export default function App() {
             )}
           </div>
         )}
-        {status.extensionRequired && status.extension.length === 0 && (
+        {status.extensionFeatures && status.extension.length === 0 && (
           <div className="sticky top-0 z-20 flex items-center gap-3 border-b border-cyan-500/30 bg-cyan-500/10 px-8 py-2.5 text-sm text-cyan-100 backdrop-blur">
             <Puzzle size={18} className="shrink-0" />
             <span className="flex-1">
-              {status.allowlistSites !== null ? t("An allowlist is active.") : t("Website blocking requires the extension.")} {t("Browsers without the OpenBlocker extension are closed until it's installed.")}
+              {snap.state.settings.extensionFallback === "strict"
+                ? t("Some of this block needs the browser extension. Until it's installed, those sites are blocked completely.")
+                : t("Some of this block needs the browser extension. Until it's installed, those parts aren't blocked.")}
             </span>
             <button className="btn-ghost py-1" onClick={() => setPage("settings")}>
               {t("Set up extension")}
@@ -132,6 +135,7 @@ export default function App() {
         </div>
       </main>
       <ExtensionPrompt go={setPage} />
+      <BrowserWarning />
       <Toasts />
     </div>
   );

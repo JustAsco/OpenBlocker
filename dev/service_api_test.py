@@ -200,6 +200,24 @@ def run_tests():
     check("everything reset, password included", st["sessions"] == [] and st.get("password") is None and len(st["lists"]) == 3)
     check("nothing locked any more: any state accepted", call("POST", "/svc/v1/state", state)[0] == 200)
 
+    # ── permanent blocks ──
+    code, st = call("GET", "/svc/v1/state")
+    trap = clone(st)
+    trap["permanent"] = [{"id": "p0", "listId": "social", "lock": "timer", "since": now}]
+    check("a locked permanent block is refused", call("POST", "/svc/v1/state", trap)[0] == 409)
+    perm = clone(st)
+    perm["permanent"] = [{"id": "p1", "listId": "social", "lock": "text", "since": now}]
+    check("a text-locked permanent block is accepted", call("POST", "/svc/v1/state", perm)[0] == 200)
+    code, st = call("GET", "/svc/v1/state")
+    gone = clone(st)
+    gone["permanent"] = []
+    check("removing it by publishing is refused", call("POST", "/svc/v1/state", gone)[0] == 409)
+    code, ch = call("POST", "/svc/v1/challenge", {"key": "p1"})
+    check("it has an unlock text", code == 200 and len(ch["text"]) >= 10)
+    check("typing it turns the block off", call("POST", "/svc/v1/unlock", {"key": "p1", "answer": ch["text"]})[0] == 200)
+    code, st = call("GET", "/svc/v1/state")
+    check("permanent block gone", st["permanent"] == [])
+
 
 if __name__ == "__main__":
     main()

@@ -2,6 +2,8 @@ import { language, t } from "./i18n";
 import type { ActiveBlock, AppEntry, BlockList, Schedule, State } from "./types";
 
 export const MINUTE = 60_000;
+/** endsAt of permanent blocks (year 9999), as in model.rs. */
+export const PERMANENT_END = 253_402_300_799_000;
 // Weekday names in the UI language, Monday first (2024-01-01 was a Monday).
 const weekdays = (style: "short" | "long") =>
   Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i).toLocaleDateString(language(), { weekday: style }));
@@ -85,6 +87,8 @@ export function activeBlocks(state: State, now = Date.now(), usage: Record<strin
   for (const s of state.sessions)
     if (s.startedAt <= now && now < s.endsAt)
       out.push({ listId: s.listId, source: "session", refId: s.id, endsAt: s.endsAt, locked: s.lock !== "none", password: s.lock === "password" });
+  for (const p of state.permanent ?? [])
+    out.push({ listId: p.listId, source: "permanent", refId: p.id, endsAt: PERMANENT_END, locked: p.lock !== "none", password: p.lock === "password" });
   const date = new Date(now);
   for (const sch of state.schedules) {
     const left = scheduleRemaining(sch, date);

@@ -16,6 +16,8 @@ pub enum Source {
     Pomodoro,
     /// A daily usage limit that has been used up.
     Limit,
+    /// A block that runs until turned off.
+    Permanent,
 }
 
 /// One reason a list is currently being enforced.
@@ -126,6 +128,16 @@ pub fn active_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<A
             });
         }
     }
+    for p in &state.permanent {
+        out.push(ActiveBlock {
+            list_id: p.list_id.clone(),
+            source: Source::Permanent,
+            ref_id: p.id.clone(),
+            ends_at: PERMANENT_END,
+            locked: p.lock != LockMode::None,
+            password: p.lock == LockMode::Password,
+        });
+    }
     for sch in &state.schedules {
         if let Some(left) = schedule_remaining_ms(sch, local) {
             out.push(ActiveBlock {
@@ -183,6 +195,7 @@ pub fn end_block(state: &mut State, ref_id: &str, now_ms: i64, local: &NaiveDate
         .ok_or("This block isn't running.")?;
     match block.source {
         Source::Session => state.sessions.retain(|s| s.id != ref_id),
+        Source::Permanent => state.permanent.retain(|p| p.id != ref_id),
         Source::Pomodoro => state.pomodoro = None,
         Source::Schedule | Source::Limit => {
             state.skips.retain(|s| s.until > now_ms);
@@ -296,6 +309,34 @@ pub fn allowed_sites(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<S
             .extend(sites.iter().map(|s| crate::hosts::site_domain(s).to_string()));
     }
     allowed
+}
+
+/// Do the active blocks use anything only the browser extension can enforce
+/// (parts of sites, YouTube channels, website allowlists, exceptions for
+/// parts of a site)?
+pub fn needs_extension(state: &State, blocks: &[ActiveBlock]) -> bool {
+    let (sites, _) = enforced_targets(state, blocks);
+    sites.iter().any(|s| crate::hosts::is_path_site(s))
+        || youtube_channels(state, blocks).is_some()
+        || allowed_sites(state, blocks).is_some()
+        || !excepted_paths(state, blocks).is_empty()
+}
+
+/// Strict fallback without the extension: whole domains the hosts file
+/// blocks instead (the domain of each blocked part of a site, and YouTube
+/// while only some channels are allowed). Website allowlists have no hosts
+/// equivalent.
+pub fn strict_fallback_domains(state: &State, blocks: &[ActiveBlock]) -> BTreeSet<String> {
+    let (sites, _) = enforced_targets(state, blocks);
+    let mut out: BTreeSet<String> = sites
+        .iter()
+        .filter(|s| crate::hosts::is_path_site(s))
+        .map(|s| crate::hosts::site_domain(s).to_string())
+        .collect();
+    if youtube_channels(state, blocks).is_some() {
+        out.extend(["youtube.com", "youtu.be", "youtube-nocookie.com"].map(String::from));
+    }
+    out
 }
 
 /// If an app allowlist is active: the only programs that may be used
@@ -665,7 +706,14 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
     }
     if !locked.is_empty() {
         let (o, n) = (&old.settings, &new.settings);
+        let private_rank = |p: PrivateWindows| match p {
+            PrivateWindows::Off => 0,
+            PrivateWindows::Default => 1,
+            PrivateWindows::On => 2,
+        };
         if (o.block_subdomains && !n.block_subdomains)
+            || (o.extension_fallback == ExtensionFallback::Strict && n.extension_fallback == ExtensionFallback::Lenient)
+            || private_rank(n.private_windows) < private_rank(o.private_windows)
             || (o.hide_short_video_feeds && !n.hide_short_video_feeds)
             || (o.require_extension && !n.require_extension)
             || n.unlock_text_length < o.unlock_text_length
@@ -1297,5 +1345,52 @@ mod tests {
         let mut new = old.clone();
         new.lists[2].app_mode = ListMode::Block;
         assert!(lock_violation(&old, &new, now, &local).is_some());
+    }
+
+    #[test]
+    fn permanent_blocks_and_fallback() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut st = State::default();
+        st.permanent.push(PermanentBlock { id: "p".into(), list_id: "video".into(), lock: LockMode::Text, since: 0 });
+        let blocks = active_blocks(&st, now, &local);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].locked && !blocks[0].password && blocks[0].ends_at == PERMANENT_END);
+        // A text-locked permanent block can't be removed by publishing.
+        let mut new = st.clone();
+        new.permanent.clear();
+        assert!(lock_violation(&st, &new, now, &local).is_some());
+        // ...but the service can end it (after the text was typed).
+        end_block(&mut new, "p", now, &local).unwrap_or(());
+        let mut ended = st.clone();
+        end_block(&mut ended, "p", now, &local).unwrap();
+        assert!(ended.permanent.is_empty());
+
+        // Extension-only features and the strict fallback.
+        let mut st = State::default();
+        st.lists[1].categories.clear();
+        st.lists[1].sites = vec!["youtube.com/shorts".into(), "example.com".into()];
+        st.permanent.push(PermanentBlock { id: "p".into(), list_id: "video".into(), lock: LockMode::None, since: 0 });
+        let blocks = active_blocks(&st, now, &local);
+        assert!(needs_extension(&st, &blocks));
+        assert_eq!(strict_fallback_domains(&st, &blocks), ["youtube.com".to_string()].into());
+        st.lists[1].sites = vec!["example.com".into()];
+        assert!(!needs_extension(&st, &blocks));
+        st.lists[1].youtube_channels = vec!["@veritasium".into()];
+        assert!(needs_extension(&st, &blocks));
+        assert!(strict_fallback_domains(&st, &blocks).contains("youtu.be"));
+
+        // Loosening the fallback or private windows while locked is refused.
+        let mut old = State::default();
+        old.sessions.push(Session { id: "s".into(), list_id: "social".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Timer });
+        let mut new = old.clone();
+        new.settings.extension_fallback = ExtensionFallback::Lenient;
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        let mut new = old.clone();
+        new.settings.private_windows = PrivateWindows::Off;
+        assert!(lock_violation(&old, &new, now, &local).is_some());
+        let mut new = old.clone();
+        new.settings.private_windows = PrivateWindows::On;
+        assert!(lock_violation(&old, &new, now, &local).is_none());
     }
 }

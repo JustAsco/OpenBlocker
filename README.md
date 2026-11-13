@@ -91,11 +91,15 @@ src-tauri/
 
 - [x] Browser extension with block page and open-tab enforcement
 - [x] Extension: path-level blocking (`youtube.com/shorts`)
-- [x] Extension: incognito enforcement (shows whether private windows are covered; while the extension is required, browsers where they aren't are closed)
+- [x] The extension is optional: blocks that use features only it can enforce explain that when they start; without it you choose *strict* (the whole site is blocked through the hosts file) or *lenient* (it stays open)
+- [x] Browsers are only closed (after a minute's warning) if the extension was switched off in them during a block, if it isn't allowed in private windows (setting: Default with an opt-out, On, Off), or if you turn on "Close browsers without the extension"
+- [ ] **Super strict mode**: remember every browser that ever had the extension and close it during any block if the extension is missing
+- [ ] **Settings presets** (e.g. relaxed / balanced / strict) instead of setting every option by hand
 - [ ] Extension: publish to the Chrome Web Store and Firefox Add-ons (`python3 dev/package_extension.py` builds the zip; needs developer accounts)
 - [x] **Short videos**: built-in "Short videos" category plus hiding Shorts/Reels in feeds
 - [x] **YouTube channel allowlist** per block list
 - [x] Channel allowlist also hides thumbnails and recommendations of other channels, so YouTube only shows allowed channels
+- [ ] **Subscribed channels only**: allow exactly the channels you're subscribed to. Feasible: the extension runs in your signed-in browser and can read your subscriptions page (`youtube.com/feed/channels`), refreshing them now and then; no Google API key or sign-in in OpenBlocker needed. Caveats: only works while signed in to YouTube in that browser, and YouTube's page format changes from time to time
 - [x] Extension updates itself when the app ships a newer version (store installs ask the store); the app shows when it's outdated
 - [ ] YouTube channel allowlist for videos **embedded on other websites** (`youtube.com/embed/…`, `youtube-nocookie.com`): the extension needs to check the channel inside those frames too; today only youtube.com itself is checked
 - [x] Exceptions per block list (sites, parts of sites, apps)
@@ -109,6 +113,7 @@ src-tauri/
 - [x] Uninstall/settings protection during locked blocks
 - [x] Allowlist mode for websites
 - [x] Allowlist mode for apps
+- [x] Permanent blocks: on around the clock until you turn them off (flexible, type to unlock or password; never locked, that would be a trap)
 - [x] Usage limits ("max 30 min of YouTube per day")
 - [x] Importable community category lists (large adult/gambling/news domain lists)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
@@ -127,7 +132,7 @@ Contributions are very welcome. Open an issue to discuss bigger changes.
 - Parts of websites (`youtube.com/shorts`), exceptions for parts of a site and the YouTube channel allowlist only work in browsers with the extension. A site with a path exception (`reddit.com/r/rust`) is then blocked by the extension only, not the hosts file.
 - Reels that play inside Instagram's normal feed have ordinary post addresses, so they can't be told apart from other posts. Hiding Shorts/Reels in feeds depends on those sites' page structure and can break when they change it.
 - The channel allowlist doesn't check YouTube videos embedded on other websites yet (see the roadmap). The YouTube apps on phones and TVs aren't covered at all.
-- While the extension is required (allowlists, channel allowlists, or the setting), a browser without it, or without it in private windows, gets a one-minute warning (notification, and a help page in the browser if the extension runs there) before it's closed. Only its main process is ended, so it offers to restore your tabs.
+- Without the extension, website allowlists can't be enforced at all, and parts of sites and YouTube channels are either blocked as whole sites (strict) or not at all (lenient). A browser that gets closed (see the roadmap entry above) gets a one-minute warning first; only its main process is ended, so it offers to restore your tabs.
 - The extension is loaded unpacked (Developer mode) for now; Firefox only keeps it until restart until it's published on AMO. Private/incognito windows are only covered if you allow the extension there; Settings shows which browsers don't, and while the extension is required those browsers are closed.
 - An administrator who is determined enough can still get around it (e.g. disable the service and reboot). The service makes it much harder, not impossible.
 - Daily limits are counted by the app, so time only counts while it runs (it starts with Windows if you enable that, and the service restarts it during locks). Websites only count in browsers with the extension.
