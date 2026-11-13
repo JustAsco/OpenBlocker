@@ -42,7 +42,8 @@ export function TypeChallenge({ challenge, answer, onAnswer }: { challenge: stri
 /** Ends a text- or password-locked quick block early. */
 export function UnlockModal({ sessionId, onClose }: { sessionId: string | null; onClose: () => void }) {
   const { run, snap } = useStore();
-  const lock = snap?.state.sessions.find((s) => s.id === sessionId)?.lock;
+  // Quick blocks and permanent blocks are unlocked the same way.
+  const lock = (snap?.state.sessions.find((s) => s.id === sessionId) ?? snap?.state.permanent.find((p) => p.id === sessionId))?.lock;
   if (lock === "password") return <PasswordUnlock sessionId={sessionId!} onClose={onClose} />;
   return <TextUnlock sessionId={lock ? sessionId : null} onClose={onClose} run={run} />;
 }

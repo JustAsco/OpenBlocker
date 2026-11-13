@@ -38,6 +38,7 @@ function defaultState(): State {
     freeze: null,
     limits: [{ id: "l1", listId: "video", minutes: 45, days: [0, 1, 2, 3, 4, 5, 6], locked: false, password: false }],
     skips: [],
+    permanent: [],
     settings: {
       flushDns: true,
       notifications: true,
@@ -50,6 +51,8 @@ function defaultState(): State {
       hideShortVideoFeeds: true,
       unlockTextStyle: "random",
       language: "",
+      extensionFallback: "strict",
+      privateWindows: "default",
     },
     stats,
   };
@@ -118,7 +121,8 @@ function snapshot(): Snapshot {
       platform: "browser-preview",
       // localStorage "mock-extension" = "0" previews the app without a connected extension.
       extension: localStorage.getItem("mock-extension") === "0" ? [] : [{ exe: "chrome.exe", name: "Google Chrome", lastSeen: Date.now(), extensionVersion: "0.1.0" }],
-      extensionRequired: allowed !== null || (state.settings.requireExtension && sites.size > 0),
+      extensionFeatures:
+        allowed !== null || [...sites].some((s) => s.includes("/")) || state.lists.some((l) => ids.has(l.id) && (l.youtubeChannels?.length ?? 0) > 0),
       allowlistSites: allowed ? (allowed as Set<string>).size : null,
       bridgeError: null,
       usageToday: { ...usage },
@@ -283,12 +287,19 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       }
       return challenges.get(a.id);
     }
+    case "start_permanent": {
+      if (a.lock === "timer") fail("A permanent block can't be locked: it would never end.");
+      state.permanent = state.permanent ?? [];
+      if (!state.permanent.some((p) => p.listId === a.listId)) state.permanent.push({ id: uid(), listId: a.listId, lock: a.lock, since: now });
+      return commit();
+    }
     case "stop_session": {
-      const s = state.sessions.find((x) => x.id === a.id) ?? fail("Session not found.");
-      if (s.lock === "timer") fail(`Locked until ${new Date(s.endsAt).toLocaleTimeString()}. Stay strong 💪`);
+      const s = state.sessions.find((x) => x.id === a.id) ?? (state.permanent ?? []).find((x) => x.id === a.id) ?? fail("Session not found.");
+      if (s.lock === "timer") fail(`Locked until ${new Date((s as { endsAt: number }).endsAt).toLocaleTimeString()}. Stay strong 💪`);
       if (s.lock === "text" && a.answer !== challenges.get(a.id)) fail("The text doesn't match.");
       if (s.lock === "password" && a.answer !== mockPassword()) fail("Wrong password.");
       state.sessions = state.sessions.filter((x) => x.id !== a.id);
+      state.permanent = (state.permanent ?? []).filter((x) => x.id !== a.id);
       return commit();
     }
     case "end_block": {

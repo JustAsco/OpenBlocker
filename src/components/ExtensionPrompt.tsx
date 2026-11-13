@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Page } from "../App";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
-import { Modal } from "./ui";
+import { Modal, Segmented, usePref } from "./ui";
 import { t, tx } from "../lib/i18n";
 
 /** Give a browser that's already running the extension time to check in. */
@@ -19,7 +19,11 @@ export function ExtensionPrompt({ go }: { go: (p: Page) => void }) {
   const { snap, run } = useStore();
   const { status, state } = snap!;
   const blockingSites = status.blockedSites > 0 || status.allowlistSites !== null;
-  const wanted = blockingSites && status.extension.length === 0 && state.settings.suggestExtension;
+  // Features only the extension can enforce ask once for strict or lenient,
+  // even if suggestions are off; after that only the suggestion setting counts.
+  const [fallbackChosen, setFallbackChosen] = usePref("extension-fallback-chosen", false);
+  const askFallback = status.extensionFeatures && !fallbackChosen;
+  const wanted = blockingSites && status.extension.length === 0 && (state.settings.suggestExtension || askFallback);
   const [open, setOpen] = useState(false);
   const [never, setNever] = useState(false);
   const wasBlocking = useRef(false);
@@ -50,6 +54,7 @@ export function ExtensionPrompt({ go }: { go: (p: Page) => void }) {
 
   const close = () => {
     setOpen(false);
+    if (status.extensionFeatures) setFallbackChosen(true);
     if (never) run(() => api.saveSettings({ ...state.settings, suggestExtension: false }));
   };
   const hostsWorking = (status.service || status.elevated) && !status.hostsError;
@@ -80,6 +85,26 @@ export function ExtensionPrompt({ go }: { go: (p: Page) => void }) {
       <p className="mb-5 text-sm text-muted">
         {t("The extension blocks instantly, including open tabs, and shows a friendly page instead. Both work together, so you can add it any time.")}
       </p>
+      {status.extensionFeatures && (
+        <div className="mb-5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+          <p className="mb-3">
+            {t("This block uses features only the extension can enforce: parts of websites (like youtube.com/shorts), YouTube channels or a website allowlist. Without the extension:")}
+          </p>
+          <Segmented
+            className="w-full"
+            value={state.settings.extensionFallback}
+            onChange={(extensionFallback) => {
+              setFallbackChosen(true);
+              run(() => api.saveSettings({ ...state.settings, extensionFallback }));
+            }}
+            options={[
+              { value: "strict", label: t("Strict: block the whole site"), title: t("e.g. all of YouTube while only some channels are allowed") },
+              { value: "lenient", label: t("Lenient: leave it open"), title: t("Those features simply don't apply") },
+            ]}
+          />
+          <p className="mt-2 text-xs text-cyan-100/70">{t("A website allowlist can't be enforced without the extension either way. You can change this later in Settings.")}</p>
+        </div>
+      )}
       <label className="mb-5 flex cursor-pointer items-center gap-2 text-sm text-muted">
         <input type="checkbox" className="accent-violet-500" checked={never} onChange={(e) => setNever(e.target.checked)} />
         {t("Don't suggest this again")}

@@ -27,6 +27,34 @@ async function call<T>(cmd: string, args?: Args): Promise<T> {
   return mockInvoke(cmd, args) as Promise<T>;
 }
 
+/** A browser will be (or was) closed; see enforce::BrowserNotice. */
+export interface BrowserNotice {
+  browser: string;
+  closed: boolean;
+  reason: "deactivated" | "privateWindows" | "missing";
+}
+
+/** Browser warnings from the backend. The mock fires one via window.mockBrowserWarning(). */
+export function onBrowserWarning(cb: (n: BrowserNotice) => void): () => void {
+  if (isTauri) {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<BrowserNotice>("browser-warning", (e) => cb(e.payload)).then((u) => {
+        if (cancelled) u();
+        else unlisten = u;
+      }),
+    );
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }
+  const w = window as unknown as { mockBrowserWarning?: (reason?: BrowserNotice["reason"]) => void };
+  w.mockBrowserWarning = (reason = "privateWindows") => cb({ browser: "Google Chrome", closed: false, reason });
+  return () => delete w.mockBrowserWarning;
+}
+
 export function onSnapshot(cb: (s: Snapshot) => void): () => void {
   if (isTauri) {
     let unlisten: (() => void) | undefined;
@@ -61,6 +89,7 @@ export const api = {
     call<Snapshot>("start_session", { listId, minutes, lock }),
   extendSession: (id: string, minutes: number) => call<Snapshot>("extend_session", { id, minutes }),
   unlockChallenge: (id: string) => call<string>("unlock_challenge", { id }),
+  startPermanent: (listId: string, lock: LockMode) => call<Snapshot>("start_permanent", { listId, lock }),
   stopSession: (id: string, answer?: string) => call<Snapshot>("stop_session", { id, answer }),
   /** Ends a running schedule, used-up limit or the focus timer early. */
   endBlock: (id: string, password?: string) => call<Snapshot>("end_block", { id, password }),

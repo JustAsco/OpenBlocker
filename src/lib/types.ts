@@ -84,6 +84,14 @@ export interface Session {
   lock: LockMode;
 }
 
+/** Runs around the clock until turned off; never "timer"-locked. */
+export interface PermanentBlock {
+  id: string;
+  listId: string;
+  lock: LockMode;
+  since: number;
+}
+
 export type PomodoroPhase = "focus" | "break" | "longBreak";
 
 export interface PomodoroConfig {
@@ -129,6 +137,10 @@ export interface Settings {
   unlockTextStyle: "random" | "reflection";
   /** UI language ("en", "de"); "" = follow the system. */
   language: string;
+  /** Without the extension: block whole sites (strict) or leave them open (lenient). */
+  extensionFallback: "strict" | "lenient";
+  /** Close browsers whose extension can't see private windows (default: with an opt-out). */
+  privateWindows: "default" | "on" | "off";
 }
 
 export interface DayStats {
@@ -150,9 +162,10 @@ export interface State {
   limits: UsageLimit[];
   /** Schedules and limits ended early, until their planned end. */
   skips: { refId: string; until: number }[];
+  permanent: PermanentBlock[];
 }
 
-export type Source = "session" | "schedule" | "pomodoro" | "limit";
+export type Source = "session" | "schedule" | "pomodoro" | "limit" | "permanent";
 
 export interface ActiveBlock {
   listId: string;
@@ -176,7 +189,8 @@ export interface Status {
   service: boolean;
   platform: string;
   extension: BrowserSeen[];
-  extensionRequired: boolean;
+  /** The running blocks use features only the extension can enforce. */
+  extensionFeatures: boolean;
   allowlistSites: number | null;
   bridgeError: string | null;
   /** Seconds used today per usage limit id. */

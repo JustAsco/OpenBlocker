@@ -252,6 +252,17 @@ fn random_text(len: usize) -> String {
 
 /// The text to type to end a text-locked quick block early: random
 /// characters or reflection sentences, depending on the settings.
+/// Lock of a quick block or permanent block (both are ended with a typed
+/// text or the password, depending on how they were started).
+pub fn manual_lock(state: &State, id: &str) -> Option<LockMode> {
+    state
+        .sessions
+        .iter()
+        .find(|s| s.id == id)
+        .map(|s| s.lock)
+        .or_else(|| state.permanent.iter().find(|p| p.id == id).map(|p| p.lock))
+}
+
 pub fn unlock_text(state: &State, session_id: &str) -> String {
     use openblocker_core::model::UnlockTextStyle;
     let len = state.settings.unlock_text_length.clamp(10, 1000) as usize;
@@ -259,8 +270,13 @@ pub fn unlock_text(state: &State, session_id: &str) -> String {
         UnlockTextStyle::Random => random_text(len),
         UnlockTextStyle::Reflection => {
             let session = state.sessions.iter().find(|s| s.id == session_id);
-            let list = session.and_then(|s| state.list(&s.list_id)).map(|l| l.name.as_str()).unwrap_or("");
-            let ends = session.map(|s| s.ends_at).unwrap_or_else(now_ms);
+            let permanent = state.permanent.iter().find(|p| p.id == session_id);
+            let list_id = session.map(|s| &s.list_id).or(permanent.map(|p| &p.list_id));
+            let list = list_id.and_then(|id| state.list(id)).map(|l| l.name.as_str()).unwrap_or("");
+            // A permanent block has no end: talk about the rest of today.
+            let ends = session
+                .map(|s| s.ends_at)
+                .unwrap_or_else(|| now_ms() + openblocker_core::engine::ms_until_midnight(&local_now()));
             let until = chrono::DateTime::from_timestamp_millis(ends)
                 .map(|d| d.with_timezone(&Local).format("%H:%M").to_string())
                 .unwrap_or_default();
@@ -343,6 +359,10 @@ impl Svc {
             .filter(|(id, _)| incoming.category(id).is_some_and(|c| c.source.is_some()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        // A permanent block that can't be turned off would be a trap.
+        if incoming.permanent.iter().any(|p| p.lock == LockMode::Timer) {
+            return Err("A permanent block can't be locked: it would never end.".into());
+        }
         if self.has_state {
             if let Some(why) = engine::lock_violation(&self.state, &incoming, now_ms(), &local_now()) {
                 return Err(why);
@@ -363,8 +383,7 @@ impl Svc {
             let len = (self.state.settings.unlock_text_length as usize * 3).clamp(300, 1000);
             random_text(len)
         } else {
-            let s = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?;
-            if s.lock != LockMode::Text {
+            if manual_lock(&self.state, key).ok_or("Session not found.")? != LockMode::Text {
                 return Err("This block can't be unlocked with a text.".into());
             }
             unlock_text(&self.state, key)
@@ -378,7 +397,7 @@ impl Svc {
             if self.any_lock() && !typed_ok() {
                 return Err("The text doesn't match.".into());
             }
-        } else if !self.state.sessions.iter().any(|s| s.id == key) {
+        } else if manual_lock(&self.state, key).is_none() {
             // A schedule, limit or the focus timer: only the password ends it early.
             let block = engine::active_blocks(&self.state, now_ms(), &local_now())
                 .into_iter()
@@ -391,7 +410,7 @@ impl Svc {
                 self.throttle.check(answer, self.state.password.as_deref(), now_ms())?;
             }
         } else {
-            let lock = self.state.sessions.iter().find(|s| s.id == key).ok_or("Session not found.")?.lock;
+            let lock = manual_lock(&self.state, key).ok_or("Session not found.")?;
             match lock {
                 LockMode::Text if !typed_ok() => return Err("The text doesn't match.".into()),
                 LockMode::Text => {}

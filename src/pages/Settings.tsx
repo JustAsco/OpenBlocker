@@ -161,9 +161,46 @@ export function SettingsPage() {
             })}
           </p>
           <div className="border-t border-line">
+            <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <span>
+                <span className="block text-sm font-medium">{t("Without the extension")}</span>
+                <span className="mt-0.5 block text-xs text-muted">
+                  {t("Parts of websites, YouTube channels and website allowlists need the extension. In browsers without it, block those whole sites, or leave them open.")}
+                </span>
+              </span>
+              <Segmented
+                value={settings.extensionFallback}
+                onChange={(extensionFallback) => save({ extensionFallback })}
+                options={[
+                  { value: "strict", label: t("Strict"), title: t("Block the whole site") },
+                  { value: "lenient", label: t("Lenient"), title: t("Leave it open"), disabled: locked && settings.extensionFallback === "strict" },
+                ]}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line py-3">
+              <span>
+                <span className="block text-sm font-medium">{t("Private windows")}</span>
+                <span className="mt-0.5 block text-xs text-muted">
+                  {settings.privateWindows === "off"
+                    ? t("Not checked: private windows aren't covered by the extension's features.")
+                    : settings.privateWindows === "on"
+                      ? t("A browser whose extension isn't allowed in private windows is closed after a minute's warning, while features need the extension.")
+                      : t("Like “On”, but the warning lets you choose to not include private windows.")}
+                </span>
+              </span>
+              <Segmented
+                value={settings.privateWindows}
+                onChange={(privateWindows) => save({ privateWindows })}
+                options={[
+                  { value: "default", label: t("Default"), disabled: locked && settings.privateWindows === "on" },
+                  { value: "on", label: t("On") },
+                  { value: "off", label: t("Off"), disabled: locked && settings.privateWindows !== "off" },
+                ]}
+              />
+            </div>
             <Toggle
               label={t("Close browsers without the extension")}
-              hint={t("While websites are blocked, browsers in which the extension isn't running are closed after 30 seconds. Always on while an allowlist is active.")}
+              hint={t("Strict mode: while websites are blocked, browsers without the extension are closed after a minute's warning. Off by default: then a browser is only closed if the extension was switched off in it during a block.")}
               checked={settings.requireExtension}
               lockedOn={locked}
               onChange={(requireExtension) => save({ requireExtension })}

@@ -85,8 +85,8 @@ struct Status {
     platform: &'static str,
     /// Browsers in which the extension is currently running.
     extension: Vec<bridge::BrowserSeen>,
-    /// Browsers without the extension are being closed right now.
-    extension_required: bool,
+    /// The running blocks use features only the extension can enforce.
+    extension_features: bool,
     /// Number of allowed sites while an allowlist is active.
     allowlist_sites: Option<usize>,
     bridge_error: Option<String>,
@@ -217,7 +217,7 @@ impl Inner {
                 service: self.svc.is_some(),
                 platform: std::env::consts::OS,
                 extension: self.browsers(now),
-                extension_required: enforce::extension_required(&self.state, &active),
+                extension_features: engine::needs_extension(&self.state, &active),
                 allowlist_sites: allowed.map(|a| a.len()),
                 bridge_error: match &self.svc {
                     Some(s) => s.bridge_error.clone(),
@@ -507,6 +507,38 @@ fn start_session(shared: tauri::State<'_, Shared>, list_id: String, minutes: u32
     })
 }
 
+/// Turns on a block that runs around the clock until turned off. Flexible,
+/// text or password; never locked outright.
+#[tauri::command]
+fn start_permanent(shared: tauri::State<'_, Shared>, list_id: String, lock: LockMode) -> Res<Snapshot> {
+    with(&shared, |i| {
+        if i.state.list(&list_id).is_none() {
+            return Err("Unknown block list.".into());
+        }
+        if lock == LockMode::Timer {
+            return Err("A permanent block can't be locked: it would never end.".into());
+        }
+        if lock == LockMode::Password && i.state.password.is_none() {
+            return Err("No password is set.".into());
+        }
+        if let Some(p) = i.state.permanent.iter_mut().find(|p| p.list_id == list_id) {
+            // Already on: it may only get stricter (None < Text < Password).
+            let rank = |l: LockMode| [LockMode::None, LockMode::Text, LockMode::Password].iter().position(|x| *x == l).unwrap_or(0);
+            if rank(lock) > rank(p.lock) {
+                p.lock = lock;
+            }
+        } else {
+            i.state.permanent.push(PermanentBlock {
+                id: uuid::Uuid::new_v4().to_string(),
+                list_id,
+                lock,
+                since: now_ms(),
+            });
+        }
+        Ok(i.commit())
+    })
+}
+
 #[tauri::command]
 fn extend_session(shared: tauri::State<'_, Shared>, id: String, minutes: u32) -> Res<Snapshot> {
     with(&shared, |i| {
@@ -544,13 +576,9 @@ fn unlock_challenge(shared: tauri::State<'_, Shared>, id: String) -> Res<String>
 #[tauri::command]
 fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<String>) -> Res<Snapshot> {
     with_unguarded(&shared, |i| {
-        let (lock, ends_at) = i
-            .state
-            .sessions
-            .iter()
-            .find(|s| s.id == id)
-            .map(|s| (s.lock, s.ends_at))
-            .ok_or("Session not found.")?;
+        // Quick blocks and permanent blocks are stopped the same way.
+        let lock = service::manual_lock(&i.state, &id).ok_or("Session not found.")?;
+        let ends_at = i.state.sessions.iter().find(|s| s.id == id).map(|s| s.ends_at).unwrap_or(PERMANENT_END);
         match lock {
             LockMode::Timer => return Err(format!("Locked until {}. Stay strong 💪", fmt_until(ends_at))),
             // The service checks the text and ends the block on its side too.
@@ -569,6 +597,7 @@ fn stop_session(shared: tauri::State<'_, Shared>, id: String, answer: Option<Str
         }
         i.challenges.remove(&id);
         i.state.sessions.retain(|s| s.id != id);
+        i.state.permanent.retain(|p| p.id != id);
         Ok(i.commit())
     })
 }
@@ -1095,7 +1124,7 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             }
             let mut notes: Vec<_> = events.iter().filter_map(|e| describe(e, &i.state)).collect();
 
-            if !i.blocks().is_empty() || i.state.freeze.is_some() {
+            if i.blocks().iter().any(|b| b.source != engine::Source::Permanent) || i.state.freeze.is_some() {
                 i.focus_carry_ms += elapsed;
                 let secs = i.focus_carry_ms / 1000;
                 if secs > 0 {
@@ -1221,11 +1250,24 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         for n in &browser_notices {
             let lang = i18n::language(&settings.language);
             let args = [("browser", n.browser.as_str())];
-            let why = if n.private_windows {
-                i18n::tr(lang, "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[])
-            } else {
-                i18n::tr(lang, "The OpenBlocker extension isn't running in it.", &[])
+            let why = match n.reason {
+                enforce::CloseReason::PrivateWindows => {
+                    i18n::tr(lang, "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[])
+                }
+                enforce::CloseReason::Deactivated => i18n::tr(lang, "The OpenBlocker extension was turned off during a block.", &[]),
+                enforce::CloseReason::Missing => i18n::tr(lang, "The OpenBlocker extension isn't running in it.", &[]),
             };
+            // The window offers the choices (allow, or don't include private windows).
+            if !n.closed {
+                let _ = app.emit("browser-warning", n);
+                if n.reason == enforce::CloseReason::PrivateWindows && settings.private_windows == PrivateWindows::Default {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                    }
+                }
+            }
             let title = if n.closed {
                 i18n::tr(lang, "{browser} was closed 🧩", &args)
             } else {
@@ -1359,6 +1401,7 @@ pub fn run() {
             extend_session,
             unlock_challenge,
             stop_session,
+            start_permanent,
             end_block,
             pomodoro_start,
             pomodoro_pause,

@@ -18,6 +18,14 @@ button.onclick = () => {
   const host = navigator.userAgent.includes("Edg/") ? "edge" : "chrome";
   api.tabs.create({ url: `${host}://extensions/?id=${api.runtime.id}` });
 };
+// In the "Default" setting, the app also offers to not include private windows.
+api.storage.local.get("rules").then(({ rules }) => {
+  if (rules?.privateWindowsOptOut) {
+    document.getElementById("status").textContent =
+      "Don't want private windows included? Choose “Don't include private windows” in the OpenBlocker app (or set Private windows to Off in its settings).";
+  }
+});
+
 async function check() {
   if (await api.extension.isAllowedIncognitoAccess()) {
     document.getElementById("status").textContent = "Done! Private windows are covered now. You can close this tab.";

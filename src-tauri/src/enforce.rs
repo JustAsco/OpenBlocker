@@ -6,16 +6,13 @@ use crate::{bridge, platform};
 use chrono::NaiveDateTime;
 use openblocker_core::engine::{self, ActiveBlock};
 use openblocker_core::hosts;
-use openblocker_core::model::State;
+use openblocker_core::model::{ExtensionFallback, PrivateWindows, State};
 use std::collections::BTreeSet;
 
-/// Allowlists and YouTube channel restrictions can only be enforced by the
-/// extension, so browsers without it are closed while one is active (or
-/// whenever websites are blocked, if the user opted in).
-pub fn extension_required(state: &State, active: &[ActiveBlock]) -> bool {
-    engine::allowed_sites(state, active).is_some()
-        || engine::youtube_channels(state, active).is_some()
-        || (state.settings.require_extension && !engine::enforced_targets(state, active).0.is_empty())
+/// Private windows are checked: extension-only features are active and the
+/// setting isn't Off.
+pub fn private_windows_required(state: &State, active: &[ActiveBlock]) -> bool {
+    state.settings.private_windows != PrivateWindows::Off && engine::needs_extension(state, active)
 }
 
 pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
@@ -38,14 +35,28 @@ pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
         youtube_channels: engine::youtube_channels(state, active).map(|c| c.into_iter().collect()),
         hide_short_video_feeds: state.settings.hide_short_video_feeds,
         latest_version: bridge::extension_version(),
-        extension_required: extension_required(state, active),
+        private_windows_required: private_windows_required(state, active),
+        private_windows_opt_out: state.settings.private_windows == PrivateWindows::Default,
     }
 }
 
 /// A browser is closed this long after the warning.
 pub const BROWSER_WARNING_MS: i64 = 60_000;
 
-/// Something to tell the user about a browser that lacks the extension.
+/// Why a browser is about to be closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CloseReason {
+    /// The extension ran in it during the current block and then stopped
+    /// (disabled or removed).
+    Deactivated,
+    /// The extension runs, but isn't allowed in private windows.
+    PrivateWindows,
+    /// "Close browsers without the extension" is on and it has none.
+    Missing,
+}
+
+/// Something to tell the user about a browser that will be, or was, closed.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserNotice {
@@ -53,8 +64,7 @@ pub struct BrowserNotice {
     pub browser: String,
     /// true: it was closed now; false: it will be closed in a minute.
     pub closed: bool,
-    /// The extension runs, but isn't allowed in private windows.
-    pub private_windows: bool,
+    pub reason: CloseReason,
 }
 
 #[derive(Default)]
@@ -73,6 +83,8 @@ pub struct Enforcer {
     retry_at: i64,
     /// Browsers found without the extension: exe -> when they were warned.
     warned: std::collections::HashMap<String, i64>,
+    /// Browsers in which the extension ran since the current blocks began.
+    had_extension: BTreeSet<String>,
 }
 
 impl Default for Enforcer {
@@ -89,6 +101,7 @@ impl Enforcer {
             hosts_error: None,
             retry_at: 0,
             warned: Default::default(),
+            had_extension: BTreeSet::new(),
         }
     }
 
@@ -105,12 +118,23 @@ impl Enforcer {
         let (mut sites, mut apps) = engine::enforced_targets(state, &blocks);
         // A site with an excepted path can't be in the hosts file (that would
         // block the excepted part too); the extension blocks the rest of it.
-        let excepted = engine::excepted_paths(state, &blocks);
-        sites.retain(|s| {
-            !excepted
-                .iter()
-                .any(|p| hosts::site_domain(p) == s || hosts::site_domain(p).ends_with(&format!(".{s}")))
-        });
+        // Without the extension anywhere, features only it can enforce either
+        // block the whole site (strict) or leave it open (lenient).
+        let ext_features = engine::needs_extension(state, &blocks);
+        let connected = bridge.connected(now_ms);
+        let strict = ext_features && connected.is_empty() && state.settings.extension_fallback == ExtensionFallback::Strict;
+        if strict {
+            sites.extend(engine::strict_fallback_domains(state, &blocks));
+        } else {
+            // A site with an excepted path can't be in the hosts file (that
+            // would block the excepted part too); the extension blocks the rest.
+            let excepted = engine::excepted_paths(state, &blocks);
+            sites.retain(|s| {
+                !excepted
+                    .iter()
+                    .any(|p| hosts::site_domain(p) == s || hosts::site_domain(p).ends_with(&format!(".{s}")))
+            });
+        }
         if state.freeze.is_some() && state.settings.freeze_blocks_task_manager {
             apps.insert("taskmgr.exe".into());
         }
@@ -138,29 +162,56 @@ impl Enforcer {
             killed: self.killer.enforce(&apps),
             ..Default::default()
         };
-        if extension_required(state, &blocks) {
-            // Warn first, close a minute later: closing a browser out of the
-            // blue looks like a crash.
-            let found = self.killer.unprotected_browsers(|exe| bridge.is_protected(exe, now_ms));
-            self.warned.retain(|exe, _| found.iter().any(|(e, _)| e == exe));
-            for (exe, name) in found {
-                let private_windows = bridge.private_windows_missing(&exe, now_ms);
-                match self.warned.get(&exe) {
-                    None => {
-                        self.warned.insert(exe, now_ms);
-                        out.browser_notices.push(BrowserNotice { browser: name, closed: false, private_windows });
-                    }
-                    Some(at) if now_ms - at >= BROWSER_WARNING_MS => {
-                        if self.killer.close_browser(&exe) {
-                            out.browser_notices.push(BrowserNotice { browser: name, closed: true, private_windows });
-                        }
-                        self.warned.remove(&exe);
-                    }
-                    Some(_) => {}
-                }
-            }
+        // Closing browsers: never just because the extension isn't installed
+        // (unless the user opted in), only when it was switched off during a
+        // block, or can't see private windows while that's required.
+        let websites = !engine::enforced_targets(state, &blocks).0.is_empty() || ext_features;
+        if websites {
+            self.had_extension.extend(connected.iter().map(|b| b.exe.to_lowercase()));
         } else {
-            self.warned.clear();
+            self.had_extension.clear();
+        }
+        let private_required = private_windows_required(state, &blocks);
+        let reason = |exe: &str| -> Option<CloseReason> {
+            if !websites {
+                return None;
+            }
+            let alive = bridge.alive(exe, now_ms);
+            if alive {
+                (private_required && bridge.private_windows_missing(exe, now_ms)).then_some(CloseReason::PrivateWindows)
+            } else if self.had_extension.contains(exe) {
+                Some(CloseReason::Deactivated)
+            } else if state.settings.require_extension {
+                Some(CloseReason::Missing)
+            } else {
+                None
+            }
+        };
+        // Warn first, close a minute later: closing a browser out of the blue
+        // looks like a crash.
+        let found: Vec<(String, String, CloseReason)> = self
+            .killer
+            .unprotected_browsers(|exe| reason(exe).is_none())
+            .into_iter()
+            .filter_map(|(exe, name)| reason(&exe).map(|r| (exe, name, r)))
+            .collect();
+        self.warned.retain(|exe, _| found.iter().any(|(e, _, _)| e == exe));
+        for (exe, name, reason) in found {
+            match self.warned.get(&exe) {
+                None => {
+                    self.warned.insert(exe, now_ms);
+                    out.browser_notices.push(BrowserNotice { browser: name, closed: false, reason });
+                }
+                Some(at) if now_ms - at >= BROWSER_WARNING_MS => {
+                    if self.killer.close_browser(&exe) {
+                        out.browser_notices.push(BrowserNotice { browser: name, closed: true, reason });
+                    }
+                    self.warned.remove(&exe);
+                    // Closed for good reason; if it comes back without the
+                    // extension, it gets a new warning.
+                }
+                Some(_) => {}
+            }
         }
         out
     }

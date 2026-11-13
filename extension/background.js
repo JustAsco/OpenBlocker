@@ -58,7 +58,7 @@ async function fetchRules() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     let rules = await res.json();
     maybeUpdate(rules.latestVersion);
-    if (rules.extensionRequired && !incognito) explainPrivateWindows();
+    if (rules.privateWindowsRequired && !incognito) explainPrivateWindows();
     if (rules.unchanged && lastRules?.rev === rules.rev) {
       // Big community lists aren't resent every two seconds.
       rules = lastRules;

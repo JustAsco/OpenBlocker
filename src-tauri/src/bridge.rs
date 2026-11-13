@@ -97,9 +97,11 @@ pub struct Rules {
     /// Version of the extension that ships with this app. An older extension
     /// reloads itself (an unpacked one then picks up the updated files).
     pub latest_version: &'static str,
-    /// Browsers without the extension (or without it in private windows) are
-    /// being closed; the extension explains how to fix that.
-    pub extension_required: bool,
+    /// Browsers whose extension isn't allowed in private windows get closed
+    /// after a warning; the extension explains how to allow it.
+    pub private_windows_required: bool,
+    /// The user may choose to not include private windows instead.
+    pub private_windows_opt_out: bool,
 }
 
 /// Version in `extension/manifest.json`, the extension this build ships with.
@@ -136,14 +138,15 @@ impl Bridge {
         v
     }
 
-    /// Does this browser have the extension running, including in private
-    /// windows? (Otherwise a private window would get around the blocks.)
-    pub fn is_protected(&self, exe: &str, now_ms: i64) -> bool {
+    /// The extension checked in from this browser recently enough. Browsers
+    /// may suspend it or delay its wake-ups for a while, and closing someone's
+    /// browser by mistake is far worse than a short gap.
+    pub fn alive(&self, exe: &str, now_ms: i64) -> bool {
         self.seen
             .lock()
             .unwrap()
             .get(&exe.to_lowercase())
-            .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS && b.incognito != Some(false))
+            .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS)
     }
 
     /// The extension runs in this browser but isn't allowed in private windows.

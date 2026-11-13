@@ -204,6 +204,24 @@ pub struct UsageLimit {
     pub password: bool,
 }
 
+/// A block that runs around the clock until it's turned off. It can be
+/// flexible, need a typed text or the password to turn off, but never be
+/// locked outright: a lock without an end would be a trap.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermanentBlock {
+    pub id: String,
+    pub list_id: String,
+    /// None, Text or Password (Timer is refused).
+    #[serde(default)]
+    pub lock: LockMode,
+    /// Unix ms, when it was turned on.
+    pub since: i64,
+}
+
+/// "Ends" of a permanent block, far enough away to never arrive.
+pub const PERMANENT_END: i64 = 253_402_300_799_000; // 9999-12-31
+
 /// A manually started, one-off block ("Block Instagram for 2 hours").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -323,8 +341,38 @@ pub struct Settings {
     pub hide_short_video_feeds: bool,
     /// What to type for "Type to unlock".
     pub unlock_text_style: UnlockTextStyle,
+    /// In browsers without the extension, features only it can enforce
+    /// (YouTube channels, parts of sites, website allowlists) either block
+    /// the whole site through the hosts file, or leave it open.
+    pub extension_fallback: ExtensionFallback,
+    /// Whether a browser whose extension isn't allowed in private windows is
+    /// closed (after a minute's warning) while such features are active.
+    pub private_windows: PrivateWindows,
     /// UI language code ("en", "de"); empty = follow Windows.
     pub language: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ExtensionFallback {
+    /// Block the whole site (e.g. all of youtube.com for a channel allowlist).
+    #[default]
+    Strict,
+    /// Leave the site open.
+    Lenient,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum PrivateWindows {
+    /// Warn and close after a minute, with the option to stop including
+    /// private windows (which switches to Off).
+    #[default]
+    Default,
+    /// Warn and close after a minute.
+    On,
+    /// Private windows aren't checked.
+    Off,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -350,6 +398,8 @@ impl Default for Settings {
             suggest_extension: true,
             hide_short_video_feeds: true,
             unlock_text_style: UnlockTextStyle::Random,
+            extension_fallback: ExtensionFallback::Strict,
+            private_windows: PrivateWindows::Default,
             language: String::new(),
         }
     }
@@ -387,6 +437,8 @@ pub struct State {
     pub password: Option<String>,
     /// Schedules and limits that were ended early.
     pub skips: Vec<Skip>,
+    /// Blocks that run around the clock until turned off.
+    pub permanent: Vec<PermanentBlock>,
     /// Domains of each category's community list (normalised), loaded from
     /// their own files. Never serialised.
     #[serde(skip)]
@@ -452,6 +504,7 @@ impl Default for State {
             usage: BTreeMap::new(),
             password: None,
             skips: vec![],
+            permanent: vec![],
             source_sites: BTreeMap::new(),
         }
     }
