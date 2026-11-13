@@ -236,6 +236,16 @@ const de: Record<string, string> = {
   "Paste a channel link or @handle, e.g. https://www.youtube.com/@veritasium":
     "Kanal-Link oder @Handle einfügen, z. B. https://www.youtube.com/@veritasium",
   "No restriction: videos from every channel play.": "Keine Einschränkung: Videos von allen Kanälen laufen.",
+  "Allow the channels I'm subscribed to": "Kanäle erlauben, die ich abonniert habe",
+  "Read from your YouTube subscriptions in browsers with the extension while you're signed in to YouTube there, and refreshed every 30 minutes. While a locked block runs, channels you subscribe to in the meantime don't count.":
+    "Wird in Browsern mit der Erweiterung aus deinen YouTube-Abos gelesen, solange du dort bei YouTube angemeldet bist, und alle 30 Minuten aktualisiert. Während eine gesperrte Sperre läuft, zählen neu abonnierte Kanäle nicht.",
+  "Locked: this can't be turned on until the block ends.": "Gesperrt: Das lässt sich erst einschalten, wenn die Sperre endet.",
+  "Only channels you're subscribed to.": "Nur Kanäle, die du abonniert hast.",
+  subscriptions: "Abos",
+  "{browser}: not signed in to YouTube": "{browser}: nicht bei YouTube angemeldet",
+  "{browser}: {n} subscribed channels": "{browser}: {n} abonnierte Kanäle",
+  "Your subscriptions are read the next time you open YouTube while this list is active.":
+    "Deine Abos werden gelesen, sobald du YouTube öffnest, während diese Liste aktiv ist.",
   "Tip: to block only Shorts and keep normal videos, include the “Short videos” category instead.":
     "Tipp: Um nur Shorts zu sperren und normale Videos zu behalten, nimm stattdessen die Kategorie „Kurzvideos“ auf.",
   "Locked while a block is running": "Gesperrt, solange eine Sperre läuft",
@@ -705,6 +715,37 @@ const de: Record<string, string> = {
   "Permanent block on.": "Dauersperre an.",
   "Permanent block turned off.": "Dauersperre ausgeschaltet.",
   "Private windows aren't included any more.": "Private Fenster werden nicht mehr einbezogen.",
+
+  // ── Presets & super strict mode ──
+  "How strict?": "Wie streng?",
+  "Pick a preset; you can still fine-tune every option below.": "Wähle eine Voreinstellung; jede Option darunter lässt sich weiter anpassen.",
+  "Custom: your settings don't match a preset.": "Eigene: Deine Einstellungen passen zu keiner Voreinstellung.",
+  Relaxed: "Entspannt",
+  Balanced: "Ausgewogen",
+  "Super strict": "Superstreng",
+  "Gentle nudges. Short unlock texts, browsers are never closed, extension-only features stay open without it.":
+    "Sanfte Erinnerungen. Kurze Entsperrtexte, Browser werden nie geschlossen, Funktionen der Erweiterung bleiben ohne sie offen.",
+  "The defaults. Blocks hold, but OpenBlocker only closes a browser if you switch the extension off during a block.":
+    "Die Standardwerte. Sperren halten, aber OpenBlocker schließt einen Browser nur, wenn du die Erweiterung während einer Sperre ausschaltest.",
+  "While websites are blocked, browsers without the extension are closed after a minute. Private windows count, longer reflection texts.":
+    "Während Websites gesperrt sind, werden Browser ohne Erweiterung nach einer Minute geschlossen. Private Fenster zählen, längere Nachdenk-Texte.",
+  "During any block, every browser needs the extension (also in private windows) or it's closed after 15 seconds.":
+    "Während jeder Sperre braucht jeder Browser die Erweiterung (auch in privaten Fenstern), sonst wird er nach 15 Sekunden geschlossen.",
+  "Not while a locked block is running: it would loosen blocking.": "Nicht während eine gesperrte Sperre läuft: Das würde das Sperren lockern.",
+  "“{name}” settings applied.": "Einstellungen „{name}“ übernommen.",
+  "Turn on super strict mode?": "Superstreng-Modus einschalten?",
+  "While any block runs, every browser without the OpenBlocker extension, or where it isn't allowed in private windows, is closed 15 seconds after a warning. You can't turn this off during a locked block.":
+    "Während eine Sperre läuft, wird jeder Browser ohne die OpenBlocker-Erweiterung oder in dem sie in privaten Fenstern nicht erlaubt ist, 15 Sekunden nach einer Warnung geschlossen. Während einer gesperrten Sperre lässt sich das nicht ausschalten.",
+  "The extension is running in: {browsers}.": "Die Erweiterung läuft in: {browsers}.",
+  "The extension isn't running in any browser yet: set it up first (below), or every browser will be closed during blocks.":
+    "Die Erweiterung läuft noch in keinem Browser: Richte sie zuerst ein (unten), sonst wird während Sperren jeder Browser geschlossen.",
+  "Turn on": "Einschalten",
+  "Super strict mode": "Superstreng-Modus",
+  "While any block runs (also app-only blocks, focus rounds and limits), every open browser needs the extension, also in private windows, or it's closed after 15 seconds. Without the extension, its features always block the whole site. Can't be turned off during a locked block.":
+    "Während eine Sperre läuft (auch reine App-Sperren, Fokusrunden und Limits), braucht jeder offene Browser die Erweiterung, auch in privaten Fenstern, sonst wird er nach 15 Sekunden geschlossen. Ohne Erweiterung sperren ihre Funktionen immer die ganze Website. Lässt sich während einer gesperrten Sperre nicht ausschalten.",
+  "Super strict mode overrides the three options below while a block runs.": "Der Superstreng-Modus übersteuert die drei Optionen darunter, solange eine Sperre läuft.",
+  "Super strict mode is on: during a block, every browser needs the OpenBlocker extension running. Install or turn it on in this browser to keep it open.":
+    "Der Superstreng-Modus ist an: Während einer Sperre braucht jeder Browser die laufende OpenBlocker-Erweiterung. Installiere sie oder schalte sie in diesem Browser ein, damit er offen bleibt.",
 };
 
 export default de;

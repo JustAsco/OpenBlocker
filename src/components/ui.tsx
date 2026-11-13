@@ -1,7 +1,9 @@
 import clsx from "clsx";
 import { CheckCircle2, Info, Lock, X, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api, isTauri } from "../lib/api";
+import { appSite } from "../lib/catalog";
 import { useStore } from "../lib/store";
 import type { BlockList } from "../lib/types";
 import { t } from "../lib/i18n";
@@ -62,19 +64,19 @@ function Letter({ text, size }: { text: string; size: number }) {
   );
 }
 
-export function SiteIcon({ domain, size = 18 }: { domain: string; size?: number }) {
+export function SiteIcon({ domain, size = 18, fallback, light }: { domain: string; size?: number; fallback?: string; light?: boolean }) {
   const [load] = usePref("site-icons", true);
   const [failed, setFailed] = useState(false);
   // Entries can be parts of a site ("youtube.com/shorts"): use the domain's icon.
   const host = domain.split("/")[0];
-  if (!load || failed) return <Letter text={host} size={size} />;
+  if (!load || failed) return <Letter text={fallback ?? host} size={size} />;
   return (
     <img
       src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`}
       width={size}
       height={size}
       alt=""
-      className="shrink-0 rounded-md bg-white/5"
+      className={clsx("shrink-0 rounded-md", light ? "bg-white/85 p-px" : "bg-white/5")}
       onError={() => setFailed(true)}
       referrerPolicy="no-referrer"
     />
@@ -83,18 +85,34 @@ export function SiteIcon({ domain, size = 18 }: { domain: string; size?: number 
 
 const iconCache = new Map<string, Promise<string | null>>();
 
-export function AppIcon({ name, path, size = 18 }: { name: string; path?: string | null; size?: number }) {
-  const [src, setSrc] = useState<string | null>(null);
+/**
+ * Icon of a program, in order of preference: the real icon of the installed
+ * program (by path, or looked up by exe name), the icon of its website for
+ * well-known apps that aren't installed, or a letter.
+ */
+export function AppIcon({ name, exe, path, size = 18 }: { name: string; exe?: string | null; path?: string | null; size?: number }) {
+  const key = isTauri && (path || exe) ? `${path ?? ""}|${(exe ?? "").toLowerCase()}` : null;
+  // undefined = still looking it up
+  const [src, setSrc] = useState<string | null | undefined>(key ? undefined : null);
   useEffect(() => {
-    if (!path || !isTauri) return;
+    if (!key) {
+      setSrc(null);
+      return;
+    }
     let alive = true;
-    if (!iconCache.has(path)) iconCache.set(path, api.appIcon(path).catch(() => null));
-    iconCache.get(path)!.then((s) => alive && setSrc(s));
+    setSrc(undefined);
+    if (!iconCache.has(key)) iconCache.set(key, api.appIcon(path ?? null, exe ?? null).catch(() => null));
+    iconCache.get(key)!.then((s) => alive && setSrc(s));
     return () => {
       alive = false;
     };
-  }, [path]);
+    // `key` covers path and exe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
   if (src) return <img src={src} width={size} height={size} alt="" className="shrink-0" />;
+  if (src === undefined) return <span className="shrink-0 rounded-md bg-elevated" style={{ width: size, height: size }} />;
+  const site = exe ? appSite(exe) : undefined;
+  if (site) return <SiteIcon domain={site.domain} size={size} fallback={name} light={site.dark} />;
   return <Letter text={name} size={size} />;
 }
 
@@ -208,7 +226,10 @@ export function Modal({ open, onClose, title, children, width = 480 }: { open: b
     };
   }, [open]);
   if (!open) return null;
-  return (
+  // Rendered into <body>: inside the page, an animated (transformed) parent
+  // would make "fixed" relative to the page instead of the window, and the
+  // dialog would end up off screen on long pages.
+  return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onMouseDown={onClose}>
       <div
         className="card animate-fade-up max-h-[90vh] w-full overflow-auto bg-panel p-6 shadow-2xl"
@@ -225,7 +246,8 @@ export function Modal({ open, onClose, title, children, width = 480 }: { open: b
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

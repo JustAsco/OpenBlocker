@@ -53,6 +53,7 @@ function defaultState(): State {
       language: "",
       extensionFallback: "strict",
       privateWindows: "default",
+      superStrict: false,
     },
     stats,
   };
@@ -120,9 +121,18 @@ function snapshot(): Snapshot {
       service: localStorage.getItem("mock-service") !== "0",
       platform: "browser-preview",
       // localStorage "mock-extension" = "0" previews the app without a connected extension.
-      extension: localStorage.getItem("mock-extension") === "0" ? [] : [{ exe: "chrome.exe", name: "Google Chrome", lastSeen: Date.now(), extensionVersion: "0.1.0" }],
+      extension: localStorage.getItem("mock-extension") === "0" ? [] : [
+              {
+                exe: "chrome.exe",
+                name: "Google Chrome",
+                lastSeen: Date.now(),
+                extensionVersion: "0.1.0",
+                // Pretend the extension read some subscriptions while a list needs them.
+                youtubeSubscriptions: state.lists.some((l) => ids.has(l.id) && l.youtubeSubscriptions) ? 143 : null,
+              },
+            ],
       extensionFeatures:
-        allowed !== null || [...sites].some((s) => s.includes("/")) || state.lists.some((l) => ids.has(l.id) && (l.youtubeChannels?.length ?? 0) > 0),
+        allowed !== null || [...sites].some((s) => s.includes("/")) || state.lists.some((l) => ids.has(l.id) && ((l.youtubeChannels?.length ?? 0) > 0 || l.youtubeSubscriptions)),
       allowlistSites: allowed ? (allowed as Set<string>).size : null,
       bridgeError: null,
       usageToday: { ...usage },

@@ -923,35 +923,77 @@ fn set_password(shared: tauri::State<'_, Shared>, current: Option<String>, new: 
     })
 }
 
-struct IconCache(Mutex<HashMap<String, Option<String>>>);
+#[derive(Default)]
+struct IconCache {
+    /// Icon (PNG data URL or none) per executable path.
+    icons: Mutex<HashMap<String, Option<String>>>,
+    /// Lower-case exe name → full path, from running and installed apps, with
+    /// the time it was gathered. Lets us show icons for list entries that only
+    /// know the exe name (catalog suggestions, typed names, older entries).
+    paths: Mutex<(i64, HashMap<String, String>)>,
+}
 
-#[tauri::command]
-async fn installed_apps() -> Res<Vec<platform::InstalledApp>> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut running = platform::ProcessKiller::new().running_apps();
-        let known: BTreeSet<String> = running.iter().map(|a| a.exe.to_lowercase()).collect();
-        running.extend(
-            platform::installed_apps()
-                .into_iter()
-                .filter(|a| !known.contains(&a.exe.to_lowercase())),
-        );
-        running.sort_by_key(|a| a.name.to_lowercase());
-        running
-    })
-    .await
-    .map_err(|e| e.to_string())
+fn gather_apps() -> Vec<platform::InstalledApp> {
+    let mut running = platform::ProcessKiller::new().running_apps();
+    let known: BTreeSet<String> = running.iter().map(|a| a.exe.to_lowercase()).collect();
+    running.extend(
+        platform::installed_apps()
+            .into_iter()
+            .filter(|a| !known.contains(&a.exe.to_lowercase())),
+    );
+    running.sort_by_key(|a| a.name.to_lowercase());
+    running
 }
 
 #[tauri::command]
-async fn app_icon(cache: tauri::State<'_, IconCache>, path: String) -> Res<Option<String>> {
-    if let Some(hit) = cache.0.lock().unwrap().get(&path) {
+async fn installed_apps() -> Res<Vec<platform::InstalledApp>> {
+    tauri::async_runtime::spawn_blocking(gather_apps).await.map_err(|e| e.to_string())
+}
+
+/// Full path of an executable known only by name, if it's installed or running.
+fn path_for_exe(cache: &IconCache, exe: &str) -> Option<String> {
+    let key = engine::normalize_exe(exe);
+    {
+        let paths = cache.paths.lock().unwrap();
+        // Re-scan on a miss at most every 30 s (it reads the registry and the process list).
+        if paths.1.contains_key(&key) || now_ms() - paths.0 < 30_000 {
+            return paths.1.get(&key).cloned();
+        }
+    }
+    let map: HashMap<String, String> = gather_apps()
+        .into_iter()
+        .filter_map(|a| Some((engine::normalize_exe(&a.exe), a.path?)))
+        .collect();
+    let hit = map.get(&key).cloned();
+    *cache.paths.lock().unwrap() = (now_ms(), map);
+    hit
+}
+
+/// Icon of a program: from its path if known, otherwise looked up by exe name.
+#[tauri::command]
+async fn app_icon(cache: tauri::State<'_, Arc<IconCache>>, path: Option<String>, exe: Option<String>) -> Res<Option<String>> {
+    let path = match path.filter(|p| std::path::Path::new(p).exists()) {
+        Some(p) => p,
+        None => {
+            let Some(exe) = exe else { return Ok(None) };
+            let lookup = Arc::clone(&cache);
+            match tauri::async_runtime::spawn_blocking(move || path_for_exe(&lookup, &exe))
+                .await
+                .map_err(|e| e.to_string())?
+            {
+                Some(p) => p,
+                None => return Ok(None),
+            }
+        }
+    };
+    if let Some(hit) = cache.icons.lock().unwrap().get(&path) {
         return Ok(hit.clone());
     }
     let p = path.clone();
     let icon = tauri::async_runtime::spawn_blocking(move || platform::exe_icon(&p))
         .await
         .map_err(|e| e.to_string())?;
-    cache.0.lock().unwrap().insert(path, icon.clone());
+    cache.icons.lock().unwrap().insert(path, icon.clone());
     Ok(icon)
 }
 
@@ -1255,6 +1297,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
                     i18n::tr(lang, "The OpenBlocker extension isn't allowed in private windows. Turn on “Allow in Incognito” in its details.", &[])
                 }
                 enforce::CloseReason::Deactivated => i18n::tr(lang, "The OpenBlocker extension was turned off during a block.", &[]),
+                enforce::CloseReason::Missing if settings.super_strict => {
+                    i18n::tr(lang, "Super strict mode: every browser needs the OpenBlocker extension during a block.", &[])
+                }
                 enforce::CloseReason::Missing => i18n::tr(lang, "The OpenBlocker extension isn't running in it.", &[]),
             };
             // The window offers the choices (allow, or don't include private windows).
@@ -1270,6 +1315,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             }
             let title = if n.closed {
                 i18n::tr(lang, "{browser} was closed 🧩", &args)
+            } else if n.warning_ms < 60_000 {
+                let secs = (n.warning_ms / 1000).to_string();
+                i18n::tr(lang, "{browser} will be closed in {n} seconds 🧩", &[("browser", n.browser.as_str()), ("n", secs.as_str())])
             } else {
                 i18n::tr(lang, "{browser} will be closed in a minute 🧩", &args)
             };
@@ -1319,9 +1367,18 @@ fn try_quit(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Only one copy of the app per Windows session. At logon both the
+        // autostart entry and the service's watchdog may start it; a second
+        // copy hands over to the first and exits. Opening the app again
+        // (not minimized) brings the running window to the front.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == "--minimized") {
+                show_main(app);
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(IconCache(Mutex::new(HashMap::new())))
+        .manage(Arc::new(IconCache::default()))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let bridge = Arc::new(bridge::Bridge::default());

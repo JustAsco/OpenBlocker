@@ -69,7 +69,9 @@ pub fn flush_dns() {
     }
 }
 
-/// Restart the current executable with a UAC prompt.
+/// Restart the current executable with a UAC prompt. The elevated copy is
+/// started a moment later, after this one has exited: only one copy of the
+/// app may run, so it would otherwise just hand over to this one.
 pub fn relaunch_as_admin() -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -77,22 +79,18 @@ pub fn relaunch_as_admin() -> Result<(), String> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe = exe.to_string_lossy().replace('\'', "''");
-        let status = std::process::Command::new("powershell")
+        std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-WindowStyle",
                 "Hidden",
                 "-Command",
-                &format!("Start-Process -FilePath '{exe}' -Verb RunAs"),
+                &format!("Start-Sleep -Seconds 2; Start-Process -FilePath '{exe}' -Verb RunAs"),
             ])
             .creation_flags(CREATE_NO_WINDOW)
-            .status()
+            .spawn()
             .map_err(|e| e.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err("Elevation was cancelled.".into())
-        }
+        Ok(())
     }
     #[cfg(not(windows))]
     {
@@ -631,6 +629,28 @@ pub fn ui_running_in_console_session(sys: &mut System) -> bool {
     {
         let _ = sys;
         true
+    }
+}
+
+/// The console session, if a user is logged in to it (not just the logon
+/// screen). Only works from a service running as SYSTEM.
+pub fn console_user_session() -> Option<u32> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
+        let session = WTSGetActiveConsoleSessionId();
+        if session == u32::MAX {
+            return None;
+        }
+        let mut token = HANDLE::default();
+        WTSQueryUserToken(session, &mut token).ok()?;
+        let _ = CloseHandle(token);
+        Some(session)
+    }
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 

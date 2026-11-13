@@ -5,7 +5,6 @@ import { t } from "../lib/i18n";
 import { useStore } from "../lib/store";
 import { Modal } from "./ui";
 
-const WARNING_MS = 60_000;
 
 /**
  * "Chrome will be closed in a minute": shown when the backend warns about a
@@ -20,7 +19,8 @@ export function BrowserWarning() {
 
   const settings = snap.state.settings;
   const locked = snap.status.active.some((b) => b.locked);
-  const left = Math.min(60, Math.max(0, Math.ceil((notice.at + WARNING_MS - now) / 1000)));
+  const warningMs = notice.warningMs ?? 60_000;
+  const left = Math.min(warningMs / 1000, Math.max(0, Math.ceil((notice.at + warningMs - now) / 1000)));
   const optOut = notice.reason === "privateWindows" && settings.privateWindows === "default" && !locked;
   const close = () => setNotice(null);
 
@@ -40,7 +40,9 @@ export function BrowserWarning() {
           ? t("The OpenBlocker extension isn't allowed in private windows, so they'd get around this block. Turn on “Allow in Incognito” in the extension's details (a page in the browser shows how).")
           : notice.reason === "deactivated"
             ? t("The OpenBlocker extension was turned off in this browser during a block. Turn it back on to keep the browser open.")
-            : t("The OpenBlocker extension isn't running in this browser, and “Close browsers without the extension” is on.")}
+            : settings.superStrict
+              ? t("Super strict mode is on: during a block, every browser needs the OpenBlocker extension running. Install or turn it on in this browser to keep it open.")
+              : t("The OpenBlocker extension isn't running in this browser, and “Close browsers without the extension” is on.")}
       </p>
       <div className="flex justify-end gap-2">
         {optOut && (

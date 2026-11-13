@@ -31,6 +31,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build
+      - run: node dev/extension_test.cjs
 
   windows:
     name: Windows installer

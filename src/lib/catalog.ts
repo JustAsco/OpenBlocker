@@ -16,7 +16,9 @@ interface CatalogCategory {
   icon: string;
   color: string;
   sites: CatalogSite[];
-  apps: AppEntry[];
+  /** `domain` is the app's website, used for its icon when it isn't installed. */
+  /** `darkIcon`: the website icon is dark and needs a light background. */
+  apps: (AppEntry & { domain?: string; darkIcon?: boolean })[];
 }
 
 export const CATALOG: CatalogCategory[] = (raw as { categories: CatalogCategory[] }).categories;
@@ -27,6 +29,8 @@ export interface SiteSuggestion extends CatalogSite {
 
 export interface AppSuggestion extends AppEntry {
   category: string;
+  domain?: string;
+  darkIcon?: boolean;
 }
 
 export const SITES: SiteSuggestion[] = CATALOG.flatMap((c) => c.sites.map((s) => ({ ...s, category: c.id })));
@@ -38,11 +42,15 @@ export const expandSite = (s: CatalogSite) => [s.domain, ...(s.related ?? [])];
 const NAMES = new Map(SITES.flatMap((s) => expandSite(s).map((d) => [d, s.name] as const)));
 export const siteName = (domain: string) => NAMES.get(domain);
 
+const APP_SITES = new Map(APPS.filter((a) => a.domain).map((a) => [a.exe.toLowerCase(), { domain: a.domain!, dark: !!a.darkIcon }] as const));
+/** Website of a known app (by exe name), for showing its icon when the program isn't installed. */
+export const appSite = (exe: string) => APP_SITES.get(exe.split(/[\\/]/).pop()!.toLowerCase());
+
 /** Factory version of a built-in category (null for user-created ones). */
 export function factoryCategory(id: string): Category | null {
   const c = CATALOG.find((x) => x.id === id);
   if (!c) return null;
-  return { id: c.id, name: c.name, icon: c.icon, color: c.color, sites: c.sites.flatMap(expandSite), apps: c.apps.map((a) => ({ ...a })) };
+  return { id: c.id, name: c.name, icon: c.icon, color: c.color, sites: c.sites.flatMap(expandSite), apps: c.apps.map(({ name, exe }) => ({ name, exe })) };
 }
 
 export const defaultCategories = (): Category[] => CATALOG.map((c) => factoryCategory(c.id)!);

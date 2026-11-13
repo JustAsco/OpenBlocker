@@ -194,8 +194,14 @@ function scheduleTiles() {
   if (!tileTimer) tileTimer = setTimeout(filterTiles, 250);
 }
 
-function applyTileFilter(rules) {
-  const channels = rules?.youtubeChannels && /(^|\.)youtube\.com$/.test(location.hostname) ? rules.youtubeChannels.join() : null;
+function applyTileFilter(rules, subs) {
+  // The key changes whenever the allowed channels do (including newly read
+  // subscriptions), which re-checks every tile. With only subscriptions
+  // allowed the picked list is empty, so don't test it for truthiness.
+  const channels =
+    rules?.youtubeChannels && /(^|\.)youtube\.com$/.test(location.hostname)
+      ? rules.youtubeChannels.join() + (rules.youtubeSubscriptions ? `|subs:${subs?.status}:${subs?.ids?.length}:${subs?.at}` : "")
+      : null;
   if (channels === tileRules) return;
   tileRules = channels;
   tileVerdicts.clear();
@@ -203,7 +209,7 @@ function applyTileFilter(rules) {
     delete tile.dataset.obKey;
     delete tile.dataset.obOk;
   }
-  if (!channels) {
+  if (channels === null) {
     tileStyle?.remove();
     tileStyle = null;
     observer?.disconnect();
@@ -223,10 +229,81 @@ function applyTileFilter(rules) {
   scheduleTiles();
 }
 
+// ───────────── Subscribed channels ─────────────
+//
+// While a list allows "channels I'm subscribed to", read the subscriptions
+// from the "All subscriptions" page and hand them to the background script.
+// This runs here, as the page, because only the page is signed in.
+
+const SUBS_MAX_AGE = 30 * 60 * 1000;
+const SUBS_RETRY = 2 * 60 * 1000;
+let subsLoading = false;
+// Firefox runs content-script fetches as the extension; `content.fetch` runs them as the page.
+const pageFetch = typeof content !== "undefined" && content?.fetch ? content.fetch.bind(content) : fetch.bind(globalThis);
+
+/** Authorization header YouTube's own web client sends with signed-in API requests. */
+async function sapisidHash() {
+  const sid = document.cookie.match(/(?:^|;\s*)SAPISID=([^;]+)/)?.[1] ?? document.cookie.match(/(?:^|;\s*)__Secure-3PAPISID=([^;]+)/)?.[1];
+  if (!sid) return null;
+  const ts = Math.floor(Date.now() / 1000);
+  const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(`${ts} ${sid} ${location.origin}`));
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `SAPISIDHASH ${ts}_${hex}`;
+}
+
+async function readSubscriptions() {
+  const res = await pageFetch("/feed/channels", { credentials: "same-origin" });
+  if (!res.ok) return { status: "error" };
+  const html = await res.text();
+  if (!signedIn(html)) return { status: "signed-out" };
+  const first = collectSubscriptions(jsonAfter(html, "ytInitialData = ") ?? jsonAfter(html, "ytInitialData="));
+  // Signed in but no channel entries and none in the page at all: YouTube changed the page.
+  if (!first.ids.length && !html.includes("channelRenderer")) return { status: "error" };
+  const ids = new Set(first.ids);
+  let token = first.token;
+  const key = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
+  const context = jsonAfter(html, '"INNERTUBE_CONTEXT":');
+  // Later batches ("load more") come from YouTube's own API.
+  for (let page = 0; token && context && page < 100; page++) {
+    const auth = await sapisidHash();
+    const r = await pageFetch(`/youtubei/v1/browse?prettyPrint=false${key ? "&key=" + encodeURIComponent(key) : ""}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-Goog-AuthUser": "0", "X-Origin": location.origin, ...(auth ? { Authorization: auth } : {}) },
+      body: JSON.stringify({ context, continuation: token }),
+    });
+    if (!r.ok) break; // keep what we have
+    const next = collectSubscriptions(await r.json());
+    next.ids.forEach((i) => ids.add(i));
+    token = next.token;
+  }
+  return { status: "ok", ids: [...ids], complete: !token };
+}
+
+async function maybeReadSubscriptions(rules) {
+  // Only on www.youtube.com: the mobile site renders a different page.
+  if (!rules?.youtubeSubscriptions || subsLoading || location.hostname !== "www.youtube.com") return;
+  const { ytSubs, ytSubsClaim } = await api.storage.local.get(["ytSubs", "ytSubsClaim"]);
+  const age = ytSubs ? Date.now() - ytSubs.at : Infinity;
+  if (age < (ytSubs?.status === "ok" ? SUBS_MAX_AGE : SUBS_RETRY)) return;
+  // Several YouTube tabs: one reads, the others wait.
+  if (ytSubsClaim && Date.now() - ytSubsClaim < 60_000) return;
+  subsLoading = true;
+  try {
+    await api.storage.local.set({ ytSubsClaim: Date.now() });
+    const result = await readSubscriptions().catch(() => ({ status: "error" }));
+    await api.runtime.sendMessage({ type: "yt-subs", ...result }).catch(() => {});
+  } finally {
+    subsLoading = false;
+    await api.storage.local.set({ ytSubsClaim: 0 }).catch(() => {});
+  }
+}
+
 async function refresh() {
-  const { rules } = await api.storage.local.get("rules");
+  const { rules, ytSubs } = await api.storage.local.get(["rules", "ytSubs"]);
   applyFeedCss(rules);
-  applyTileFilter(rules);
+  applyTileFilter(rules, ytSubs);
+  maybeReadSubscriptions(rules);
   if (rules?.youtubeChannels && /(^|\.)youtube\.com$/.test(location.hostname)) reportChannel();
 }
 

@@ -21,6 +21,8 @@ export interface BlockList {
   appMode?: ListMode;
   /** If not empty: while active, YouTube videos only play from these channels ("@handle", "UC…" id). */
   youtubeChannels?: string[];
+  /** While active, videos from channels the user is subscribed to play too (read by the extension). */
+  youtubeSubscriptions?: boolean;
   /** Websites left out although a category includes them; a path stays reachable inside a blocked site. */
   exceptSites?: string[];
   /** Apps left out although a category includes them. */
@@ -141,6 +143,8 @@ export interface Settings {
   extensionFallback: "strict" | "lenient";
   /** Close browsers whose extension can't see private windows (default: with an opt-out). */
   privateWindows: "default" | "on" | "off";
+  /** While any block runs, every browser must have the extension (else closed after 15 s). */
+  superStrict: boolean;
 }
 
 export interface DayStats {
@@ -208,6 +212,8 @@ export interface BrowserSeen {
   extensionVersion: string;
   /** The extension may run in private/incognito windows (null = unknown, older extension). */
   incognito?: boolean | null;
+  /** Subscribed channels the extension read (-1 = not signed in / unreadable), when they're needed. */
+  youtubeSubscriptions?: number | null;
 }
 
 export interface Snapshot {

@@ -144,11 +144,13 @@
       "apps": [
         {
           "name": "VLC",
-          "exe": "vlc.exe"
+          "exe": "vlc.exe",
+          "domain": "www.videolan.org"
         },
         {
           "name": "Netflix",
-          "exe": "Netflix.exe"
+          "exe": "Netflix.exe",
+          "domain": "netflix.com"
         }
       ]
     },
@@ -236,67 +238,84 @@
       "apps": [
         {
           "name": "Steam",
-          "exe": "steam.exe"
+          "exe": "steam.exe",
+          "domain": "store.steampowered.com"
         },
         {
           "name": "Epic Games Launcher",
-          "exe": "EpicGamesLauncher.exe"
+          "exe": "EpicGamesLauncher.exe",
+          "domain": "epicgames.dev"
         },
         {
           "name": "Battle.net",
-          "exe": "Battle.net.exe"
+          "exe": "Battle.net.exe",
+          "domain": "battle.net"
         },
         {
           "name": "Riot Client",
-          "exe": "RiotClientServices.exe"
+          "exe": "RiotClientServices.exe",
+          "domain": "riotgames.com"
         },
         {
           "name": "League of Legends",
-          "exe": "LeagueClient.exe"
+          "exe": "LeagueClient.exe",
+          "domain": "leagueoflegends.com"
         },
         {
           "name": "Valorant",
-          "exe": "VALORANT.exe"
+          "exe": "VALORANT.exe",
+          "domain": "playvalorant.com"
         },
         {
           "name": "EA app",
-          "exe": "EADesktop.exe"
+          "exe": "EADesktop.exe",
+          "domain": "ea.com"
         },
         {
           "name": "Ubisoft Connect",
-          "exe": "UbisoftConnect.exe"
+          "exe": "UbisoftConnect.exe",
+          "domain": "ubisoft.com",
+          "darkIcon": true
         },
         {
           "name": "GOG Galaxy",
-          "exe": "GalaxyClient.exe"
+          "exe": "GalaxyClient.exe",
+          "domain": "gog.com"
         },
         {
           "name": "Xbox app",
-          "exe": "XboxPcApp.exe"
+          "exe": "XboxPcApp.exe",
+          "domain": "xbox.com"
         },
         {
           "name": "Roblox",
-          "exe": "RobloxPlayerBeta.exe"
+          "exe": "RobloxPlayerBeta.exe",
+          "domain": "roblox.com"
         },
         {
           "name": "Minecraft Launcher",
-          "exe": "MinecraftLauncher.exe"
+          "exe": "MinecraftLauncher.exe",
+          "domain": "minecraft.net"
         },
         {
           "name": "Fortnite",
-          "exe": "FortniteClient-Win64-Shipping.exe"
+          "exe": "FortniteClient-Win64-Shipping.exe",
+          "domain": "fortnite.com"
         },
         {
           "name": "Counter-Strike 2",
-          "exe": "cs2.exe"
+          "exe": "cs2.exe",
+          "domain": "counter-strike.net"
         },
         {
           "name": "Dota 2",
-          "exe": "dota2.exe"
+          "exe": "dota2.exe",
+          "domain": "dota2.com"
         },
         {
           "name": "Overwatch",
-          "exe": "Overwatch.exe"
+          "exe": "Overwatch.exe",
+          "domain": "overwatch.blizzard.com"
         }
       ]
     },
@@ -433,27 +452,33 @@
       "apps": [
         {
           "name": "Discord",
-          "exe": "Discord.exe"
+          "exe": "Discord.exe",
+          "domain": "discord.com"
         },
         {
           "name": "Telegram",
-          "exe": "Telegram.exe"
+          "exe": "Telegram.exe",
+          "domain": "telegram.org"
         },
         {
           "name": "WhatsApp",
-          "exe": "WhatsApp.exe"
+          "exe": "WhatsApp.exe",
+          "domain": "whatsapp.com"
         },
         {
           "name": "Signal",
-          "exe": "Signal.exe"
+          "exe": "Signal.exe",
+          "domain": "signal.org"
         },
         {
           "name": "Messenger",
-          "exe": "Messenger.exe"
+          "exe": "Messenger.exe",
+          "domain": "messenger.com"
         },
         {
           "name": "Slack",
-          "exe": "slack.exe"
+          "exe": "slack.exe",
+          "domain": "slack.com"
         }
       ]
     },
@@ -479,7 +504,8 @@
       "apps": [
         {
           "name": "Spotify",
-          "exe": "Spotify.exe"
+          "exe": "Spotify.exe",
+          "domain": "spotify.com"
         }
       ]
     },
@@ -554,31 +580,38 @@
       "apps": [
         {
           "name": "Google Chrome",
-          "exe": "chrome.exe"
+          "exe": "chrome.exe",
+          "domain": "chrome.com"
         },
         {
           "name": "Mozilla Firefox",
-          "exe": "firefox.exe"
+          "exe": "firefox.exe",
+          "domain": "firefox.com"
         },
         {
           "name": "Microsoft Edge",
-          "exe": "msedge.exe"
+          "exe": "msedge.exe",
+          "domain": "microsoftedge.com"
         },
         {
           "name": "Brave",
-          "exe": "brave.exe"
+          "exe": "brave.exe",
+          "domain": "brave.com"
         },
         {
           "name": "Opera",
-          "exe": "opera.exe"
+          "exe": "opera.exe",
+          "domain": "opera.com"
         },
         {
           "name": "Opera GX",
-          "exe": "opera_gx.exe"
+          "exe": "opera_gx.exe",
+          "domain": "operagx.gg"
         },
         {
           "name": "Vivaldi",
-          "exe": "vivaldi.exe"
+          "exe": "vivaldi.exe",
+          "domain": "vivaldi.com"
         }
       ]
     }
