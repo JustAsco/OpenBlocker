@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Page } from "../App";
 import type { SuggestionGroup } from "../components/Autocomplete";
 import { EditorShell, IconColorPicker, ItemsEditor, useDraft } from "../components/ItemsEditor";
-import { Modal, PageHeader, Segmented, usePref } from "../components/ui";
+import { AppIcon, Modal, PageHeader, Segmented, Toggle, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { score } from "../lib/catalog";
 import { useStore } from "../lib/store";
-import type { BlockList, Category, ListMode, State } from "../lib/types";
+import type { BlockList, BrowserSeen, Category, ListMode, State } from "../lib/types";
 import { LIST_COLORS, fmtTime, isPathSite, listTargets, normalizeChannel, uid } from "../lib/util";
 import { t, tx } from "../lib/i18n";
 
@@ -257,7 +257,7 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
         options={[
           { value: "items", label: <><Tags size={14} /> {draft.mode === "allow" && appAllow ? t("Allowed") : draft.mode === "allow" || appAllow ? t("Items") : t("Blocked")}</> },
           { value: "exceptions", label: <><CircleMinus size={14} /> {t("Exceptions")}{exceptSites.length + exceptApps.length ? ` · ${exceptSites.length + exceptApps.length}` : ""}</> },
-          { value: "youtube", label: <><MonitorPlay size={14} /> {t("YouTube channels")}{channels.length ? ` · ${channels.length}` : ""}</> },
+          { value: "youtube", label: <><MonitorPlay size={14} /> {t("YouTube channels")}{channels.length ? ` · ${channels.length}${draft.youtubeSubscriptions ? "+" : ""}` : draft.youtubeSubscriptions ? ` · ${t("subscriptions")}` : ""}</> },
         ]}
       />
 
@@ -297,6 +297,11 @@ function ListEditor({ list, state, go }: { list: BlockList; state: State; go: (p
           locked={!!lockBlock}
           blocksYoutube={[...total.sites].some((d) => d === "youtube.com")}
           onChange={(youtubeChannels) => setDraft({ ...draft, youtubeChannels })}
+          subscriptions={!!draft.youtubeSubscriptions}
+          // While locked, subscriptions can be turned off (stricter) but not on.
+          subscriptionsLocked={!!lockBlock && !list.youtubeSubscriptions}
+          onSubscriptions={(youtubeSubscriptions) => setDraft({ ...draft, youtubeSubscriptions })}
+          browsers={snap!.status.extension}
         />
       )}
 
@@ -417,11 +422,19 @@ function ChannelsEditor({
   locked,
   blocksYoutube,
   onChange,
+  subscriptions,
+  subscriptionsLocked,
+  onSubscriptions,
+  browsers,
 }: {
   channels: string[];
   locked: boolean;
   blocksYoutube: boolean;
   onChange: (c: string[]) => void;
+  subscriptions: boolean;
+  subscriptionsLocked: boolean;
+  onSubscriptions: (on: boolean) => void;
+  browsers: BrowserSeen[];
 }) {
   const { toast } = useStore();
   const [input, setInput] = useState("");
@@ -442,11 +455,27 @@ function ChannelsEditor({
       {blocksYoutube && (
         <p className="mb-4 text-sm text-amber-200">{t("This list blocks youtube.com completely, so channels here have no effect. Remove YouTube (or add it as an exception) to use them.")}</p>
       )}
-      {locked && channels.length > 0 && (
+      {locked && (channels.length > 0 || subscriptions) && (
         <p className="mb-4 flex items-center gap-2 text-sm text-amber-200">
           <Lock size={14} /> {t("Locked: you can remove channels, but not add any until it ends.")}
         </p>
       )}
+      <div className="mb-4 rounded-xl border border-line bg-panel px-4">
+        <Toggle
+          label={t("Allow the channels I'm subscribed to")}
+          hint={t(
+            "Read from your YouTube subscriptions in browsers with the extension while you're signed in to YouTube there, and refreshed every 30 minutes. While a locked block runs, channels you subscribe to in the meantime don't count.",
+          )}
+          checked={subscriptions}
+          onChange={(on) => (on && subscriptionsLocked ? undefined : onSubscriptions(on))}
+        />
+        {subscriptionsLocked && !subscriptions && (
+          <p className="-mt-1 mb-3 flex items-center gap-2 text-xs text-amber-200">
+            <Lock size={12} /> {t("Locked: this can't be turned on until the block ends.")}
+          </p>
+        )}
+        {subscriptions && <SubscriptionStatus browsers={browsers} />}
+      </div>
       <div className="mb-3 flex gap-2">
         <input
           className="input"
@@ -471,9 +500,34 @@ function ChannelsEditor({
             </button>
           </span>
         ))}
-        {!channels.length && <p className="text-sm text-faint">{t("No restriction: videos from every channel play.")}</p>}
+        {!channels.length && (
+          <p className="text-sm text-faint">
+            {subscriptions ? t("Only channels you're subscribed to.") : t("No restriction: videos from every channel play.")}
+          </p>
+        )}
       </div>
       <p className="mt-5 text-xs text-faint">{t("Tip: to block only Shorts and keep normal videos, include the “Short videos” category instead.")}</p>
     </section>
+  );
+}
+
+/** Which browsers could read the subscriptions (reported by the extension while a block needs them). */
+function SubscriptionStatus({ browsers }: { browsers: BrowserSeen[] }) {
+  const reporting = browsers.filter((b) => b.youtubeSubscriptions !== undefined && b.youtubeSubscriptions !== null);
+  return (
+    <div className="-mt-1 mb-3 flex flex-wrap gap-2 text-xs">
+      {reporting.length ? (
+        reporting.map((b) => (
+          <span key={b.exe} className={clsx("chip py-1", b.youtubeSubscriptions! < 0 && "border-amber-500/30 text-amber-200")}>
+            <AppIcon name={b.name} exe={b.exe} size={14} />
+            {b.youtubeSubscriptions! < 0
+              ? t("{browser}: not signed in to YouTube", { browser: b.name })
+              : t("{browser}: {n} subscribed channels", { browser: b.name, n: b.youtubeSubscriptions! })}
+          </span>
+        ))
+      ) : (
+        <span className="text-muted">{t("Your subscriptions are read the next time you open YouTube while this list is active.")}</span>
+      )}
+    </div>
   );
 }

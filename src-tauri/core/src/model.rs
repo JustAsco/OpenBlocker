@@ -42,6 +42,11 @@ pub struct BlockList {
     /// these channels (normalised with [`crate::hosts::normalize_channel`]).
     #[serde(default)]
     pub youtube_channels: Vec<String>,
+    /// While this list is active, videos from the channels the user is
+    /// subscribed to may play as well (on top of `youtube_channels`). The
+    /// extension reads the subscriptions in the signed-in browser.
+    #[serde(default)]
+    pub youtube_subscriptions: bool,
     /// Websites left out of this list even though a category includes them,
     /// e.g. `facebook.com` in "all social media except Facebook". A path
     /// (`reddit.com/r/rust`) stays reachable while the rest of its site is
@@ -461,6 +466,7 @@ impl Default for State {
                     categories: vec!["social".into()],
                     mode: ListMode::Block,
                     youtube_channels: vec![],
+                    youtube_subscriptions: false,
                     except_sites: vec![],
                     except_apps: vec![],
                     app_mode: ListMode::Block,
@@ -475,6 +481,7 @@ impl Default for State {
                     categories: vec!["video".into()],
                     mode: ListMode::Block,
                     youtube_channels: vec![],
+                    youtube_subscriptions: false,
                     except_sites: vec![],
                     except_apps: vec![],
                     app_mode: ListMode::Block,
@@ -489,6 +496,7 @@ impl Default for State {
                     categories: vec!["gaming".into()],
                     mode: ListMode::Block,
                     youtube_channels: vec![],
+                    youtube_subscriptions: false,
                     except_sites: vec![],
                     except_apps: vec![],
                     app_mode: ListMode::Block,

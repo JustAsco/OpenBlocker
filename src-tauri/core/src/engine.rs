@@ -356,15 +356,36 @@ pub fn app_allowed(allowed: &BTreeSet<String>, exe: &str) -> bool {
     is_protected_exe(exe) || allowed.iter().any(|a| exe_matches(exe, a))
 }
 
+/// Does this list restrict YouTube to some channels (picked ones and/or the
+/// user's subscriptions)?
+pub fn restricts_youtube(list: &BlockList) -> bool {
+    !list.youtube_channels.is_empty() || list.youtube_subscriptions
+}
+
 /// If an active list restricts YouTube to chosen channels: the channels
 /// whose videos may play (union of all such lists). `None` = no restriction.
+/// The set can be empty when the only allowed channels are subscriptions
+/// (see [`youtube_subscriptions`]).
 pub fn youtube_channels(state: &State, blocks: &[ActiveBlock]) -> Option<BTreeSet<String>> {
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     let mut out: Option<BTreeSet<String>> = None;
-    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && !l.youtube_channels.is_empty()) {
+    for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str()) && restricts_youtube(l)) {
         out.get_or_insert_with(BTreeSet::new).extend(list.youtube_channels.iter().cloned());
     }
     out
+}
+
+/// While YouTube is restricted: do subscribed channels count as allowed, and
+/// is that locked (then new subscriptions mustn't open new channels)?
+/// Like picked channels, subscriptions count if any active list allows them.
+pub fn youtube_subscriptions(state: &State, blocks: &[ActiveBlock]) -> (bool, bool) {
+    let with_subs: Vec<&BlockList> = state
+        .lists
+        .iter()
+        .filter(|l| l.youtube_subscriptions && blocks.iter().any(|b| b.list_id == l.id))
+        .collect();
+    let locked = blocks.iter().any(|b| b.locked && with_subs.iter().any(|l| l.id == b.list_id));
+    (!with_subs.is_empty(), locked)
 }
 
 fn strictness(l: LockMode) -> u8 {
@@ -677,9 +698,12 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
             ListMode::Block => os.is_subset(&ns),
             ListMode::Allow => ns.is_subset(&os),
         };
-        // A channel restriction may get stricter (fewer channels), never looser.
-        let channels_ok = o.youtube_channels.is_empty()
-            || (!n.youtube_channels.is_empty() && n.youtube_channels.iter().all(|c| o.youtube_channels.contains(c)));
+        // A channel restriction may get stricter (fewer channels, no longer
+        // allowing subscriptions), never looser.
+        let channels_ok = !restricts_youtube(o)
+            || (restricts_youtube(n)
+                && n.youtube_channels.iter().all(|c| o.youtube_channels.contains(c))
+                && (!n.youtube_subscriptions || o.youtube_subscriptions));
         if !channels_ok {
             return Some(format!("“{}” is locked. You can remove YouTube channels, but not add any.", o.name));
         }
@@ -942,6 +966,7 @@ mod tests {
             categories: vec![],
             mode: ListMode::Allow,
             youtube_channels: vec![],
+            youtube_subscriptions: false,
             except_sites: vec![],
             except_apps: vec![],
             app_mode: ListMode::Block,
@@ -1175,6 +1200,39 @@ mod tests {
         assert!(lock_violation(&old, &new, now, &local).is_some(), "adding a channel");
         new.lists[1].youtube_channels.clear();
         assert!(lock_violation(&old, &new, now, &local).is_some(), "dropping the restriction");
+        new.lists[1].youtube_channels = vec!["@a".into()];
+        new.lists[1].youtube_subscriptions = true;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "allowing subscriptions loosens");
+    }
+
+    #[test]
+    fn youtube_subscriptions_only() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        let mut old = State::default();
+        old.lists[1].youtube_subscriptions = true;
+        old.sessions.push(Session { id: "s".into(), list_id: "video".into(), started_at: 0, ends_at: now + 60 * MINUTE_MS, lock: LockMode::Timer });
+        let blocks = active_blocks(&old, now, &local);
+        // A restriction with no picked channels: only subscriptions play.
+        assert_eq!(youtube_channels(&old, &blocks), Some(BTreeSet::new()));
+        assert_eq!(youtube_subscriptions(&old, &blocks), (true, true));
+        assert!(needs_extension(&old, &blocks));
+        let mut new = old.clone();
+        new.lists[1].youtube_subscriptions = false;
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "turning it off drops the restriction");
+        new.lists[1].youtube_channels = vec!["@a".into()];
+        assert!(lock_violation(&old, &new, now, &local).is_some(), "swapping subscriptions for another channel");
+        // Combined with another restricting list: picked channels and
+        // subscriptions add up, like channels of several lists do.
+        let mut both = old.clone();
+        both.lists[0].youtube_channels = vec!["@a".into()];
+        both.sessions.push(Session { id: "t".into(), list_id: "social".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::None });
+        let blocks = active_blocks(&both, now, &local);
+        assert_eq!(youtube_channels(&both, &blocks), Some(["@a".to_string()].into()));
+        assert_eq!(youtube_subscriptions(&both, &blocks), (true, true));
+        // Not active: nothing restricted.
+        let later = active_blocks(&old, now + 2 * 60 * MINUTE_MS, &local);
+        assert_eq!(youtube_subscriptions(&old, &later), (false, false));
     }
 
     #[test]

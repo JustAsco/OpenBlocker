@@ -297,7 +297,7 @@ export function ItemsEditor({
         label: t("On this computer"),
         items: rank(inst, (a) => [a.name, a.exe], q ? 8 : 6).map((a) => ({
           key: `i-${a.exe}`,
-          icon: <AppIcon name={a.name} path={a.path} size={20} />,
+          icon: <AppIcon name={a.name} exe={a.exe} path={a.path} size={20} />,
           title: a.name,
           subtitle: a.exe,
           badge: a.running ? <span className="chip border-emerald-500/30 bg-emerald-500/10 py-0 text-[10px] text-emerald-300">{t("running")}</span> : undefined,
@@ -309,7 +309,7 @@ export function ItemsEditor({
         label: q ? t("Known apps") : t("Popular distractions"),
         items: rank(APPS.filter((a) => !hasApp(a.exe) && !known.has(a.exe.toLowerCase())), (a) => [a.name, a.exe], q ? 8 : 6).map((a) => ({
           key: `c-${a.exe}`,
-          icon: <AppIcon name={a.name} size={20} />,
+          icon: <AppIcon name={a.name} exe={a.exe} size={20} />,
           title: a.name,
           subtitle: a.exe,
           onPick: () => addApp({ name: a.name, exe: a.exe }),
@@ -368,7 +368,7 @@ export function ItemsEditor({
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {apps.map((a) => (
             <div key={a.exe} className="flex items-center gap-3 rounded-xl border border-line bg-panel p-2.5">
-              <AppIcon name={a.name} path={a.path} size={24} />
+              <AppIcon name={a.name} exe={a.exe} path={a.path} size={24} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{a.name}</div>
                 <div className="truncate text-xs text-muted">{a.exe}</div>

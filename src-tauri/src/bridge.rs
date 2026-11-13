@@ -67,6 +67,11 @@ pub struct BrowserSeen {
     /// an older extension that doesn't say).
     #[serde(default)]
     pub incognito: Option<bool>,
+    /// YouTube subscriptions the extension could read while they're needed:
+    /// the number of channels, or -1 when the browser isn't signed in to
+    /// YouTube or the page couldn't be read (None = not needed or unknown).
+    #[serde(default)]
+    pub youtube_subscriptions: Option<i64>,
 }
 
 /// What the extension should enforce right now.
@@ -92,6 +97,12 @@ pub struct Rules {
     /// When set, YouTube videos may only play from these channels
     /// (`@handle`, `UC…` id, `c/name` or `user/name`).
     pub youtube_channels: Option<Vec<String>>,
+    /// While `youtube_channels` is set: channels the user is subscribed to
+    /// may play too.
+    pub youtube_subscriptions: bool,
+    /// Subscriptions are allowed by a locked block: refreshing them may drop
+    /// channels but never add new ones.
+    pub youtube_subscriptions_locked: bool,
     /// Hide Shorts/Reels shelves in feeds while their pages are blocked.
     pub hide_short_video_feeds: bool,
     /// Version of the extension that ships with this app. An older extension
@@ -254,6 +265,7 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
                 extension_version: version,
                 active_url,
                 incognito: http::query_param(&url, "i").map(|v| v == "1"),
+                youtube_subscriptions: http::query_param(&url, "ys").and_then(|v| v.parse::<i64>().ok()).map(|n| n.clamp(-1, 100_000)),
             },
         );
     }

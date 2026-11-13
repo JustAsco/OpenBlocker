@@ -98,3 +98,74 @@ function videoIdOf(url) {
     return null;
   }
 }
+
+// ───────────── YouTube subscriptions ─────────────
+//
+// "Subscribed channels only" reads the signed-in user's subscriptions from
+// YouTube's "All subscriptions" page (youtube.com/feed/channels). The page
+// embeds its data as JSON; rather than relying on exactly where YouTube puts
+// things (it moves them around), we walk the whole tree for channel entries
+// and the token that loads the next batch.
+
+/** The JSON object or array that starts at `start` in `text` (balanced brackets, strings respected). */
+function jsonAt(text, start) {
+  const open = text[start];
+  if (open !== "{" && open !== "[") return null;
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      if (--depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** JSON value assigned after `marker` in a page, e.g. `ytInitialData = {…}` or `"INNERTUBE_CONTEXT":{…}`. */
+function jsonAfter(text, marker) {
+  const at = text.indexOf(marker);
+  if (at < 0) return null;
+  const start = text.slice(at + marker.length).search(/[{[]/);
+  return start < 0 ? null : jsonAt(text, at + marker.length + start);
+}
+
+/** Channel ids ("UC…") of subscription entries and the continuation token in YouTube page data. */
+function collectSubscriptions(data) {
+  const ids = new Set();
+  let token = null;
+  const seen = new Set();
+  const walk = (node, depth) => {
+    if (!node || typeof node !== "object" || depth > 60 || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const x of node) walk(x, depth + 1);
+      return;
+    }
+    for (const key of ["channelRenderer", "gridChannelRenderer"]) {
+      const id = node[key]?.channelId;
+      if (typeof id === "string" && /^UC[\w-]{22}$/.test(id)) ids.add(id);
+    }
+    const t = node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    if (typeof t === "string" && !token) token = t;
+    for (const k of Object.keys(node)) walk(node[k], depth + 1);
+  };
+  walk(data, 0);
+  return { ids: [...ids], token };
+}
+
+/** Whether the page was rendered for a signed-in user. */
+function signedIn(html) {
+  return /"LOGGED_IN":\s*true/.test(html);
+}

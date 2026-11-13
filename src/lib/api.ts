@@ -101,7 +101,8 @@ export const api = {
   startFreeze: (minutes: number, message: string) => call<Snapshot>("start_freeze", { minutes, message }),
   saveSettings: (settings: Settings) => call<Snapshot>("save_settings", { settings }),
   installedApps: () => call<InstalledApp[]>("installed_apps"),
-  appIcon: (path: string) => call<string | null>("app_icon", { path }),
+  /** Program icon by path, or looked up by exe name when the path is unknown. */
+  appIcon: (path: string | null, exe: string | null) => call<string | null>("app_icon", { path, exe }),
   getAutostart: () => call<boolean>("get_autostart"),
   setAutostart: (enabled: boolean) => call<boolean>("set_autostart", { enabled }),
   extensionPath: () => call<string | null>("extension_path"),

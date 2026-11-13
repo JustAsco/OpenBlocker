@@ -2,7 +2,7 @@ import { Copy, Download, FolderOpen, Heart, Puzzle, ShieldAlert, ShieldCheck, Up
 import { useEffect, useState } from "react";
 import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
-import { PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
+import { AppIcon, PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
 import { api, isTauri } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
@@ -97,7 +97,8 @@ export function SettingsPage() {
               <div className="flex flex-wrap gap-2">
                 {status.extension.map((b) => (
                   <span key={b.exe} className="chip border-emerald-500/30 bg-emerald-500/10 py-1 text-sm text-emerald-200">
-                    <span className="size-2 rounded-full bg-good" /> {b.name}
+                    <span className="size-2 rounded-full bg-good" />
+                    <AppIcon name={b.name} exe={b.exe} size={16} /> {b.name}
                     {b.extensionVersion && <span className="text-xs text-emerald-200/60">v{b.extensionVersion}</span>}
                     {b.incognito === false && <span className="text-xs text-amber-300">{t("· not in private windows")}</span>}
                     {outdated(b) && <span className="text-xs text-amber-300">{t("· outdated")}</span>}

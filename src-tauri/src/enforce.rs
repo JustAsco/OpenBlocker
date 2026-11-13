@@ -33,6 +33,8 @@ pub fn extension_rules(state: &State, active: &[ActiveBlock]) -> bridge::Rules {
         until: active.iter().map(|b| b.ends_at).max(),
         lists,
         youtube_channels: engine::youtube_channels(state, active).map(|c| c.into_iter().collect()),
+        youtube_subscriptions: engine::youtube_subscriptions(state, active).0,
+        youtube_subscriptions_locked: engine::youtube_subscriptions(state, active).1,
         hide_short_video_feeds: state.settings.hide_short_video_feeds,
         latest_version: bridge::extension_version(),
         private_windows_required: private_windows_required(state, active),

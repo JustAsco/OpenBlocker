@@ -22,20 +22,30 @@ function fmt(ts) {
 }
 
 async function render() {
-  const { rules } = await api.storage.local.get("rules");
-  // Unblocked in the meantime? Go to the page the user wanted.
+  const { rules, ytSubs } = await api.storage.local.get(["rules", "ytSubs"]);
+  // Unblocked in the meantime? Go to the page the user wanted. For channels
+  // the background script decides (it knows subscriptions and channel ids).
   const stillBlocked =
-    reason === "channel" ? !!rules?.youtubeChannels && !rules.youtubeChannels.includes(channel) : !rules || isBlocked(target, rules);
+    reason === "channel"
+      ? !!rules?.youtubeChannels && !(await api.runtime.sendMessage({ type: "channel-allowed", channel: channel ?? "" }).catch(() => false))
+      : !rules || isBlocked(target, rules);
   if (target && rules && !stillBlocked) {
     location.replace(target);
     return;
   }
   if (!rules) return;
   if (reason === "channel") {
-    document.getElementById("why").textContent = `is from ${channel || "a channel"}, which isn't on your list of allowed YouTube channels.`;
+    const subs = rules.youtubeSubscriptions;
+    document.getElementById("why").textContent = subs
+      ? `is from ${channel || "a channel"}, which you aren't subscribed to and isn't on your list of allowed YouTube channels.`
+      : `is from ${channel || "a channel"}, which isn't on your list of allowed YouTube channels.`;
     const box = document.getElementById("allowed");
     box.hidden = false;
-    box.querySelector("p").textContent = "Allowed channels:";
+    let note = "";
+    if (subs && ytSubs?.status === "signed-out") note = " Your subscriptions can't be read: sign in to YouTube in this browser.";
+    else if (subs && ytSubs?.status === "error") note = " Your subscriptions couldn't be read right now; OpenBlocker tries again in a few minutes.";
+    else if (subs && ytSubs?.status === "ok") note = ` Plus the ${ytSubs.ids.length} channels you're subscribed to.`;
+    box.querySelector("p").textContent = (rules.youtubeChannels.length ? "Allowed channels:" : "") + note;
     document.getElementById("allowed-list").replaceChildren(
       ...rules.youtubeChannels.slice(0, 30).map((c) => {
         const li = document.createElement("li");

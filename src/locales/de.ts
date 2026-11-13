@@ -236,6 +236,16 @@ const de: Record<string, string> = {
   "Paste a channel link or @handle, e.g. https://www.youtube.com/@veritasium":
     "Kanal-Link oder @Handle einfügen, z. B. https://www.youtube.com/@veritasium",
   "No restriction: videos from every channel play.": "Keine Einschränkung: Videos von allen Kanälen laufen.",
+  "Allow the channels I'm subscribed to": "Kanäle erlauben, die ich abonniert habe",
+  "Read from your YouTube subscriptions in browsers with the extension while you're signed in to YouTube there, and refreshed every 30 minutes. While a locked block runs, channels you subscribe to in the meantime don't count.":
+    "Wird in Browsern mit der Erweiterung aus deinen YouTube-Abos gelesen, solange du dort bei YouTube angemeldet bist, und alle 30 Minuten aktualisiert. Während eine gesperrte Sperre läuft, zählen neu abonnierte Kanäle nicht.",
+  "Locked: this can't be turned on until the block ends.": "Gesperrt: Das lässt sich erst einschalten, wenn die Sperre endet.",
+  "Only channels you're subscribed to.": "Nur Kanäle, die du abonniert hast.",
+  subscriptions: "Abos",
+  "{browser}: not signed in to YouTube": "{browser}: nicht bei YouTube angemeldet",
+  "{browser}: {n} subscribed channels": "{browser}: {n} abonnierte Kanäle",
+  "Your subscriptions are read the next time you open YouTube while this list is active.":
+    "Deine Abos werden gelesen, sobald du YouTube öffnest, während diese Liste aktiv ist.",
   "Tip: to block only Shorts and keep normal videos, include the “Short videos” category instead.":
     "Tipp: Um nur Shorts zu sperren und normale Videos zu behalten, nimm stattdessen die Kategorie „Kurzvideos“ auf.",
   "Locked while a block is running": "Gesperrt, solange eine Sperre läuft",

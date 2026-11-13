@@ -51,6 +51,10 @@ async function fetchRules() {
     const incognito = await api.extension.isAllowedIncognitoAccess().catch(() => false);
     const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl(), i: incognito ? "1" : "0" });
     if (lastRules?.rev) params.set("r", lastRules.rev);
+    if (lastRules?.youtubeSubscriptions) {
+      const subs = await subscriptions();
+      if (subs) params.set("ys", subs.status === "ok" ? String(subs.ids.length) : "-1");
+    }
     const res = await fetch(`${ENDPOINT}?${params}`, {
       headers: { "X-OpenBlocker": "1" },
       cache: "no-store",
@@ -263,6 +267,55 @@ function channelIdOf(ref) {
   );
 }
 
+// ───────────── Subscribed channels ─────────────
+//
+// The content script on youtube.com reads the subscriptions (it runs as the
+// page, so it's signed in like the user) and sends them here. We keep them in
+// storage: { status: "ok" | "signed-out" | "error", ids: ["UC…"], at }.
+
+let subsCache;
+async function subscriptions() {
+  if (subsCache === undefined) subsCache = (await api.storage.local.get("ytSubs")).ytSubs ?? null;
+  return subsCache;
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+async function storeSubscriptions(msg) {
+  const old = await subscriptions();
+  // While a locked block allows subscriptions, subscribing to a new channel
+  // mustn't open it: a refresh may only drop channels (unsubscribed), never
+  // add any. A recent successful list is the baseline.
+  const baseline = current?.youtubeSubscriptionsLocked && old?.status === "ok" && Date.now() - old.at < DAY ? new Set(old.ids) : null;
+  let next;
+  if (msg.status === "ok") {
+    let ids = (Array.isArray(msg.ids) ? msg.ids : []).filter((i) => typeof i === "string" && /^UC[\w-]{22}$/.test(i)).slice(0, 20000);
+    if (baseline) ids = ids.filter((i) => baseline.has(i));
+    next = { status: "ok", ids, at: Date.now(), complete: !!msg.complete };
+  } else if (baseline) {
+    // Couldn't read them right now (signed out, page changed): keep the list from before the lock.
+    next = { ...old, at: Date.now() };
+  } else {
+    next = { status: msg.status === "signed-out" ? "signed-out" : "error", ids: [], at: Date.now() };
+  }
+  subsCache = next;
+  await api.storage.local.set({ ytSubs: next });
+}
+
+/** Channels whose videos may play right now (picked ones plus subscriptions), or null without a restriction. */
+async function allowedChannels({ waitForSubscriptions = false } = {}) {
+  const picked = current?.youtubeChannels;
+  if (!picked) return null;
+  if (!current.youtubeSubscriptions) return picked;
+  let subs = await subscriptions();
+  // Right after YouTube opens, the content script is still reading them:
+  // wait a little rather than blocking a video from a subscribed channel.
+  for (let i = 0; !subs && waitForSubscriptions && i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    subs = await subscriptions();
+  }
+  return subs?.status === "ok" || subs?.ids?.length ? [...picked, ...subs.ids] : picked;
+}
+
 async function channelAllowed(channel, allowed) {
   if (allowed.includes(channel)) return true;
   // The same channel can be named by @handle or by id: compare ids.
@@ -279,9 +332,10 @@ async function channelAllowed(channel, allowed) {
 const lastRedirect = new Map(); // tab id -> { videoId, at }
 
 async function checkVideo(tabId, url) {
-  const allowed = current?.youtubeChannels;
-  const videoId = allowed && videoIdOf(url);
+  const videoId = current?.youtubeChannels && videoIdOf(url);
   if (!videoId) return;
+  const allowed = await allowedChannels({ waitForSubscriptions: true });
+  if (!allowed) return;
   const channel = (await lookupVideo(videoId)) ?? pageChannels.get(videoId);
   // Unknown yet: the content script reports it once the page shows it.
   if (!channel || (await channelAllowed(channel, allowed))) return;
@@ -296,7 +350,7 @@ async function checkVideo(tabId, url) {
 
 /** For the content script: which thumbnails may be shown ("c:<channel>" or "v:<video id>" keys). */
 async function tilesAllowed(keys) {
-  const allowed = current?.youtubeChannels;
+  const allowed = await allowedChannels({ waitForSubscriptions: true });
   const out = {};
   await Promise.all(
     keys.slice(0, 200).map(async (key) => {
@@ -317,6 +371,19 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       remember(pageChannels, msg.videoId, channel);
       checkVideo(sender.tab.id, sender.tab.url);
     }
+  } else if (msg?.type === "yt-subs" && sender.tab) {
+    storeSubscriptions(msg).then(() => sendResponse(true), () => sendResponse(false));
+    return true;
+  } else if (msg?.type === "channel-allowed" && typeof msg.channel === "string") {
+    // For the block page: may this channel play now (e.g. subscriptions loaded meanwhile)?
+    allowedChannels()
+      .then((allowed) => {
+        if (!allowed) return true;
+        const channel = normalizeChannel(msg.channel);
+        return channel ? channelAllowed(channel, allowed) : false;
+      })
+      .then(sendResponse, () => sendResponse(false));
+    return true;
   } else if (msg?.type === "yt-tiles" && Array.isArray(msg.keys)) {
     tilesAllowed(msg.keys.filter((k) => typeof k === "string")).then(sendResponse, () => sendResponse({}));
     return true; // answers asynchronously
