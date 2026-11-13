@@ -1140,6 +1140,7 @@ fn current_activity(browsers: &[bridge::BrowserSeen], now: i64) -> engine::Activ
 fn engine_loop(app: AppHandle, shared: Shared) {
     let mut enforcer = enforce::Enforcer::new();
     let mut kill_seq: Option<u64> = None;
+    let mut was_frozen: Option<bool> = None;
     loop {
         let now = now_ms();
         let local = local_now();
@@ -1330,6 +1331,12 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             let i = shared.lock().unwrap();
             (i.snapshot(), i.state.freeze.is_some())
         };
+        // Above normal priority only while frozen; startup ran urgent during
+        // any lock (see setup) and drops back here after the first round.
+        if was_frozen != Some(frozen) {
+            platform::set_urgent_priority(frozen);
+            was_frozen = Some(frozen);
+        }
         sync_freeze_windows(&app, frozen);
         let _ = app.emit("snapshot", &snapshot);
         std::thread::sleep(TICK);
@@ -1419,6 +1426,20 @@ pub fn run() {
             // Started at logon or by the service: stay in the tray.
             if !std::env::args().any(|a| a == "--minimized") {
                 show_main(app.handle());
+            }
+            // During a lock (e.g. right after a restart), start up at higher
+            // priority; when frozen, cover the screens now rather than after
+            // the first round of the main loop, which first talks to the
+            // service and the browsers.
+            let (locked, frozen) = {
+                let i = shared.lock().unwrap();
+                (i.any_lock(), i.state.freeze.as_ref().is_some_and(|f| f.ends_at > now_ms()))
+            };
+            if locked || frozen {
+                platform::set_urgent_priority(true);
+            }
+            if frozen {
+                sync_freeze_windows(app.handle(), true);
             }
 
             let handle = app.handle().clone();
