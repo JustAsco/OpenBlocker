@@ -3,7 +3,9 @@ const params = new URLSearchParams(location.search);
 // "channel": a YouTube video from a channel that isn't allowed right now.
 const reason = params.get("r");
 const channel = params.get("c");
-const host = reason === "channel" ? "This video" : hostOf(target) || "This site";
+// "p=1": the channel's own page rather than one of its videos.
+const channelPage = reason === "channel" && params.get("p") === "1";
+const host = channelPage ? "This channel" : reason === "channel" ? "This video" : hostOf(target) || "This site";
 // For the statistics: which site showed the block page (counted once per page).
 {
   const site = reason === "channel" ? "youtube.com" : hostOf(target);
@@ -44,9 +46,14 @@ async function render() {
   if (!rules) return;
   if (reason === "channel") {
     const subs = rules.youtubeSubscriptions;
-    document.getElementById("why").textContent = subs
-      ? `is from ${channel || "a channel"}, which you aren't subscribed to and isn't on your list of allowed YouTube channels.`
-      : `is from ${channel || "a channel"}, which isn't on your list of allowed YouTube channels.`;
+    const name = channel || "a channel";
+    document.getElementById("why").textContent = channelPage
+      ? subs
+        ? `(${name}) isn't a channel you're subscribed to or on your list of allowed YouTube channels.`
+        : `(${name}) isn't on your list of allowed YouTube channels.`
+      : subs
+        ? `is from ${name}, which you aren't subscribed to and isn't on your list of allowed YouTube channels.`
+        : `is from ${name}, which isn't on your list of allowed YouTube channels.`;
     const box = document.getElementById("allowed");
     box.hidden = false;
     let note = "";

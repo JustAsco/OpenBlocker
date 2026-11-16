@@ -365,7 +365,33 @@ async function channelAllowed(channel, allowed) {
 
 const lastRedirect = new Map(); // tab id -> { videoId, at }
 
+/** Channel whose page a YouTube address is (youtube.com/@name/videos → "@name"), or null. */
+function channelPageOf(url) {
+  try {
+    const u = new URL(url);
+    if (!/^(www\.|m\.)?youtube\.com$/.test(u.hostname)) return null;
+    const m = u.pathname.match(/^\/(@[^/]+|channel\/UC[\w-]{22}|c\/[^/]+|user\/[^/]+)/);
+    return m ? normalizeChannel(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** While channels are restricted, a channel page that isn't allowed shows the block page. */
+async function checkChannelPage(tabId, url, channel) {
+  const allowed = await allowedChannels({ waitForSubscriptions: true });
+  if (!allowed || (await channelAllowed(channel, allowed))) return;
+  const tab = await api.tabs.get(tabId).catch(() => null);
+  if (!tab || channelPageOf(tab.url) !== channel || !current?.youtubeChannels) return;
+  const last = lastRedirect.get(tabId);
+  if (last && last.videoId === channel && Date.now() - last.at < 5000) return;
+  lastRedirect.set(tabId, { videoId: channel, at: Date.now() });
+  api.tabs.update(tabId, { url: `${BLOCK_PAGE}?r=channel&p=1&c=${encodeURIComponent(channel)}#${tab.url}` }).catch(() => {});
+}
+
 async function checkVideo(tabId, url) {
+  const page = current?.youtubeChannels && channelPageOf(url);
+  if (page) return checkChannelPage(tabId, url, page);
   const videoId = current?.youtubeChannels && videoIdOf(url);
   if (!videoId) return;
   const allowed = await allowedChannels({ waitForSubscriptions: true });
