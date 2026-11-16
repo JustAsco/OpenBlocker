@@ -88,6 +88,7 @@ function defaultState(): State {
       privateWindows: "default",
       superStrict: false,
       recordScreenTime: true,
+      shareBlocks: false,
     },
     stats,
   };

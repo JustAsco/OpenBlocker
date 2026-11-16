@@ -90,6 +90,13 @@ pub struct Outcome {
     pub site_hits: Vec<String>,
 }
 
+/// One logged-in Windows account to enforce in: its session and what to
+/// enforce there (its own state with the blocks other accounts share).
+pub struct SessionTarget<'a> {
+    pub session: u32,
+    pub state: &'a State,
+}
+
 pub struct Enforcer {
     killer: platform::ProcessKiller,
     /// What's in the hosts file now (None = unknown, rewrite).
@@ -182,18 +189,58 @@ impl Enforcer {
         self.community_in_hosts
     }
 
-    /// One enforcement round.
-    pub fn run(&mut self, state: &State, bridge: &bridge::Bridge, now_ms: i64, local: &NaiveDateTime) -> Outcome {
+    /// One enforcement round. `hosts_state` decides the hosts file, which
+    /// is one for the whole PC: the account at the screen, with the blocks
+    /// other accounts share (None: leave it as it is). `sessions` are the logged-in accounts, each with
+    /// what to enforce in it (its own state plus shared blocks): programs and
+    /// browsers are closed per account, and each account's browsers get its
+    /// own extension rules.
+    pub fn run(&mut self, hosts_state: Option<&State>, sessions: &[SessionTarget], bridge: &bridge::Bridge, now_ms: i64, local: &NaiveDateTime) -> Outcome {
+        if let Some(state) = hosts_state {
+            self.run_hosts(state, bridge, now_ms, local);
+            let blocks = engine::active_blocks(state, now_ms, local);
+            bridge.set_rules(None, &extension_rules(state, &blocks));
+        }
+        bridge.keep_session_rules(&sessions.iter().map(|t| t.session).collect::<Vec<_>>());
+        let mut out = Outcome {
+            site_hits: bridge.take_site_hits(),
+            ..Default::default()
+        };
+        let mut found = vec![];
+        for target in sessions {
+            self.run_session(target, bridge, now_ms, local, &mut out.killed, &mut found);
+        }
+        // Warn first, close a minute later: closing a browser out of the blue
+        // looks like a crash.
+        self.warned.retain(|key, _| found.iter().any(|(k, _, _, _)| k == key));
+        for (key, name, reason, warning_ms) in found {
+            match self.warned.get(&key) {
+                None => {
+                    self.warned.insert(key, now_ms);
+                    out.browser_notices.push(BrowserNotice { browser: name, closed: false, reason, warning_ms });
+                }
+                Some(at) if now_ms - at >= warning_ms => {
+                    if self.killer.close_browser(key.0, &key.1) {
+                        out.browser_notices.push(BrowserNotice { browser: name, closed: true, reason, warning_ms });
+                    }
+                    self.warned.remove(&key);
+                    // Closed for good reason; if it comes back without the
+                    // extension, it gets a new warning.
+                }
+                Some(_) => {}
+            }
+        }
+        out
+    }
+
+    fn run_hosts(&mut self, state: &State, bridge: &bridge::Bridge, now_ms: i64, local: &NaiveDateTime) {
         let blocks = engine::active_blocks(state, now_ms, local);
-        let (mut sites, mut apps) = engine::enforced_targets(state, &blocks);
-        // A site with an excepted path can't be in the hosts file (that would
-        // block the excepted part too); the extension blocks the rest of it.
+        let (mut sites, _) = engine::enforced_targets(state, &blocks);
         // Without the extension anywhere, features only it can enforce either
         // block the whole site (strict) or leave it open (lenient).
         let ext_features = engine::needs_extension(state, &blocks);
-        let connected = bridge.connected(now_ms);
         let super_strict = engine::super_strict(state, &blocks);
-        let strict = ext_features && connected.is_empty() && (state.settings.extension_fallback == ExtensionFallback::Strict || super_strict);
+        let strict = ext_features && bridge.connected(now_ms).is_empty() && (state.settings.extension_fallback == ExtensionFallback::Strict || super_strict);
         // Community lists (tens of thousands of domains) slow down Windows'
         // name lookups when they're in the hosts file, so it only gets the
         // hand-entered sites while the extension covers every browser.
@@ -212,9 +259,6 @@ impl Enforcer {
                     .iter()
                     .any(|p| hosts::site_domain(p) == s || hosts::site_domain(p).ends_with(&format!(".{s}")))
             });
-        }
-        if state.freeze.is_some() && state.settings.freeze_blocks_task_manager {
-            apps.insert("taskmgr.exe".into());
         }
         if !self.community_in_hosts(community, bridge, now_ms) {
             sites.retain(|s| keep.contains(s));
@@ -238,28 +282,44 @@ impl Enforcer {
                 }
             }
         }
-        bridge.set_rules(&extension_rules(state, &blocks));
-        let mut out = Outcome {
-            killed: self.killer.enforce(&apps),
-            site_hits: bridge.take_site_hits(),
-            ..Default::default()
-        };
+    }
+
+    /// Programs, browsers and extension rules of one logged-in account.
+    fn run_session(
+        &mut self,
+        target: &SessionTarget,
+        bridge: &bridge::Bridge,
+        now_ms: i64,
+        local: &NaiveDateTime,
+        killed: &mut Vec<String>,
+        found: &mut Vec<((u32, String), String, CloseReason, i64)>,
+    ) {
+        let (session, state) = (target.session, target.state);
+        let blocks = engine::active_blocks(state, now_ms, local);
+        let (sites, mut apps) = engine::enforced_targets(state, &blocks);
+        if state.freeze.is_some() && state.settings.freeze_blocks_task_manager {
+            apps.insert("taskmgr.exe".into());
+        }
+        bridge.set_rules(Some(session), &extension_rules(state, &blocks));
+        killed.extend(self.killer.enforce(Some(session), &apps));
         // Closing browsers: never just because the extension isn't installed
         // (unless the user opted in), only when it was switched off during a
         // block, or can't see private windows while that's required.
-        let websites = !engine::enforced_targets(state, &blocks).0.is_empty() || ext_features || super_strict;
+        let ext_features = engine::needs_extension(state, &blocks);
+        let super_strict = engine::super_strict(state, &blocks);
+        let websites = !sites.is_empty() || ext_features || super_strict;
         if websites {
-            self.had_extension.extend(connected.iter().map(|b| (b.session, b.exe.to_lowercase())));
+            self.had_extension
+                .extend(bridge.connected(now_ms).iter().filter(|b| b.session == session).map(|b| (b.session, b.exe.to_lowercase())));
         } else {
-            self.had_extension.clear();
+            self.had_extension.retain(|(s, _)| *s != session);
+        }
+        if !websites {
+            return;
         }
         let private_required = private_windows_required(state, &blocks);
-        let reason = |session: u32, exe: &str| -> Option<CloseReason> {
-            if !websites {
-                return None;
-            }
-            let alive = bridge.alive(session, exe, now_ms);
-            if alive {
+        let reason = |exe: &str| -> Option<CloseReason> {
+            if bridge.alive(session, exe, now_ms) {
                 (private_required && bridge.private_windows_missing(session, exe, now_ms)).then_some(CloseReason::PrivateWindows)
             } else if self.had_extension.contains(&(session, exe.to_string())) {
                 Some(CloseReason::Deactivated)
@@ -269,34 +329,13 @@ impl Enforcer {
                 None
             }
         };
-        // Warn first, close a minute later: closing a browser out of the blue
-        // looks like a crash.
-        let found: Vec<((u32, String), String, CloseReason)> = self
-            .killer
-            .unprotected_browsers(|session, exe| reason(session, exe).is_none())
-            .into_iter()
-            .filter_map(|(session, exe, name)| reason(session, &exe).map(|r| ((session, exe), name, r)))
-            .collect();
-        self.warned.retain(|key, _| found.iter().any(|(k, _, _)| k == key));
         let warning_ms = if super_strict { SUPER_STRICT_WARNING_MS } else { BROWSER_WARNING_MS };
-        for (key, name, reason) in found {
-            match self.warned.get(&key) {
-                None => {
-                    self.warned.insert(key, now_ms);
-                    out.browser_notices.push(BrowserNotice { browser: name, closed: false, reason, warning_ms });
-                }
-                Some(at) if now_ms - at >= warning_ms => {
-                    if self.killer.close_browser(key.0, &key.1) {
-                        out.browser_notices.push(BrowserNotice { browser: name, closed: true, reason, warning_ms });
-                    }
-                    self.warned.remove(&key);
-                    // Closed for good reason; if it comes back without the
-                    // extension, it gets a new warning.
-                }
-                Some(_) => {}
+        let uncovered = self.killer.unprotected_browsers(|s, exe| s != session || reason(exe).is_none());
+        for (s, exe, name) in uncovered {
+            if let Some(r) = reason(&exe) {
+                found.push(((s, exe), name, r, warning_ms));
             }
         }
-        out
     }
 
     /// Removes our hosts section (when quitting with nothing locked).

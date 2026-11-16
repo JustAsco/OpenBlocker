@@ -147,6 +147,8 @@ export interface Settings {
   superStrict: boolean;
   /** Record which programs and websites are in front (statistics, local only). */
   recordScreenTime: boolean;
+  /** Apply this account's running blocks to every Windows account on the PC. */
+  shareBlocks: boolean;
 }
 
 export interface DayStats {
@@ -219,6 +221,14 @@ export interface Status {
   passwordSet: boolean;
   /** Version of the extension shipped with the app. */
   extensionLatest?: string;
+  /** Blocks another Windows account applies to this one: only name and end. */
+  carried?: CarriedBlock[];
+}
+
+export interface CarriedBlock {
+  name: string;
+  endsAt: number;
+  locked: boolean;
 }
 
 export interface BrowserSeen {

@@ -834,6 +834,7 @@ pub fn lock_violation(old: &State, new: &State, now_ms: i64, local: &NaiveDateTi
             || (o.hide_short_video_feeds && !n.hide_short_video_feeds)
             || (o.require_extension && !n.require_extension)
             || (o.super_strict && !n.super_strict)
+            || (o.share_blocks && !n.share_blocks)
             || n.unlock_text_length < o.unlock_text_length
         {
             return Some("Settings that loosen blocking can't be changed while a locked block is running.".into());
@@ -929,6 +930,109 @@ pub fn restore(state: &mut State, b: Backup, now_ms: i64, local: &NaiveDateTime)
     }
     state.settings = b.settings;
     Ok(())
+}
+
+// ───────────── Several Windows accounts ─────────────
+//
+// Each account has its own state. An account with `share_blocks` lends its
+// running blocks to every other account: they're enforced there as if they
+// were that account's own, but stay owned (and can only be ended) by it.
+
+/// A block another account applies to this one, as shown to it: only the
+/// list's name, not what's in it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CarriedBlock {
+    pub name: String,
+    pub ends_at: i64,
+    pub locked: bool,
+}
+
+/// The blocks an account applies to the others right now (none unless it
+/// shares them).
+pub fn shared_blocks(state: &State, now_ms: i64, local: &NaiveDateTime) -> Vec<ActiveBlock> {
+    if !state.settings.share_blocks {
+        return vec![];
+    }
+    active_blocks(state, now_ms, local)
+}
+
+/// What `others` apply to an account, for its UI: one entry per list.
+pub fn carried_blocks(others: &[&State], now_ms: i64, local: &NaiveDateTime) -> Vec<CarriedBlock> {
+    let mut out: Vec<CarriedBlock> = vec![];
+    for other in others {
+        for b in shared_blocks(other, now_ms, local) {
+            let name = other.list(&b.list_id).map(|l| l.name.clone()).unwrap_or_default();
+            match out.iter_mut().find(|c| c.name == name) {
+                Some(c) => {
+                    c.ends_at = c.ends_at.max(b.ends_at);
+                    c.locked |= b.locked;
+                }
+                None => out.push(CarriedBlock { name, ends_at: b.ends_at, locked: b.locked }),
+            }
+        }
+    }
+    out
+}
+
+/// The state to *enforce* for an account: its own, plus the running blocks
+/// other accounts share, with their lists and categories (renamed so they
+/// can't clash with its own) and the strictest of the settings that matter
+/// for blocking. Only for enforcement: it's never saved or edited.
+pub fn effective_state(own: &State, others: &[&State], now_ms: i64, local: &NaiveDateTime) -> State {
+    let mut out = own.clone();
+    for (i, other) in others.iter().enumerate() {
+        let blocks = shared_blocks(other, now_ms, local);
+        if blocks.is_empty() {
+            continue;
+        }
+        let prefix = format!("~{i}:");
+        let lists: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
+        for list in other.lists.iter().filter(|l| lists.contains(l.id.as_str())) {
+            let mut l = list.clone();
+            l.id = format!("{prefix}{}", l.id);
+            for c in &list.categories {
+                let id = format!("{prefix}{c}");
+                if out.category(&id).is_none() {
+                    if let Some(cat) = other.category(c) {
+                        out.categories.push(Category { id: id.clone(), ..cat.clone() });
+                        if let Some(sites) = other.source_sites.get(c) {
+                            out.source_sites.insert(id.clone(), sites.clone());
+                        }
+                    }
+                }
+            }
+            l.categories = list.categories.iter().map(|c| format!("{prefix}{c}")).collect();
+            out.lists.push(l);
+        }
+        // Enforced through stand-in quick blocks that last as long as the real ones.
+        for b in &blocks {
+            out.sessions.push(Session {
+                id: format!("{prefix}{}", b.ref_id),
+                list_id: format!("{prefix}{}", b.list_id),
+                started_at: now_ms,
+                ends_at: b.ends_at,
+                lock: if b.locked { LockMode::Timer } else { LockMode::None },
+            });
+        }
+        let (o, s) = (&mut out.settings, &other.settings);
+        o.super_strict |= s.super_strict;
+        o.require_extension |= s.require_extension;
+        o.block_subdomains |= s.block_subdomains;
+        o.hide_short_video_feeds |= s.hide_short_video_feeds;
+        if s.extension_fallback == ExtensionFallback::Strict {
+            o.extension_fallback = ExtensionFallback::Strict;
+        }
+        let rank = |p: PrivateWindows| match p {
+            PrivateWindows::Off => 0,
+            PrivateWindows::Default => 1,
+            PrivateWindows::On => 2,
+        };
+        if rank(s.private_windows) > rank(o.private_windows) {
+            o.private_windows = s.private_windows;
+        }
+    }
+    out
 }
 
 /// Emergency reset: back to factory state, ending every block, schedule,
@@ -1653,5 +1757,57 @@ mod tests {
         let mut new = on.clone();
         new.settings.super_strict = true;
         assert!(lock_violation(&on, &new, now, &local).is_none(), "turning it on is stricter");
+    }
+
+    #[test]
+    fn blocks_shared_with_other_accounts() {
+        let local = at(4, 12, 0);
+        let now = 1_000_000;
+        // The main account: a permanent block and super strict mode.
+        let mut main = State::default();
+        main.lists[0].sites.push("only-main.com".into());
+        main.source_sites.insert("social".into(), std::sync::Arc::new(["community.com".to_string()].into()));
+        main.permanent.push(PermanentBlock { id: "p".into(), list_id: main.lists[0].id.clone(), lock: LockMode::Text, since: 0 });
+        main.settings.super_strict = true;
+        // A second account with its own (unrelated) lists and nothing running.
+        let mut second = State::default();
+        second.lists[0].name = "Their own".into();
+        second.settings.private_windows = PrivateWindows::Off;
+
+        // Not shared: the second account enforces only its own (nothing).
+        let eff = effective_state(&second, &[&main], now, &local);
+        assert!(active_blocks(&eff, now, &local).is_empty() && !eff.settings.super_strict);
+        assert!(carried_blocks(&[&main], now, &local).is_empty());
+
+        // Shared: the main account's block and super strict mode apply there too.
+        main.settings.share_blocks = true;
+        let eff = effective_state(&second, &[&main], now, &local);
+        let blocks = active_blocks(&eff, now, &local);
+        assert_eq!(blocks.len(), 1);
+        let (sites, _) = enforced_targets(&eff, &blocks);
+        assert!(sites.contains("only-main.com") && sites.contains("community.com") && sites.contains("instagram.com"));
+        assert!(eff.settings.super_strict && eff.settings.private_windows == PrivateWindows::Default);
+        assert!(eff.list("social").is_some_and(|l| l.name == "Their own"), "the second account's own lists stay as they are");
+        assert_eq!(blocks[0].ends_at, PERMANENT_END);
+        // What the second account is shown: the name, not the contents.
+        let carried = carried_blocks(&[&main], now, &local);
+        // (A permanent block that needs a typed text to end counts as locked.)
+        assert_eq!(carried, [CarriedBlock { name: main.lists[0].name.clone(), ends_at: PERMANENT_END, locked: true }]);
+
+        // A locked block stays locked in its stand-in.
+        main.sessions.push(Session { id: "s".into(), list_id: "games".into(), started_at: 0, ends_at: now + MINUTE_MS, lock: LockMode::Timer });
+        let eff = effective_state(&second, &[&main], now, &local);
+        assert!(active_blocks(&eff, now, &local).iter().any(|b| b.locked && b.list_id.ends_with("games")));
+
+        // Sharing can't be switched off during a locked block.
+        let mut new = main.clone();
+        new.settings.share_blocks = false;
+        assert!(lock_violation(&main, &new, now, &local).is_some());
+        main.sessions.clear();
+        assert!(lock_violation(&main, &new, now, &local).is_some(), "the text-locked permanent block still runs");
+        main.permanent.clear();
+        new.permanent.clear();
+        new.sessions.clear();
+        assert!(lock_violation(&main, &new, now, &local).is_none(), "nothing locked any more");
     }
 }

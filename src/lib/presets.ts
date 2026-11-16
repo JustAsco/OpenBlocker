@@ -19,6 +19,7 @@ type BlockingSettings = Pick<
   | "extensionFallback"
   | "privateWindows"
   | "superStrict"
+  | "shareBlocks"
 >;
 
 export const PRESETS: { id: PresetId; name: string; description: string; settings: BlockingSettings }[] = [
@@ -37,6 +38,7 @@ export const PRESETS: { id: PresetId; name: string; description: string; setting
       extensionFallback: "lenient",
       privateWindows: "off",
       superStrict: false,
+      shareBlocks: false,
     },
   },
   {
@@ -54,12 +56,13 @@ export const PRESETS: { id: PresetId; name: string; description: string; setting
       extensionFallback: "strict",
       privateWindows: "default",
       superStrict: false,
+      shareBlocks: false,
     },
   },
   {
     id: "strict",
     name: "Strict",
-    description: "While websites are blocked, browsers without the extension are closed after a minute. Private windows count, longer reflection texts.",
+    description: "While websites are blocked, browsers without the extension are closed after a minute. Private windows count, longer reflection texts, blocks apply in every Windows account.",
     settings: {
       blockSubdomains: true,
       freezeBlocksTaskManager: true,
@@ -71,12 +74,13 @@ export const PRESETS: { id: PresetId; name: string; description: string; setting
       extensionFallback: "strict",
       privateWindows: "on",
       superStrict: false,
+      shareBlocks: true,
     },
   },
   {
     id: "superStrict",
     name: "Super strict",
-    description: "During any block, every browser needs the extension (also in private windows) or it's closed after 15 seconds.",
+    description: "During any block, every browser needs the extension (also in private windows) or it's closed after 15 seconds. Blocks apply in every Windows account.",
     settings: {
       blockSubdomains: true,
       freezeBlocksTaskManager: true,
@@ -88,6 +92,7 @@ export const PRESETS: { id: PresetId; name: string; description: string; setting
       extensionFallback: "strict",
       privateWindows: "on",
       superStrict: true,
+      shareBlocks: true,
     },
   },
 ];
@@ -105,6 +110,7 @@ export function loosens(s: Settings, preset: BlockingSettings): boolean {
     (s.hideShortVideoFeeds && !preset.hideShortVideoFeeds) ||
     (s.requireExtension && !preset.requireExtension) ||
     (s.superStrict && !preset.superStrict) ||
+    (s.shareBlocks && !preset.shareBlocks) ||
     (s.extensionFallback === "strict" && preset.extensionFallback === "lenient") ||
     rank[preset.privateWindows] < rank[s.privateWindows] ||
     preset.unlockTextLength < s.unlockTextLength

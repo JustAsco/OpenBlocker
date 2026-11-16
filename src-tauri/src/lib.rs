@@ -97,6 +97,8 @@ struct Status {
     /// Version of the extension shipped with this app; browsers reporting an
     /// older one are shown as outdated.
     extension_latest: &'static str,
+    /// Blocks other Windows accounts apply to this one (name and end only).
+    carried: Vec<engine::CarriedBlock>,
 }
 
 #[derive(Clone, Serialize)]
@@ -231,6 +233,7 @@ impl Inner {
                 usage_today: self.state.usage.get(&today_key()).cloned().unwrap_or_default(),
                 password_set: self.state.password.is_some(),
                 extension_latest: bridge::extension_version(),
+                carried: self.svc.as_ref().map(|s| s.carried.clone()).unwrap_or_default(),
                 active,
             },
         }
@@ -1375,7 +1378,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
             if let (Some(w), Some(session)) = (windows, platform::own_session()) {
                 bridge.report_browser_windows(session, w, now);
             }
-            let out = enforcer.run(&state, &bridge, now, &local);
+            // Without the service there's just this account.
+            let own = [enforce::SessionTarget { session: platform::own_session().unwrap_or(0), state: &state }];
+            let out = enforcer.run(Some(&state), &own, &bridge, now, &local);
             shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
             killed = out.killed;
             browser_notices = out.browser_notices;

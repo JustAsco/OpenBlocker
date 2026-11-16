@@ -128,7 +128,8 @@ impl ProcessKiller {
 
     /// Kills every process matching one of `blocked` (normalised exe names).
     /// Returns the names of the processes that were closed.
-    pub fn enforce(&mut self, blocked: &BTreeSet<String>) -> Vec<String> {
+    /// Closes blocked programs; with `session`, only in that Windows account.
+    pub fn enforce(&mut self, session: Option<u32>, blocked: &BTreeSet<String>) -> Vec<String> {
         if blocked.is_empty() {
             return vec![];
         }
@@ -138,6 +139,9 @@ impl ProcessKiller {
         for (pid, proc_) in sys.processes() {
             let name = proc_.name().to_string_lossy();
             if !may_close(pid.as_u32(), &name, proc_.exe(), own_exe.as_deref()) {
+                continue;
+            }
+            if session.is_some() && session_of(pid.as_u32()) != session {
                 continue;
             }
             if blocked.iter().any(|b| engine::exe_matches(&name, b)) && proc_.kill() {
@@ -744,6 +748,99 @@ pub fn ui_running_in_console_session(sys: &mut System) -> bool {
     {
         let _ = sys;
         true
+    }
+}
+
+/// Windows account (SID string, e.g. "S-1-5-21-…") a token belongs to.
+#[cfg(windows)]
+unsafe fn token_user_sid(token: windows::Win32::Foundation::HANDLE) -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_USER};
+    let mut len = 0u32;
+    let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+    if len == 0 {
+        return None;
+    }
+    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+    GetTokenInformation(token, TokenUser, Some(buf.as_mut_ptr().cast()), len, &mut len).ok()?;
+    let user = &*(buf.as_ptr() as *const TOKEN_USER);
+    let mut text = PWSTR::null();
+    ConvertSidToStringSidW(user.User.Sid, &mut text).ok()?;
+    let sid = text.to_string().ok();
+    let _ = LocalFree(Some(HLOCAL(text.0.cast())));
+    sid
+}
+
+/// Windows account (SID) a process runs as: tells apart requests from
+/// different users. Elsewhere everyone is the same "local" account.
+pub fn user_sid_of(pid: u32) -> Option<String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::Security::TOKEN_QUERY;
+        use windows::Win32::System::Threading::{OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token).is_ok();
+        let _ = CloseHandle(process);
+        if !opened {
+            return None;
+        }
+        let sid = token_user_sid(token);
+        let _ = CloseHandle(token);
+        sid
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Some("local".into())
+    }
+}
+
+/// Windows account (SID) logged in to a session.
+pub fn session_user_sid(session: u32) -> Option<String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::System::RemoteDesktop::WTSQueryUserToken;
+        let mut token = HANDLE::default();
+        WTSQueryUserToken(session, &mut token).ok()?;
+        let sid = token_user_sid(token);
+        let _ = CloseHandle(token);
+        sid
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = session;
+        Some("local".into())
+    }
+}
+
+/// Sessions with a logged-in user, at the screen or switched away from
+/// (fast user switching keeps them running in the background).
+pub fn user_sessions() -> Vec<u32> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::RemoteDesktop::{WTSActive, WTSDisconnected, WTSEnumerateSessionsW, WTSFreeMemory, WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW};
+        let mut info: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+        let mut count = 0u32;
+        if WTSEnumerateSessionsW(Some(WTS_CURRENT_SERVER_HANDLE), 0, 1, &mut info, &mut count).is_err() || info.is_null() {
+            return vec![];
+        }
+        let sessions = std::slice::from_raw_parts(info, count as usize)
+            .iter()
+            .filter(|s| s.SessionId != 0 && (s.State == WTSActive || s.State == WTSDisconnected))
+            .map(|s| s.SessionId)
+            .filter(|id| session_user_sid(*id).is_some())
+            .collect();
+        WTSFreeMemory(info.cast());
+        sessions
+    }
+    #[cfg(not(windows))]
+    {
+        vec![0]
     }
 }
 
