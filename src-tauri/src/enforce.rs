@@ -96,10 +96,10 @@ pub struct Enforcer {
     applied: Option<(BTreeSet<String>, bool)>,
     pub hosts_error: Option<String>,
     retry_at: i64,
-    /// Browsers found without the extension: exe -> when they were warned.
-    warned: std::collections::HashMap<String, i64>,
+    /// Browsers found without the extension: (session, exe) -> when they were warned.
+    warned: std::collections::HashMap<(u32, String), i64>,
     /// Browsers in which the extension ran since the current blocks began.
-    had_extension: BTreeSet<String>,
+    had_extension: BTreeSet<(u32, String)>,
     /// Whether the hosts file holds the community lists too, see
     /// [`Enforcer::community_in_hosts`].
     community_in_hosts: bool,
@@ -163,12 +163,13 @@ impl Enforcer {
         // A browser running only in the background (Edge's startup boost)
         // can't open websites; it counts once it has a window. Without a
         // recent report of open windows, every browser counts.
-        let windows = bridge.browser_windows(now_ms);
+        // Browsers are told apart per Windows account: another account's
+        // Chrome isn't covered by the extension in this one's.
         let uncovered = self
             .killer
-            .unprotected_browsers(|exe| bridge.alive(exe, now_ms) && !bridge.private_windows_missing(exe, now_ms))
+            .unprotected_browsers(|session, exe| bridge.alive(session, exe, now_ms) && !bridge.private_windows_missing(session, exe, now_ms))
             .iter()
-            .any(|(exe, _)| windows.as_ref().is_none_or(|w| w.contains(exe)));
+            .any(|(session, exe, _)| bridge.browser_windows(*session, now_ms).is_none_or(|w| w.contains(exe)));
         if uncovered == self.community_in_hosts {
             self.community_switch_since = None;
         } else {
@@ -248,19 +249,19 @@ impl Enforcer {
         // block, or can't see private windows while that's required.
         let websites = !engine::enforced_targets(state, &blocks).0.is_empty() || ext_features || super_strict;
         if websites {
-            self.had_extension.extend(connected.iter().map(|b| b.exe.to_lowercase()));
+            self.had_extension.extend(connected.iter().map(|b| (b.session, b.exe.to_lowercase())));
         } else {
             self.had_extension.clear();
         }
         let private_required = private_windows_required(state, &blocks);
-        let reason = |exe: &str| -> Option<CloseReason> {
+        let reason = |session: u32, exe: &str| -> Option<CloseReason> {
             if !websites {
                 return None;
             }
-            let alive = bridge.alive(exe, now_ms);
+            let alive = bridge.alive(session, exe, now_ms);
             if alive {
-                (private_required && bridge.private_windows_missing(exe, now_ms)).then_some(CloseReason::PrivateWindows)
-            } else if self.had_extension.contains(exe) {
+                (private_required && bridge.private_windows_missing(session, exe, now_ms)).then_some(CloseReason::PrivateWindows)
+            } else if self.had_extension.contains(&(session, exe.to_string())) {
                 Some(CloseReason::Deactivated)
             } else if state.settings.require_extension || super_strict {
                 Some(CloseReason::Missing)
@@ -270,25 +271,25 @@ impl Enforcer {
         };
         // Warn first, close a minute later: closing a browser out of the blue
         // looks like a crash.
-        let found: Vec<(String, String, CloseReason)> = self
+        let found: Vec<((u32, String), String, CloseReason)> = self
             .killer
-            .unprotected_browsers(|exe| reason(exe).is_none())
+            .unprotected_browsers(|session, exe| reason(session, exe).is_none())
             .into_iter()
-            .filter_map(|(exe, name)| reason(&exe).map(|r| (exe, name, r)))
+            .filter_map(|(session, exe, name)| reason(session, &exe).map(|r| ((session, exe), name, r)))
             .collect();
-        self.warned.retain(|exe, _| found.iter().any(|(e, _, _)| e == exe));
+        self.warned.retain(|key, _| found.iter().any(|(k, _, _)| k == key));
         let warning_ms = if super_strict { SUPER_STRICT_WARNING_MS } else { BROWSER_WARNING_MS };
-        for (exe, name, reason) in found {
-            match self.warned.get(&exe) {
+        for (key, name, reason) in found {
+            match self.warned.get(&key) {
                 None => {
-                    self.warned.insert(exe, now_ms);
+                    self.warned.insert(key, now_ms);
                     out.browser_notices.push(BrowserNotice { browser: name, closed: false, reason, warning_ms });
                 }
                 Some(at) if now_ms - at >= warning_ms => {
-                    if self.killer.close_browser(&exe) {
+                    if self.killer.close_browser(key.0, &key.1) {
                         out.browser_notices.push(BrowserNotice { browser: name, closed: true, reason, warning_ms });
                     }
-                    self.warned.remove(&exe);
+                    self.warned.remove(&key);
                     // Closed for good reason; if it comes back without the
                     // extension, it gets a new warning.
                 }

@@ -14,7 +14,7 @@
 //! * on Windows the calling browser is identified from the TCP connection's
 //!   owning process instead of trusting what the caller says.
 
-use crate::http;
+use crate::{http, platform};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -56,6 +56,10 @@ pub fn browser_name(exe: &str) -> Option<&'static str> {
 #[serde(rename_all = "camelCase")]
 pub struct BrowserSeen {
     pub exe: String,
+    /// Windows session (account) the browser runs in; [`UNKNOWN_SESSION`]
+    /// when the connection couldn't be traced.
+    #[serde(default)]
+    pub session: u32,
     pub name: String,
     pub last_seen: i64,
     pub extension_version: String,
@@ -139,10 +143,24 @@ pub struct Bridge {
     /// Websites whose block page was shown, as reported by the extension,
     /// not yet picked up for the statistics.
     site_hits: Mutex<Vec<String>>,
-    /// Which browsers have an open window, as reported by the app (it runs
-    /// on the user's desktop; the service can't see windows): when the last
+    /// Which browsers have an open window, per session, as reported by the
+    /// app running in it (the service can't see windows): when the last
     /// report came, and when each browser was last reported with a window.
-    windows: Mutex<(i64, HashMap<String, i64>)>,
+    windows: Mutex<WindowReports>,
+}
+
+/// Per session: when the app last reported open windows, and when each
+/// browser was last reported with one.
+type WindowReports = HashMap<u32, (i64, HashMap<String, i64>)>;
+
+/// Session of a browser whose connection couldn't be traced to a process: it
+/// matches no real account, so such a browser never counts as covered.
+pub const UNKNOWN_SESSION: u32 = u32::MAX;
+
+/// A browser is identified by its account and program: the same browser in
+/// another Windows account is a different one, with its own extension (or none).
+fn browser_key(session: u32, exe: &str) -> String {
+    format!("{session}/{}", exe.to_lowercase())
 }
 
 /// A report of open browser windows is used this long.
@@ -168,21 +186,23 @@ pub fn parse_site_hits(raw: &str) -> Vec<String> {
 }
 
 impl Bridge {
-    /// Records which browsers have an open window right now.
-    pub fn report_browser_windows(&self, exes: BTreeSet<String>, now_ms: i64) {
-        let mut w = self.windows.lock().unwrap();
+    /// Records which browsers have an open window right now in a session.
+    pub fn report_browser_windows(&self, session: u32, exes: BTreeSet<String>, now_ms: i64) {
+        let mut all = self.windows.lock().unwrap();
+        let w = all.entry(session).or_default();
         w.0 = now_ms;
         for exe in exes {
             w.1.insert(exe, now_ms);
         }
     }
 
-    /// Browsers reported with an open window in the last few seconds, or
-    /// None without a recent report (then every browser counts). A report
-    /// only ever adds windows, so a made-up one can't hide a window the app
-    /// saw a moment ago.
-    pub fn browser_windows(&self, now_ms: i64) -> Option<BTreeSet<String>> {
-        let w = self.windows.lock().unwrap();
+    /// Browsers reported with an open window in a session in the last few
+    /// seconds, or None without a recent report from there (then every
+    /// browser in it counts). A report only ever adds windows, so a made-up
+    /// one can't hide a window the app saw a moment ago.
+    pub fn browser_windows(&self, session: u32, now_ms: i64) -> Option<BTreeSet<String>> {
+        let all = self.windows.lock().unwrap();
+        let w = all.get(&session)?;
         (now_ms - w.0 < WINDOWS_FRESH_MS).then(|| w.1.iter().filter(|(_, at)| now_ms - **at < WINDOWS_FRESH_MS).map(|(e, _)| e.clone()).collect())
     }
 
@@ -208,20 +228,20 @@ impl Bridge {
     /// The extension checked in from this browser recently enough. Browsers
     /// may suspend it or delay its wake-ups for a while, and closing someone's
     /// browser by mistake is far worse than a short gap.
-    pub fn alive(&self, exe: &str, now_ms: i64) -> bool {
+    pub fn alive(&self, session: u32, exe: &str, now_ms: i64) -> bool {
         self.seen
             .lock()
             .unwrap()
-            .get(&exe.to_lowercase())
+            .get(&browser_key(session, exe))
             .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS)
     }
 
     /// The extension runs in this browser but isn't allowed in private windows.
-    pub fn private_windows_missing(&self, exe: &str, now_ms: i64) -> bool {
+    pub fn private_windows_missing(&self, session: u32, exe: &str, now_ms: i64) -> bool {
         self.seen
             .lock()
             .unwrap()
-            .get(&exe.to_lowercase())
+            .get(&browser_key(session, exe))
             .is_some_and(|b| now_ms - b.last_seen < CLOSE_AFTER_SILENCE_MS && b.incognito == Some(false))
     }
 
@@ -242,12 +262,12 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
 }
 
-/// URL of the active tab in a browser, if the report is fresh, and whether
-/// it's in a private window.
-pub fn active_url(browsers: &[BrowserSeen], exe: &str, now_ms: i64) -> Option<(String, bool)> {
+/// URL of the active tab in a browser of a session, if the report is fresh,
+/// and whether it's in a private window.
+pub fn active_url(browsers: &[BrowserSeen], session: u32, exe: &str, now_ms: i64) -> Option<(String, bool)> {
     browsers
         .iter()
-        .find(|b| b.exe.eq_ignore_ascii_case(exe) && now_ms - b.last_seen < ACTIVE_TAB_TIMEOUT_MS)
+        .find(|b| b.session == session && b.exe.eq_ignore_ascii_case(exe) && now_ms - b.last_seen < ACTIVE_TAB_TIMEOUT_MS)
         .and_then(|b| Some((b.active_url.clone()?, b.active_private)))
 }
 
@@ -314,16 +334,21 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
         .map(http::percent_decode)
         .filter(|u| !u.is_empty() && u.len() < 4096);
     let peer_port = req.remote_addr().map(|a| a.port()).unwrap_or(0);
-    let exe = owning_exe(peer_port)
-        .filter(|e| browser_name(e).is_some())
-        .or_else(|| exe_from_hint(hint).map(String::from));
-    if let Some(exe) = exe {
+    // Traced through the connection: which browser, in which account. If
+    // that fails, the extension's own hint names the browser, but such a
+    // report can't vouch for any account.
+    let unknown = if cfg!(windows) { UNKNOWN_SESSION } else { 0 };
+    let found = owning_process(peer_port)
+        .filter(|(e, _)| browser_name(e).is_some())
+        .or_else(|| exe_from_hint(hint).map(|e| (e.to_string(), unknown)));
+    if let Some((exe, session)) = found {
         let exe = exe.to_lowercase();
         let name = browser_name(&exe).unwrap_or("Browser").to_string();
         bridge.seen.lock().unwrap().insert(
-            exe.clone(),
+            browser_key(session, &exe),
             BrowserSeen {
                 exe,
+                session,
                 name,
                 last_seen: chrono::Utc::now().timestamp_millis(),
                 extension_version: version,
@@ -346,43 +371,16 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
     let _ = req.respond(tiny_http::Response::from_string(body).with_header(http::json_header()).with_header(no_store));
 }
 
-/// Executable name of the process owning the client side of a loopback TCP
-/// connection to our port.
-#[cfg(windows)]
-fn owning_exe(client_port: u16) -> Option<String> {
-    use windows::Win32::NetworkManagement::IpHelper::{GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_ALL};
-    use windows::Win32::Networking::WinSock::AF_INET;
-    if client_port == 0 {
-        return None;
-    }
-    let pid = unsafe {
-        let mut size = 0u32;
-        let _ = GetExtendedTcpTable(None, &mut size, false, AF_INET.0 as u32, TCP_TABLE_OWNER_PID_ALL, 0);
-        if size == 0 {
-            return None;
-        }
-        // u32 buffer keeps the table properly aligned.
-        let mut buf = vec![0u32; (size as usize).div_ceil(4) + 1];
-        if GetExtendedTcpTable(Some(buf.as_mut_ptr().cast()), &mut size, false, AF_INET.0 as u32, TCP_TABLE_OWNER_PID_ALL, 0) != 0 {
-            return None;
-        }
-        let count = buf[0] as usize;
-        let rows = std::slice::from_raw_parts(buf.as_ptr().add(1) as *const MIB_TCPROW_OWNER_PID, count);
-        // Ports are stored in network byte order in the low 16 bits.
-        let port = |p: u32| u16::from_be(p as u16);
-        rows.iter()
-            .find(|r| port(r.dwLocalPort) == client_port && port(r.dwRemotePort) == PORT)
-            .map(|r| r.dwOwningPid)?
-    };
+/// Program name and Windows session of the process on the client side of a
+/// loopback connection to our port. The session tells accounts apart: each
+/// logged-in Windows user has their own.
+fn owning_process(client_port: u16) -> Option<(String, u32)> {
+    let pid = platform::tcp_client_pid(client_port, PORT)?;
+    let session = platform::session_of(pid)?;
     let mut sys = sysinfo::System::new().ok()?;
     let pid = sysinfo::Pid::from_u32(pid);
     sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), false);
-    sys.process(pid).map(|p| p.name().to_string_lossy().to_string())
-}
-
-#[cfg(not(windows))]
-fn owning_exe(_client_port: u16) -> Option<String> {
-    None
+    sys.process(pid).map(|p| (p.name().to_string_lossy().to_string(), session))
 }
 
 #[cfg(test)]

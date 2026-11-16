@@ -187,11 +187,16 @@ impl Inner {
         engine::active_blocks(&self.state, now_ms(), &local_now())
     }
 
+    /// Browsers with the extension in this Windows account (the service
+    /// sees every account's).
     fn browsers(&self, now: i64) -> Vec<bridge::BrowserSeen> {
-        match &self.svc {
+        let mut v = match &self.svc {
             Some(s) => s.browsers.clone(),
             None => self.bridge.connected(now),
-        }
+        };
+        let own = platform::own_session().unwrap_or(0);
+        v.retain(|b| b.session == own);
+        v
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -1218,7 +1223,7 @@ fn current_activity(browsers: &[bridge::BrowserSeen], now: i64) -> engine::Activ
     let tab = exe
         .as_deref()
         .filter(|e| bridge::browser_name(e).is_some())
-        .and_then(|e| bridge::active_url(browsers, e, now));
+        .and_then(|e| bridge::active_url(browsers, platform::own_session().unwrap_or(0), e, now));
     let private = tab.as_ref().is_some_and(|t| t.1);
     engine::Activity { exe, url: tab.map(|t| t.0), private }
 }
@@ -1367,8 +1372,8 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         // 3. No service: enforce here (needs administrator rights for websites).
         if let Some(state) = local_state {
             let bridge = shared.lock().unwrap().bridge.clone();
-            if let Some(w) = windows {
-                bridge.report_browser_windows(w, now);
+            if let (Some(w), Some(session)) = (windows, platform::own_session()) {
+                bridge.report_browser_windows(session, w, now);
             }
             let out = enforcer.run(&state, &bridge, now, &local);
             shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
