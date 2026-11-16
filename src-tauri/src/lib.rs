@@ -769,23 +769,39 @@ fn export_settings(shared: tauri::State<'_, Shared>, path: String) -> Res<()> {
 fn import_settings(shared: tauri::State<'_, Shared>, path: String) -> Res<Snapshot> {
     let text = std::fs::read_to_string(&path).map_err(|e| format!("Couldn't read the file: {e}"))?;
     let backup: engine::Backup = serde_json::from_str(&text).map_err(|_| "This isn't a valid OpenBlocker settings file.".to_string())?;
-    with(&shared, |i| {
-        let before = serde_json::to_string_pretty(&i.state).ok();
-        engine::restore(&mut i.state, backup, now_ms(), &local_now())?;
-        // Community lists live in their own files: keep the ones we have,
-        // the others have to be downloaded again.
-        i.state.source_sites = load_sources(&i.sources_dir, &i.state);
-        let loaded: BTreeSet<String> = i.state.source_sites.keys().cloned().collect();
-        for c in &mut i.state.categories {
-            if !loaded.contains(&c.id) {
-                c.source = None;
-            }
+    with(&shared, |i| apply_backup(i, backup))
+}
+
+/// Lists, categories, schedules, limits and settings, for cloud sync.
+#[tauri::command]
+fn get_backup(shared: tauri::State<'_, Shared>) -> Res<engine::Backup> {
+    with(&shared, |i| Ok(engine::backup(&i.state, now_ms())))
+}
+
+/// Replaces lists, categories, schedules, limits and settings with a copy
+/// from cloud sync. The same rules as importing a file apply: refused while a
+/// locked block runs, and the service checks the result like any other change.
+#[tauri::command]
+fn restore_backup(shared: tauri::State<'_, Shared>, backup: engine::Backup) -> Res<Snapshot> {
+    with(&shared, |i| apply_backup(i, backup))
+}
+
+fn apply_backup(i: &mut Inner, backup: engine::Backup) -> Res<Snapshot> {
+    let before = serde_json::to_string_pretty(&i.state).ok();
+    engine::restore(&mut i.state, backup, now_ms(), &local_now())?;
+    // Community lists live in their own files: keep the ones we have,
+    // the others have to be downloaded again.
+    i.state.source_sites = load_sources(&i.sources_dir, &i.state);
+    let loaded: BTreeSet<String> = i.state.source_sites.keys().cloned().collect();
+    for c in &mut i.state.categories {
+        if !loaded.contains(&c.id) {
+            c.source = None;
         }
-        if let Some(json) = before {
-            let _ = std::fs::write(i.path.with_file_name("state.before-import.json"), json);
-        }
-        Ok(i.commit())
-    })
+    }
+    if let Some(json) = before {
+        let _ = std::fs::write(i.path.with_file_name("state.before-import.json"), json);
+    }
+    Ok(i.commit())
 }
 
 /// The text to type for an emergency reset, or `None` when nothing is locked
@@ -1539,6 +1555,8 @@ pub fn run() {
             save_settings,
             export_settings,
             import_settings,
+            get_backup,
+            restore_backup,
             reset_challenge,
             factory_reset,
             save_limit,

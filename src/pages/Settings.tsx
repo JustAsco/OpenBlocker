@@ -1,10 +1,12 @@
 import clsx from "clsx";
 import { Check, Copy, Download, Feather, FolderOpen, Heart, Lock, Puzzle, Scale, Shield, ShieldAlert, ShieldCheck, Upload, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
+import { AccountCard } from "../components/AccountCard";
 import { PasswordCard } from "../components/PasswordCard";
 import { ResetModal } from "../components/ResetModal";
 import { AppIcon, Modal, PageHeader, Segmented, Toggle, usePref, useSecretClicks } from "../components/ui";
 import { api, isTauri } from "../lib/api";
+import { cloudEnabled } from "../lib/cloud";
 import { useStore } from "../lib/store";
 import type { Settings } from "../lib/types";
 import { LANGUAGES, t, tx } from "../lib/i18n";
@@ -357,13 +359,17 @@ export function SettingsPage() {
           {locked && <p className="mt-2 text-xs text-faint">{t("Importing is disabled while a locked block is running.")}</p>}
         </section>
 
+        <AccountCard />
+
         <section className="card p-6">
           <h2 className="mb-2 font-semibold">{t("About")}</h2>
           <p className="text-sm text-muted">
             <span onClick={versionClick} className="cursor-default select-none">
               OpenBlocker 0.1.0
             </span>{" "}
-            {t("· free & open source under the AGPL-3.0. Your data never leaves your computer.")}
+            {cloudEnabled
+              ? t("· free & open source under the AGPL-3.0. Your data only leaves your computer if you sign in to sync.")
+              : t("· free & open source under the AGPL-3.0. Your data never leaves your computer.")}
           </p>
           <p className="mt-3 flex items-center gap-2 text-sm text-muted">
             <Heart size={16} className="text-pink-400" /> {t("Contributions welcome!")}
