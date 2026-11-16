@@ -149,7 +149,8 @@ impl Enforcer {
     /// runs that the extension doesn't cover (not installed, switched off, or
     /// not allowed in private windows); then they go in at once. They come
     /// out again after every browser has been covered for a minute. Browsers
-    /// get 30 s after starting before they count as uncovered.
+    /// get 30 s after starting before they count as uncovered, and only
+    /// count while they have a window.
     fn community_in_hosts(&mut self, community: bool, bridge: &bridge::Bridge, now_ms: i64) -> bool {
         if !community {
             self.community_in_hosts = false;
@@ -159,10 +160,15 @@ impl Enforcer {
         if now_ms - self.started_at < COMMUNITY_STARTUP_GRACE_MS {
             return self.community_in_hosts;
         }
-        let uncovered = !self
+        // A browser running only in the background (Edge's startup boost)
+        // can't open websites; it counts once it has a window. Without a
+        // recent report of open windows, every browser counts.
+        let windows = bridge.browser_windows(now_ms);
+        let uncovered = self
             .killer
             .unprotected_browsers(|exe| bridge.alive(exe, now_ms) && !bridge.private_windows_missing(exe, now_ms))
-            .is_empty();
+            .iter()
+            .any(|(exe, _)| windows.as_ref().is_none_or(|w| w.contains(exe)));
         if uncovered == self.community_in_hosts {
             self.community_switch_since = None;
         } else {

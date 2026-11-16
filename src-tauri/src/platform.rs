@@ -488,6 +488,52 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 // ───────────────────────────── activity (usage limits) ─────────────────────────────
 
 /// Executable name of the window the user is looking at.
+/// Browsers (exe names, lower case) with at least one visible, titled
+/// window on this desktop, minimised ones included. Browsers that only run in
+/// the background (Edge's startup boost, Chrome's background apps) have none.
+/// None where windows can't be listed.
+pub fn browsers_with_windows() -> Option<std::collections::BTreeSet<String>> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::core::{BOOL, PWSTR};
+        use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+        use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+        use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible};
+        unsafe extern "system" fn visit(hwnd: HWND, data: LPARAM) -> BOOL {
+            let pids = &mut *(data.0 as *mut std::collections::BTreeSet<u32>);
+            if IsWindowVisible(hwnd).as_bool() && GetWindowTextLengthW(hwnd) > 0 {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                if pid != 0 {
+                    pids.insert(pid);
+                }
+            }
+            BOOL(1)
+        }
+        let mut pids = std::collections::BTreeSet::<u32>::new();
+        EnumWindows(Some(visit), LPARAM(&mut pids as *mut _ as isize)).ok()?;
+        let mut out = std::collections::BTreeSet::new();
+        for pid in pids {
+            let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { continue };
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+            let _ = CloseHandle(handle);
+            if !ok {
+                continue;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            let exe = path.rsplit(['\\', '/']).next().unwrap_or("").to_lowercase();
+            if crate::bridge::browser_name(&exe).is_some() {
+                out.insert(exe);
+            }
+        }
+        Some(out)
+    }
+    #[cfg(not(windows))]
+    None
+}
+
 pub fn foreground_exe() -> Option<String> {
     let (_, path) = foreground_process()?;
     path.rsplit(['\\', '/']).next().map(str::to_string)

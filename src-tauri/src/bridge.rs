@@ -16,7 +16,7 @@
 
 use crate::http;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -139,6 +139,19 @@ pub struct Bridge {
     /// Websites whose block page was shown, as reported by the extension,
     /// not yet picked up for the statistics.
     site_hits: Mutex<Vec<String>>,
+    /// Which browsers have an open window, as reported by the app (it runs
+    /// on the user's desktop; the service can't see windows): when the last
+    /// report came, and when each browser was last reported with a window.
+    windows: Mutex<(i64, HashMap<String, i64>)>,
+}
+
+/// A report of open browser windows is used this long.
+const WINDOWS_FRESH_MS: i64 = 5_000;
+
+/// Parses the app's report of browsers with an open window (`chrome.exe,msedge.exe`).
+/// Only known browsers are taken.
+pub fn parse_browser_windows(raw: &str) -> BTreeSet<String> {
+    raw.split(',').take(20).map(|e| e.trim().to_lowercase()).filter(|e| browser_name(e).is_some()).collect()
 }
 
 /// Parses the extension's block-page report: `domain*count,domain*count`.
@@ -155,6 +168,24 @@ pub fn parse_site_hits(raw: &str) -> Vec<String> {
 }
 
 impl Bridge {
+    /// Records which browsers have an open window right now.
+    pub fn report_browser_windows(&self, exes: BTreeSet<String>, now_ms: i64) {
+        let mut w = self.windows.lock().unwrap();
+        w.0 = now_ms;
+        for exe in exes {
+            w.1.insert(exe, now_ms);
+        }
+    }
+
+    /// Browsers reported with an open window in the last few seconds, or
+    /// None without a recent report (then every browser counts). A report
+    /// only ever adds windows, so a made-up one can't hide a window the app
+    /// saw a moment ago.
+    pub fn browser_windows(&self, now_ms: i64) -> Option<BTreeSet<String>> {
+        let w = self.windows.lock().unwrap();
+        (now_ms - w.0 < WINDOWS_FRESH_MS).then(|| w.1.iter().filter(|(_, at)| now_ms - **at < WINDOWS_FRESH_MS).map(|(e, _)| e.clone()).collect())
+    }
+
     /// Block-page views reported since the last call.
     pub fn take_site_hits(&self) -> Vec<String> {
         std::mem::take(&mut *self.site_hits.lock().unwrap())

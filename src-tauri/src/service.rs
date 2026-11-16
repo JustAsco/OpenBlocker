@@ -129,8 +129,15 @@ pub mod client {
             .unwrap_or_else(|_| "The OpenBlocker service refused the request.".into())
     }
 
-    pub fn status(since: u64) -> Result<Status, String> {
-        let (code, body) = http::request(PORT, "GET", &format!("/svc/v1/status?since={since}"), HEADER, None, Duration::from_secs(2))?;
+    /// `windows`: browsers with an open window on the user's desktop, which
+    /// the service can't see itself.
+    pub fn status(since: u64, windows: Option<&BTreeSet<String>>) -> Result<Status, String> {
+        let mut path = format!("/svc/v1/status?since={since}");
+        if let Some(w) = windows {
+            path.push_str("&w=");
+            path.push_str(&w.iter().cloned().collect::<Vec<_>>().join(","));
+        }
+        let (code, body) = http::request(PORT, "GET", &path, HEADER, None, Duration::from_secs(2))?;
         if code != 200 {
             return Err(format!("HTTP {code}"));
         }
@@ -513,6 +520,9 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
     match (req.method().as_str(), path.as_str()) {
         ("GET", "/svc/v1/status") => {
             let since = http::query_param(&url, "since").and_then(|v| v.parse().ok()).unwrap_or(u64::MAX);
+            if let Some(w) = http::query_param(&url, "w") {
+                s.bridge.report_browser_windows(bridge::parse_browser_windows(&http::percent_decode(w)), now_ms());
+            }
             let st = s.status(since);
             respond(req, 200, &st)
         }
