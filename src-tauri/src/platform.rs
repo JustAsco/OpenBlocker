@@ -43,14 +43,22 @@ pub fn apply_hosts(domains: &BTreeSet<String>, subdomains: bool, expand: impl Fn
     if merged == existing {
         return Ok(false);
     }
-    std::fs::write(&path, merged).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            "Website blocking needs administrator rights.".to_string()
-        } else {
-            format!("Cannot write hosts file: {e}")
+    // Windows' DNS Client re-reads the file after every change, and virus
+    // scanners check it too; while one of them has it open, writing fails
+    // with a sharing violation (os error 32, or 33 for a locked range). That
+    // passes within moments, so retry briefly instead of giving up.
+    let mut attempt = 0;
+    loop {
+        match std::fs::write(&path, &merged) {
+            Ok(()) => return Ok(true),
+            Err(e) if matches!(e.raw_os_error(), Some(32 | 33)) && attempt < 15 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err("Website blocking needs administrator rights.".into()),
+            Err(e) => return Err(format!("Cannot write hosts file: {e}")),
         }
-    })?;
-    Ok(true)
+    }
 }
 
 pub fn flush_dns() {
