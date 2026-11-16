@@ -808,7 +808,10 @@ const de: Record<string, string> = {
   "I already have an account": "Ich habe schon ein Konto",
   "Create an account": "Konto erstellen",
   "Create account": "Konto erstellen",
-  "Account created. Open the link in the email we sent, then sign in.": "Konto erstellt. Öffne den Link in der E-Mail, die wir geschickt haben, und melde dich dann an.",
+  "Account created. Open the link in the email we sent to confirm your address (the page it opens doesn't matter), then click Sign in here.":
+    "Konto erstellt. Öffne den Link in der E-Mail, um deine Adresse zu bestätigen (die Seite, die sich dann öffnet, ist egal), und klicke dann hier auf Anmelden.",
+  "Email not confirmed": "E-Mail-Adresse noch nicht bestätigt. Öffne zuerst den Link in der E-Mail.",
+  "Invalid login credentials": "E-Mail-Adresse oder Passwort ist falsch.",
   "Signed in as {email}": "Angemeldet als {email}",
   "Nothing uploaded yet.": "Noch nichts hochgeladen.",
   "Last uploaded: {date}": "Zuletzt hochgeladen: {date}",
