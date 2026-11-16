@@ -1,9 +1,10 @@
 import clsx from "clsx";
-import { Ban, Clock, Flame, MonitorSmartphone, Target, Timer, Undo2 } from "lucide-react";
+import { Ban, Clock, Flame, MonitorSmartphone, Target, Timer, Undo2, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import type { Page } from "../App";
 import { AppIcon, PageHeader, Segmented, SiteIcon, usePref } from "../components/ui";
 import { APPS, siteName } from "../lib/catalog";
+import { api } from "../lib/api";
 import { language, t } from "../lib/i18n";
 import { useStore } from "../lib/store";
 import type { DayStats, State } from "../lib/types";
@@ -298,7 +299,7 @@ function ScreenTime({ days, state, go }: { days: Day[]; state: State; go: (p: Pa
           <h2 className="mb-1 flex items-center gap-2 font-semibold">
             <MonitorSmartphone size={18} className="text-accent-2" /> {t("Screen time")}
           </h2>
-          <p className="text-xs text-muted">{t("Time at the computer while OpenBlocker runs; websites only in browsers with the extension.")}</p>
+          <p className="text-xs text-muted">{t("Time at the computer while OpenBlocker runs; websites only in browsers with the extension, never from private windows. Hover over an entry to remove it.")}</p>
         </div>
         {active > 0 && (
           <div className="flex gap-6">
@@ -358,6 +359,7 @@ function Ranked({
   distraction?: (key: string) => boolean;
 }) {
   const [all, setAll] = useState(false);
+  const { run } = useStore();
   if (!rows.length) return <p className="py-4 text-sm text-muted">{empty}</p>;
   const shown = all ? rows.slice(0, 40) : rows.slice(0, 8);
   const max = rows[0][1];
@@ -365,7 +367,7 @@ function Ranked({
     <div>
       <ul className="space-y-2.5">
         {shown.map(([key, v]) => (
-          <li key={key} className="grid grid-cols-[minmax(0,11rem)_1fr_auto] items-center gap-3 text-sm">
+          <li key={key} className="group grid grid-cols-[minmax(0,11rem)_1fr_auto_auto] items-center gap-3 text-sm">
             <span className="flex min-w-0 items-center gap-2">
               {kind === "app" ? <AppIcon name={appName(key)} exe={key} size={18} /> : <SiteIcon domain={key} size={18} />}
               <span className="truncate" title={key}>
@@ -376,6 +378,14 @@ function Ranked({
               <span className={clsx("block h-full rounded-full", distraction?.(key) ? "bg-warn" : "bg-accent")} style={{ width: `${Math.max(2, (v / max) * 100)}%` }} />
             </span>
             <span className="w-16 text-right text-xs text-muted tabular-nums">{unit === "time" ? hours(v) : `${v}×`}</span>
+            <button
+              className="rounded p-0.5 text-faint opacity-0 transition group-hover:opacity-100 hover:text-fg focus-visible:opacity-100"
+              title={t("Remove from statistics (all days)")}
+              aria-label={t("Remove from statistics (all days)")}
+              onClick={() => run(() => api.forgetStatsItem(kind, key), t("Removed from statistics."))}
+            >
+              <X size={14} />
+            </button>
           </li>
         ))}
       </ul>

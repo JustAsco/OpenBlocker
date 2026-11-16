@@ -782,7 +782,8 @@ const de: Record<string, string> = {
   "Screen time": "Bildschirmzeit",
   "Screen time isn't recorded.": "Bildschirmzeit wird nicht aufgezeichnet.",
   "Turn it on in Settings": "In den Einstellungen einschalten",
-  "Time at the computer while OpenBlocker runs; websites only in browsers with the extension.": "Zeit am Computer, während OpenBlocker läuft; Websites nur in Browsern mit der Erweiterung.",
+  "Time at the computer while OpenBlocker runs; websites only in browsers with the extension, never from private windows. Hover over an entry to remove it.":
+    "Zeit am Computer, während OpenBlocker läuft; Websites nur in Browsern mit der Erweiterung, nie aus privaten Fenstern. Fahre über einen Eintrag, um ihn zu entfernen.",
   "on things in your block lists ({time})": "mit Dingen aus deinen Sperrlisten ({time})",
   "{n}% on things in your block lists": "{n} % mit Dingen aus deinen Sperrlisten",
   Programs: "Programme",
@@ -830,6 +831,10 @@ const de: Record<string, string> = {
   "Please sign in again.": "Bitte melde dich erneut an.",
   "· free & open source under the AGPL-3.0. Your data only leaves your computer if you sign in to sync.":
     "· frei und quelloffen unter der AGPL-3.0. Deine Daten verlassen deinen Computer nur, wenn du dich zur Synchronisierung anmeldest.",
+
+  // ── Statistics privacy ──
+  "Remove from statistics (all days)": "Aus der Statistik entfernen (alle Tage)",
+  "Removed from statistics.": "Aus der Statistik entfernt.",
 };
 
 export default de;

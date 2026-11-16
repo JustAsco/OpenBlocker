@@ -18,8 +18,9 @@ const MAX_EXCEPTION_RULES = 200;
 // page open in incognito tabs. That copy is a helper: the main one talks to
 // the app and installs the blocking rules (which apply to incognito tabs as
 // well); the helper takes the rules from the shared storage, redirects its
-// open tabs, and passes the active incognito tab and block-page views back
-// through storage. Firefox runs one copy for all windows.
+// open tabs, and passes the active incognito tab (for usage limits) back
+// through storage. Firefox runs one copy for all windows. Private windows
+// never put a website's name into the statistics.
 const INCOGNITO = !!api.extension.inIncognitoContext;
 const INCOGNITO_TAB_FRESH_MS = 5000;
 
@@ -39,35 +40,29 @@ function browserHint() {
 
 /**
  * URL of the active tab while a browser window has focus and the user isn't
- * idle, so OpenBlocker can count time for usage limits. Nothing else about
- * your browsing is sent, and it only goes to the app on this computer.
+ * idle, so OpenBlocker can count time for usage limits, and whether it's a
+ * private window (then the statistics don't record the website). Nothing
+ * else about your browsing is sent, and it only goes to the app on this
+ * computer.
  */
-async function activeUrl() {
+async function activeTab() {
+  const none = { url: "", private: false };
   try {
-    if ((await api.idle.queryState(60)) !== "active") return "";
+    if ((await api.idle.queryState(60)) !== "active") return none;
     const win = await api.windows.getLastFocused();
-    if (!win?.focused) return "";
+    if (!win?.focused) return none;
     const [tab] = await api.tabs.query({ active: true, windowId: win.id });
-    return tab?.url && /^https?:/.test(tab.url) ? tab.url : "";
+    return tab?.url && /^https?:/.test(tab.url) ? { url: tab.url, private: !!win.incognito || INCOGNITO } : none;
   } catch {
-    return "";
+    return none;
   }
 }
 
 /** The main copy can't see incognito windows: their active tab, as reported by the helper. */
-async function incognitoActiveUrl() {
+async function incognitoActiveTab() {
   const { incognitoTab } = await api.storage.local.get("incognitoTab");
-  return incognitoTab?.url && Date.now() - incognitoTab.at < INCOGNITO_TAB_FRESH_MS ? incognitoTab.url : "";
-}
-
-/** Block-page views in incognito tabs, counted by the helper: moved into pendingHits. */
-async function collectIncognitoHits() {
-  const { incognitoHits } = await api.storage.local.get("incognitoHits");
-  if (!incognitoHits || !Object.keys(incognitoHits).length) return;
-  await api.storage.local.remove("incognitoHits");
-  for (const [d, n] of Object.entries(incognitoHits)) {
-    if (Object.keys(pendingHits).length < 500 || pendingHits[d]) pendingHits[d] = (pendingHits[d] || 0) + n;
-  }
+  const fresh = incognitoTab?.url && Date.now() - incognitoTab.at < INCOGNITO_TAB_FRESH_MS;
+  return { url: fresh ? incognitoTab.url : "", private: true };
 }
 
 let lastRules = null; // last full rules (with rev), to reuse when unchanged
@@ -78,8 +73,10 @@ const pendingHits = {};
 async function fetchRules() {
   try {
     const incognito = await api.extension.isAllowedIncognitoAccess().catch(() => false);
-    await collectIncognitoHits();
-    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: (await activeUrl()) || (await incognitoActiveUrl()), i: incognito ? "1" : "0" });
+    let tab = await activeTab();
+    if (!tab.url) tab = await incognitoActiveTab();
+    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: tab.url, i: incognito ? "1" : "0" });
+    if (tab.url && tab.private) params.set("ap", "1");
     if (lastRules?.rev) params.set("r", lastRules.rev);
     // Block-page views for the statistics, sent until the app has them.
     const hits = Object.entries(pendingHits).slice(0, 50);
@@ -424,13 +421,13 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(sendResponse, () => sendResponse(false));
     return true;
   } else if (msg?.type === "blocked-view" && typeof msg.site === "string" && sender.url?.startsWith(BLOCK_PAGE)) {
+    // Block pages in private windows aren't counted: the statistics would name the site.
+    if (INCOGNITO || sender.tab?.incognito) return;
     // Count it for the blocked entry that matched (m.youtube.com → youtube.com).
     const host = msg.site.toLowerCase().slice(0, 253);
     const entries = [...(current?.blocked || []), ...(current?.blockedPaths || []).map((p) => p.split("/")[0])];
     const site = entries.find((d) => host === d || host.endsWith("." + d)) ?? host;
-    if (!/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(site)) return;
-    if (INCOGNITO) countIncognitoHit(site);
-    else if (Object.keys(pendingHits).length < 500) pendingHits[site] = (pendingHits[site] || 0) + 1;
+    if (/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(site) && Object.keys(pendingHits).length < 500) pendingHits[site] = (pendingHits[site] || 0) + 1;
   } else if (msg?.type === "yt-embed" && typeof msg.videoId === "string") {
     // A YouTube player embedded on another website: may this video play?
     (async () => {
@@ -447,17 +444,6 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-/** In the incognito helper: hand a block-page view to the main copy, which reports it. */
-let hitWrites = Promise.resolve();
-function countIncognitoHit(site) {
-  hitWrites = hitWrites.then(async () => {
-    const { incognitoHits = {} } = await api.storage.local.get("incognitoHits");
-    if (Object.keys(incognitoHits).length >= 500 && !incognitoHits[site]) return;
-    incognitoHits[site] = (incognitoHits[site] || 0) + 1;
-    await api.storage.local.set({ incognitoHits });
-  }).catch(() => {});
-}
-
 /** In the incognito helper: the rules the main copy got from the app (same fallback when it's unreachable). */
 async function storedRules() {
   const { rules, connected } = await api.storage.local.get(["rules", "connected"]);
@@ -468,7 +454,7 @@ async function storedRules() {
 /** In the incognito helper: tell the main copy which incognito tab is in front. */
 let lastIncognitoUrl = "";
 async function reportIncognitoTab() {
-  const url = await activeUrl();
+  const { url } = await activeTab();
   // Written while one is in front (to keep it fresh) and once when that ends.
   if (url || lastIncognitoUrl) await api.storage.local.set({ incognitoTab: { url, at: Date.now() } });
   lastIncognitoUrl = url;

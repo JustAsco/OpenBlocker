@@ -616,6 +616,9 @@ pub struct Activity {
     pub exe: Option<String>,
     /// URL of the active tab, when the foreground window is a browser with the extension.
     pub url: Option<String>,
+    /// The tab is in a private/incognito window: it counts for usage limits,
+    /// but the statistics don't record which website it was.
+    pub private: bool,
 }
 
 /// Does `list` cover what the user is doing?
@@ -646,7 +649,7 @@ pub fn record_activity(state: &mut State, local: &NaiveDateTime, seconds: u64, a
     if seconds == 0 || !state.settings.record_screen_time || (activity.exe.is_none() && activity.url.is_none()) {
         return;
     }
-    let site = activity.url.as_deref().and_then(crate::hosts::normalize_domain);
+    let site = activity.url.as_deref().filter(|_| !activity.private).and_then(crate::hosts::normalize_domain);
     let day = state.stats.entry(date_key(local)).or_default();
     day.active_seconds += seconds;
     if distracting {
@@ -657,6 +660,38 @@ pub fn record_activity(state: &mut State, local: &NaiveDateTime, seconds: u64, a
     }
     if let Some(site) = site {
         bump(&mut day.sites, &site, seconds as u32);
+    }
+}
+
+/// What [`forget_stats_item`] removes: a program or a website.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StatsItem {
+    App,
+    Site,
+}
+
+/// Removes a program or website (with its subdomains) from the statistics of
+/// every day: screen time per program/website and the closed-app and
+/// block-page counts. The totals (time at the computer, distractions
+/// stopped) stay, they don't name anything.
+pub fn forget_stats_item(state: &mut State, kind: StatsItem, key: &str) {
+    let key = key.trim().to_lowercase();
+    if key.is_empty() {
+        return;
+    }
+    let site = |k: &String| *k == key || k.ends_with(&format!(".{key}"));
+    for day in state.stats.values_mut() {
+        match kind {
+            StatsItem::App => {
+                day.apps.remove(&key);
+                day.closed_apps.remove(&key);
+            }
+            StatsItem::Site => {
+                day.sites.retain(|k, _| !site(k));
+                day.blocked_sites.retain(|k, _| !site(k));
+            }
+        }
     }
 }
 
@@ -1141,8 +1176,8 @@ mod tests {
         let local = at(4, 22, 0); // Wednesday 22:00
         let mut state = State::default();
         state.limits.push(limit(1, false));
-        let yt = Activity { exe: Some("chrome.exe".into()), url: Some("https://www.youtube.com/watch?v=1".into()) };
-        let other = Activity { exe: Some("chrome.exe".into()), url: Some("https://wikipedia.org/".into()) };
+        let yt = Activity { exe: Some("chrome.exe".into()), url: Some("https://www.youtube.com/watch?v=1".into()), private: false };
+        let other = Activity { exe: Some("chrome.exe".into()), url: Some("https://wikipedia.org/".into()), private: false };
         assert!(add_usage(&mut state, &local, 30, &other).is_empty());
         assert_eq!(limit_used(&state, "lim", &local), 0);
         assert!(add_usage(&mut state, &local, 30, &yt).is_empty());
@@ -1157,7 +1192,7 @@ mod tests {
         // Apps count too (a browser only through its URL).
         let mut state = State::default();
         state.limits.push(UsageLimit { list_id: "games".into(), ..limit(1, false) });
-        add_usage(&mut state, &local, 10, &Activity { exe: Some("Steam.exe".into()), url: None });
+        add_usage(&mut state, &local, 10, &Activity { exe: Some("Steam.exe".into()), url: None, private: false });
         assert_eq!(limit_used(&state, "lim", &local), 10);
     }
 
@@ -1499,8 +1534,8 @@ mod tests {
     fn statistics() {
         let local = at(4, 14, 30);
         let mut st = State::default();
-        let yt = Activity { exe: Some("Chrome.exe".into()), url: Some("https://www.youtube.com/watch?v=x".into()) };
-        let code = Activity { exe: Some("Code.exe".into()), url: None };
+        let yt = Activity { exe: Some("Chrome.exe".into()), url: Some("https://www.youtube.com/watch?v=x".into()), private: false };
+        let code = Activity { exe: Some("Code.exe".into()), url: None, private: false };
         assert!(is_distracting(&st, &yt), "youtube.com is in the Video list");
         assert!(!is_distracting(&st, &code));
         record_activity(&mut st, &local, 5, &yt, true);
@@ -1511,6 +1546,25 @@ mod tests {
         assert_eq!(day.sites.get("youtube.com"), Some(&5));
         assert_eq!(day.apps.get("chrome.exe"), Some(&5));
         assert_eq!(day.apps.get("code.exe"), Some(&3));
+        // Private windows: the time counts, the website isn't named.
+        let private = Activity { private: true, ..yt.clone() };
+        record_activity(&mut st, &local, 2, &private, true);
+        let day = &st.stats[&date_key(&local)];
+        assert_eq!((day.active_seconds, day.distracted_seconds, day.sites.get("youtube.com")), (10, 7, Some(&5)));
+        assert_eq!(day.apps.get("chrome.exe"), Some(&7));
+        // Removing a website or program from every day's statistics.
+        let day = st.stats.get_mut(&date_key(&local)).unwrap();
+        bump(&mut day.sites, "m.youtube.com", 1);
+        bump(&mut day.sites, "notyoutube.com", 1);
+        bump(&mut day.blocked_sites, "youtube.com", 4);
+        bump(&mut day.closed_apps, "code.exe", 1);
+        forget_stats_item(&mut st, StatsItem::Site, "YouTube.com");
+        forget_stats_item(&mut st, StatsItem::App, "code.exe");
+        let day = &st.stats[&date_key(&local)];
+        assert_eq!(day.sites.keys().collect::<Vec<_>>(), ["notyoutube.com"]);
+        assert!(day.blocked_sites.is_empty() && !day.apps.contains_key("code.exe") && day.closed_apps.is_empty());
+        assert_eq!(day.active_seconds, 10, "totals stay");
+        st.stats.get_mut(&date_key(&local)).unwrap().active_seconds = 8;
         // Off: nothing recorded.
         st.settings.record_screen_time = false;
         record_activity(&mut st, &local, 5, &code, false);

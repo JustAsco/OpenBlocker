@@ -7,7 +7,8 @@ const host = reason === "channel" ? "This video" : hostOf(target) || "This site"
 // For the statistics: which site showed the block page (counted once per page).
 {
   const site = reason === "channel" ? "youtube.com" : hostOf(target);
-  if (site) api.runtime.sendMessage({ type: "blocked-view", site }).catch(() => {});
+  // Not from private windows: the statistics would name the site.
+  if (site && !api.extension.inIncognitoContext) api.runtime.sendMessage({ type: "blocked-view", site }).catch(() => {});
 }
 // Shown inside a YouTube player embedded on another site: keep it small, no tab buttons.
 if (params.get("e") === "1") document.body.classList.add("embed");
