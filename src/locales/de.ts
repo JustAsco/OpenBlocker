@@ -727,10 +727,10 @@ const de: Record<string, string> = {
     "Sanfte Erinnerungen. Kurze Entsperrtexte, Browser werden nie geschlossen, Funktionen der Erweiterung bleiben ohne sie offen.",
   "The defaults. Blocks hold, but OpenBlocker only closes a browser if you switch the extension off during a block.":
     "Die Standardwerte. Sperren halten, aber OpenBlocker schließt einen Browser nur, wenn du die Erweiterung während einer Sperre ausschaltest.",
-  "While websites are blocked, browsers without the extension are closed after a minute. Private windows count, longer reflection texts.":
-    "Während Websites gesperrt sind, werden Browser ohne Erweiterung nach einer Minute geschlossen. Private Fenster zählen, längere Nachdenk-Texte.",
-  "During any block, every browser needs the extension (also in private windows) or it's closed after 15 seconds.":
-    "Während jeder Sperre braucht jeder Browser die Erweiterung (auch in privaten Fenstern), sonst wird er nach 15 Sekunden geschlossen.",
+  "While websites are blocked, browsers without the extension are closed after a minute. Private windows count, longer reflection texts, blocks apply in every Windows account.":
+    "Während Websites gesperrt sind, werden Browser ohne Erweiterung nach einer Minute geschlossen. Private Fenster zählen, längere Nachdenk-Texte, Sperren gelten in jedem Windows-Konto.",
+  "During any block, every browser needs the extension (also in private windows) or it's closed after 15 seconds. Blocks apply in every Windows account.":
+    "Während jeder Sperre braucht jeder Browser die Erweiterung (auch in privaten Fenstern), sonst wird er nach 15 Sekunden geschlossen. Sperren gelten in jedem Windows-Konto.",
   "Not while a locked block is running: it would loosen blocking.": "Nicht während eine gesperrte Sperre läuft: Das würde das Sperren lockern.",
   "“{name}” settings applied.": "Einstellungen „{name}“ übernommen.",
   "Turn on super strict mode?": "Superstreng-Modus einschalten?",
@@ -835,6 +835,15 @@ const de: Record<string, string> = {
   // ── Statistics privacy ──
   "Remove from statistics (all days)": "Aus der Statistik entfernen (alle Tage)",
   "Removed from statistics.": "Aus der Statistik entfernt.",
+
+  // ── Several Windows accounts ──
+  "Apply my blocks to every Windows account": "Meine Sperren in jedem Windows-Konto anwenden",
+  "While a block runs here, it's enforced in the other Windows accounts on this PC too (with super strict mode, if it's on), so switching accounts doesn't get around it. Each account keeps its own lists and settings. For this to hold, the other accounts must be standard users, not administrators.":
+    "Während hier eine Sperre läuft, gilt sie auch in den anderen Windows-Konten auf diesem PC (samt Superstreng-Modus, falls an), damit ein Kontowechsel sie nicht umgeht. Jedes Konto behält seine eigenen Listen und Einstellungen. Damit das hält, müssen die anderen Konten Standardbenutzer sein, keine Administratoren.",
+  "From another account": "Von einem anderen Konto",
+  "Another Windows account on this PC applies its blocks to every account. Only that account can change or end them.":
+    "Ein anderes Windows-Konto auf diesem PC wendet seine Sperren in jedem Konto an. Nur dieses Konto kann sie ändern oder beenden.",
+  "until turned off": "bis zum Ausschalten",
 };
 
 export default de;

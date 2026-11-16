@@ -362,6 +362,10 @@ pub struct Settings {
     /// Record screen time: which programs and websites are in front while
     /// you're at the computer (kept on this PC only, for the statistics).
     pub record_screen_time: bool,
+    /// Apply this account's running blocks (and its super strict mode) to
+    /// every Windows account on the PC, so switching accounts isn't a way
+    /// around them. Each account keeps its own lists and settings.
+    pub share_blocks: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -415,6 +419,7 @@ impl Default for Settings {
             language: String::new(),
             record_screen_time: true,
             super_strict: false,
+            share_blocks: false,
         }
     }
 }

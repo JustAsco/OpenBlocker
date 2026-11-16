@@ -120,7 +120,7 @@ src-tauri/
 - [x] Permanent blocks: on around the clock until you turn them off (flexible, type to unlock or password; never locked, that would be a trap)
 - [x] Usage limits ("max 30 min of YouTube per day")
 - [x] Importable community category lists (large adult/gambling/news domain lists)
-- [ ] **Super strict mode for every Windows user**: enforce it in all accounts on the PC and carry running blocks over, so switching to another account isn't a way around a block (today the service keeps one shared copy of the blocks and assumes one user per PC)
+- [x] **Several Windows accounts**: each account keeps its own lists and settings; with "Apply my blocks to every Windows account" (part of the Strict and Super strict presets) an account's running blocks and super strict mode are enforced in every other account too, so switching to another account isn't a way around them. The other account sees them by name only and can't end them
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
 - [x] Light theme (Settings → App → Theme; dark, light or follow Windows)
 - [x] Translations: English and German (Settings → App → Language). To add a language, copy `src/locales/de.ts` and the table in `src-tauri/src/i18n.rs`
@@ -145,7 +145,7 @@ Contributions are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and th
 - An administrator who is determined enough can still get around it (e.g. disable the service and reboot). The service makes it much harder, not impossible.
 - Daily limits are counted by the app, so time only counts while it runs (it starts with Windows if you enable that, and the service restarts it during locks). Websites only count in browsers with the extension.
 - App allowlists close programs only when they come to the front, so things already running in the background (music, sync tools) keep running. Like daily limits this is done by the app, which the service restarts during locks. Store apps that run inside Windows' own frame (Calculator, Photos, …) aren't caught yet.
-- The service keeps one shared copy of the blocks, so OpenBlocker assumes one Windows user per PC for now.
+- With several Windows accounts, the other accounts must be standard users: an administrator can stop the service. Daily limits are counted per account, and the hosts file follows the account at the screen (blocks another account shares are always in it).
 - Community lists are blocked in browsers (with the extension); other programs, such as a game's built-in browser, can still reach those sites while every browser has the extension.
 - Some antivirus tools warn about hosts-file changes. OpenBlocker only edits its own marked section.
 

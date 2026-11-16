@@ -48,6 +48,19 @@ the app; `src-tauri/src/http.rs`)
 - Hosts-file entries are normalised domains only, so nothing can be injected
   into the file.
 
+**Several Windows accounts** (`service.rs`, `engine::effective_state`)
+- The service keeps one state per Windows account. Every request is traced
+  through its TCP connection to the calling process and its account (SID);
+  a request can't name an account, so one account can't read, change or
+  unlock another's blocks.
+- An account that shares its blocks lends its running blocks to the others;
+  they're enforced there but stay owned by it, and sharing can't be switched
+  off during a locked block. Other accounts only see their names and ends.
+- Browsers are told apart per account (Windows session), so the extension in
+  one account's Chrome doesn't cover another account's.
+- The state from before accounts existed is enforced for everyone until the
+  account at the screen takes it over (before its app can publish anything).
+
 **Locks** (`engine::lock_violation`, `service.rs`)
 - One rule decides whether a change weakens a running lock; the app and the
   service both apply it. The service keeps its own copy of the state in

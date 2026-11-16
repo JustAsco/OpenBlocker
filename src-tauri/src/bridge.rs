@@ -138,7 +138,8 @@ pub fn extension_version() -> &'static str {
 pub struct Bridge {
     seen: Mutex<HashMap<String, BrowserSeen>>,
     /// (revision, serialised rules with the revision included)
-    rules: Mutex<Arc<(String, String)>>,
+    /// Per Windows session (None: for browsers that can't be traced to one).
+    rules: Mutex<RulesBySession>,
     pub error: Mutex<Option<String>>,
     /// Websites whose block page was shown, as reported by the extension,
     /// not yet picked up for the statistics.
@@ -148,6 +149,9 @@ pub struct Bridge {
     /// report came, and when each browser was last reported with a window.
     windows: Mutex<WindowReports>,
 }
+
+/// Serialised rules (revision, JSON) per Windows session.
+type RulesBySession = HashMap<Option<u32>, Arc<(String, String)>>;
 
 /// Per session: when the app last reported open windows, and when each
 /// browser was last reported with one.
@@ -247,14 +251,21 @@ impl Bridge {
 
     /// Publishes new rules. Serialising once here keeps big community lists
     /// cheap: polls with the current revision get a tiny "unchanged" answer.
-    pub fn set_rules(&self, rules: &Rules) {
+    /// Each Windows account's browsers get its own rules (`session`); None
+    /// sets the rules for browsers that can't be traced to an account.
+    pub fn set_rules(&self, session: Option<u32>, rules: &Rules) {
         let json = serde_json::to_string(rules).unwrap_or_else(|_| "{}".into());
         let rev = format!("{:016x}", fnv1a(json.as_bytes()));
-        let mut cur = self.rules.lock().unwrap();
-        if cur.0 != rev {
+        let mut all = self.rules.lock().unwrap();
+        if all.get(&session).is_none_or(|cur| cur.0 != rev) {
             let with_rev = format!("{{\"rev\":\"{rev}\",{}", &json[1..]);
-            *cur = Arc::new((rev, with_rev));
+            all.insert(session, Arc::new((rev, with_rev)));
         }
+    }
+
+    /// Forgets the rules of sessions that are gone (logged out).
+    pub fn keep_session_rules(&self, sessions: &[u32]) {
+        self.rules.lock().unwrap().retain(|k, _| k.is_none_or(|s| sessions.contains(&s)));
     }
 }
 
@@ -341,6 +352,7 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
     let found = owning_process(peer_port)
         .filter(|(e, _)| browser_name(e).is_some())
         .or_else(|| exe_from_hint(hint).map(|e| (e.to_string(), unknown)));
+    let session = found.as_ref().map(|(_, s)| *s);
     if let Some((exe, session)) = found {
         let exe = exe.to_lowercase();
         let name = browser_name(&exe).unwrap_or("Browser").to_string();
@@ -359,7 +371,10 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
             },
         );
     }
-    let rules = bridge.rules.lock().unwrap().clone();
+    let rules = {
+        let all = bridge.rules.lock().unwrap();
+        all.get(&session).or_else(|| all.get(&None)).cloned().unwrap_or_default()
+    };
     let body = if http::query_param(&url, "r") == Some(rules.0.as_str()) {
         format!("{{\"rev\":\"{}\",\"unchanged\":true}}", rules.0)
     } else if rules.0.is_empty() {

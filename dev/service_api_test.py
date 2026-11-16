@@ -48,7 +48,7 @@ def main():
     subprocess.run(["cargo", "build", "-q"], cwd=os.path.join(HERE, "service-harness"), check=True)
     exe = os.path.join(HERE, "service-harness", "target", "debug", "service-harness" + (".exe" if os.name == "nt" else ""))
     data = tempfile.mkdtemp(prefix="ob-service-")
-    proc = subprocess.Popen([exe], env={**os.environ, "OPENBLOCKER_SERVICE_DIR": data}, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen([exe], env={**os.environ, "OPENBLOCKER_SERVICE_DIR": data, "OPENBLOCKER_TEST_ACCOUNTS": "1"}, stderr=subprocess.DEVNULL)
     try:
         for _ in range(40):
             try:
@@ -217,6 +217,43 @@ def run_tests():
     check("typing it turns the block off", call("POST", "/svc/v1/unlock", {"key": "p1", "answer": ch["text"]})[0] == 200)
     code, st = call("GET", "/svc/v1/state")
     check("permanent block gone", st["permanent"] == [])
+
+    # ── several Windows accounts ──
+    # Outside Windows a header picks the account (OPENBLOCKER_TEST_ACCOUNTS);
+    # on Windows it's traced to the calling process and can't be chosen.
+    B = {"X-OpenBlocker-Service": "1", "Content-Type": "application/json", "X-Test-Account": "S-test-b"}
+    check("another account starts without a state", call("GET", "/svc/v1/state", headers=B)[0] == 404)
+    code, mine = call("GET", "/svc/v1/state")
+    theirs = clone(mine)
+    theirs["lists"][0]["sites"] = ["only-b.com"]
+    theirs["lists"][0]["name"] = "B's list"
+    theirs["permanent"] = [{"id": "b1", "listId": theirs["lists"][0]["id"], "lock": "text", "since": now}]
+    check("it publishes its own state", call("POST", "/svc/v1/state", theirs, headers=B)[0] == 200)
+    code, st = call("GET", "/svc/v1/state")
+    check("its lists don't show up in this account", all(l["name"] != "B's list" for l in st["lists"]))
+    code, st = call("GET", "/svc/v1/status?since=0")
+    check("not shared: nothing carried over", st["carried"] == [])
+    time.sleep(1.5)
+    code, rules = bridge("/v1/rules?b=chrome&v=9")
+    check("not shared: its sites aren't blocked here", "only-b.com" not in rules.get("blocked", []))
+    shared = clone(theirs)
+    shared["settings"]["shareBlocks"] = True
+    check("sharing switched on", call("POST", "/svc/v1/state", shared, headers=B)[0] == 200)
+    unshared = clone(shared)
+    unshared["settings"]["shareBlocks"] = False
+    check("sharing can't be switched off during its locked block", call("POST", "/svc/v1/state", unshared, headers=B)[0] == 409)
+    code, st = call("GET", "/svc/v1/status?since=0")
+    check("shared: shown here by name only", [c["name"] for c in st["carried"]] == ["B's list"] and set(st["carried"][0]) == {"name", "endsAt", "locked"})
+    time.sleep(1.5)
+    code, rules = bridge("/v1/rules?b=chrome&v=9")
+    check("shared: its sites are blocked here too", "only-b.com" in rules["blocked"])
+    check("this account can't end it", call("POST", "/svc/v1/challenge", {"key": "b1"})[0] == 400)
+    code, ch = call("POST", "/svc/v1/challenge", {"key": "b1"}, headers=B)
+    check("its own account can", code == 200 and call("POST", "/svc/v1/unlock", {"key": "b1", "answer": ch["text"]}, headers=B)[0] == 200)
+    time.sleep(1.5)
+    code, rules = bridge("/v1/rules?b=chrome&v=9")
+    check("ended: no longer blocked here", "only-b.com" not in rules.get("blocked", []))
+    check("an account name that isn't a SID is refused", call("GET", "/svc/v1/status", headers={**B, "X-Test-Account": "../x"})[0] == 403)
 
 
 if __name__ == "__main__":

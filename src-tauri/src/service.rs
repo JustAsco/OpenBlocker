@@ -62,6 +62,9 @@ pub struct Status {
     /// Websites whose block page was shown after `since` (for statistics).
     #[serde(default)]
     pub site_hits: Vec<String>,
+    /// Blocks other Windows accounts apply to the caller's (name and end only).
+    #[serde(default)]
+    pub carried: Vec<engine::CarriedBlock>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -227,7 +230,11 @@ pub mod client {
 
 // ───────────────────────────── service ─────────────────────────────
 
-struct Svc {
+/// One Windows account's blocks and settings, kept by the service. Each
+/// account has its own; an account that shares its blocks lends its running
+/// blocks to the others ([`engine::effective_state`]), but only it can change
+/// or end them.
+struct Account {
     state: State,
     /// False until the app published something (nothing to enforce yet).
     has_state: bool,
@@ -236,6 +243,18 @@ struct Svc {
     throttle: password::Throttle,
     dir: PathBuf,
     challenges: HashMap<String, String>,
+}
+
+/// Key of the state an older version kept for everyone, until it's handed to
+/// the first account logged in at the screen. Until then its blocks apply to
+/// every account.
+const LEGACY: &str = "legacy";
+
+struct Svc {
+    /// Per Windows account (SID), plus possibly [`LEGACY`].
+    accounts: std::collections::BTreeMap<String, Account>,
+    /// ProgramData\OpenBlocker.
+    root: PathBuf,
     killed: VecDeque<(u64, String)>,
     notices: VecDeque<(u64, enforce::BrowserNotice)>,
     site_hits: VecDeque<(u64, String)>,
@@ -303,10 +322,132 @@ pub fn unlock_text(state: &State, session_id: &str) -> String {
     }
 }
 
+/// Account keys are SIDs ("S-1-5-21-…"); they name folders, so nothing else.
+fn valid_account(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 100 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 impl Svc {
-    fn load(dir: PathBuf, bridge: Arc<bridge::Bridge>) -> Self {
+    fn load(root: PathBuf, bridge: Arc<bridge::Bridge>) -> Self {
+        let _ = std::fs::create_dir_all(root.join("accounts"));
+        platform::protect_service_dir(&root);
+        let mut accounts = std::collections::BTreeMap::new();
+        for entry in std::fs::read_dir(root.join("accounts")).into_iter().flatten().flatten() {
+            let id = entry.file_name().to_string_lossy().to_string();
+            if valid_account(&id) && entry.path().join("state.json").exists() {
+                accounts.insert(id, Account::load(entry.path()));
+            }
+        }
+        // Before several accounts were told apart, one state lived at the top.
+        if root.join("state.json").exists() {
+            accounts.insert(LEGACY.into(), Account::load(root.clone()));
+        }
+        Self {
+            accounts,
+            root,
+            killed: VecDeque::new(),
+            notices: VecDeque::new(),
+            site_hits: VecDeque::new(),
+            seq: 0,
+            hosts_error: None,
+            bridge,
+        }
+    }
+
+    /// Before an account at the screen gets a fresh state, it inherits the
+    /// one from before accounts were told apart (so its app's first publish
+    /// is checked against those locks, not taken as a new account's).
+    fn adopt_legacy_if_console(&mut self, id: &str) {
+        if self.accounts.contains_key(LEGACY) && !self.accounts.contains_key(id) {
+            let console = platform::console_user_session().and_then(platform::session_user_sid);
+            if console.as_deref() == Some(id) {
+                self.adopt_legacy(id);
+            }
+        }
+    }
+
+    /// The caller's account, loaded or created on first contact.
+    fn account(&mut self, id: &str) -> &mut Account {
+        if !self.accounts.contains_key(id) {
+            let dir = self.root.join("accounts").join(id);
+            self.accounts.insert(id.to_string(), Account::load(dir));
+        }
+        self.accounts.get_mut(id).unwrap()
+    }
+
+    /// Hands the state from before accounts were told apart to the account
+    /// logged in at the screen (the one that installed the update).
+    fn adopt_legacy(&mut self, sid: &str) {
+        if !self.accounts.contains_key(LEGACY) || self.accounts.get(sid).is_some_and(|a| a.has_state) {
+            return;
+        }
+        let dir = self.root.join("accounts").join(sid);
+        let _ = std::fs::create_dir_all(&dir);
+        let moved = std::fs::rename(self.root.join("state.json"), dir.join("state.json")).is_ok();
+        if !moved {
+            return;
+        }
+        let _ = std::fs::remove_dir_all(dir.join("sources"));
+        let _ = std::fs::rename(self.root.join("sources"), dir.join("sources"));
+        self.accounts.remove(LEGACY);
+        self.accounts.insert(sid.to_string(), Account::load(dir));
+    }
+
+    /// Anything locked in any account (the service then refuses to stop).
+    fn any_lock(&self) -> bool {
+        self.accounts.values().any(Account::any_lock)
+    }
+
+    /// The other accounts' states that may lend blocks to `id`'s. The
+    /// legacy state lends its blocks to everyone until it has an owner.
+    fn others(&self, id: Option<&str>) -> Vec<State> {
+        self.accounts
+            .iter()
+            .filter(|(k, a)| Some(k.as_str()) != id && a.has_state)
+            .map(|(k, a)| {
+                if k == LEGACY {
+                    let mut st = a.state.clone();
+                    st.settings.share_blocks = true;
+                    st
+                } else {
+                    a.state.clone()
+                }
+            })
+            .collect()
+    }
+
+    /// What to enforce for an account (None: nobody), see [`engine::effective_state`].
+    fn effective(&self, id: Option<&str>, now: i64, local: &NaiveDateTime) -> State {
+        let own = id
+            .and_then(|k| self.accounts.get(k))
+            .filter(|a| a.has_state)
+            .map(|a| a.state.clone())
+            .unwrap_or_default();
+        let others = self.others(id);
+        let refs: Vec<&State> = others.iter().collect();
+        engine::effective_state(&own, &refs, now, local)
+    }
+
+    fn status(&self, since: u64, id: &str) -> Status {
+        let others = self.others(Some(id));
+        let refs: Vec<&State> = others.iter().collect();
+        Status {
+            version: env!("CARGO_PKG_VERSION").into(),
+            hosts_error: self.hosts_error.clone(),
+            bridge_error: self.bridge.error.lock().unwrap().clone(),
+            browsers: self.bridge.connected(now_ms()),
+            seq: self.seq,
+            killed: self.killed.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
+            browser_notices: self.notices.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
+            site_hits: self.site_hits.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
+            carried: engine::carried_blocks(&refs, now_ms(), &local_now()),
+        }
+    }
+}
+
+impl Account {
+    fn load(dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(dir.join("sources"));
-        platform::protect_service_dir(&dir);
         let loaded = std::fs::read_to_string(dir.join("state.json"))
             .ok()
             .and_then(|s| serde_json::from_str::<State>(&s).ok());
@@ -314,7 +455,7 @@ impl Svc {
             s.migrate();
             s
         });
-        let mut svc = Self {
+        let mut account = Self {
             has_state: loaded.is_some(),
             // Unique per run, so an app that talked to a previous run resyncs.
             generation: now_ms().max(0) as u64,
@@ -322,15 +463,9 @@ impl Svc {
             state: loaded.unwrap_or_default(),
             dir,
             challenges: HashMap::new(),
-            killed: VecDeque::new(),
-            notices: VecDeque::new(),
-            site_hits: VecDeque::new(),
-            seq: 0,
-            hosts_error: None,
-            bridge,
         };
-        svc.state.source_sites = svc.load_sources(&svc.state);
-        svc
+        account.state.source_sites = account.load_sources(&account.state);
+        account
     }
 
     fn source_path(&self, id: &str) -> PathBuf {
@@ -477,19 +612,23 @@ impl Svc {
         self.state.source_sites.insert(id.into(), Arc::new(domains));
         Ok(())
     }
+}
 
-    fn status(&self, since: u64) -> Status {
-        Status {
-            version: env!("CARGO_PKG_VERSION").into(),
-            hosts_error: self.hosts_error.clone(),
-            bridge_error: self.bridge.error.lock().unwrap().clone(),
-            browsers: self.bridge.connected(now_ms()),
-            seq: self.seq,
-            killed: self.killed.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
-            browser_notices: self.notices.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
-            site_hits: self.site_hits.iter().filter(|(s, _)| *s > since).map(|(_, n)| n.clone()).collect(),
+/// The Windows account a request comes from, traced through its connection
+/// to the calling process (a request can't name an account itself). For the
+/// tests outside Windows, `OPENBLOCKER_TEST_ACCOUNTS` lets a header pick one.
+fn caller_account(req: &tiny_http::Request) -> Option<String> {
+    #[cfg(not(windows))]
+    if std::env::var_os("OPENBLOCKER_TEST_ACCOUNTS").is_some() {
+        if let Some(h) = req.headers().iter().find(|h| h.field.equiv("X-Test-Account")) {
+            return Some(h.value.as_str().to_string()).filter(|id| valid_account(id));
         }
     }
+    let port = req.remote_addr().map(|a| a.port()).unwrap_or(0);
+    let traced = platform::tcp_client_pid(port, PORT).and_then(platform::user_sid_of);
+    #[cfg(not(windows))]
+    let traced = traced.or_else(|| Some("local".into()));
+    traced.filter(|id| valid_account(id))
 }
 
 fn respond<T: Serialize>(req: tiny_http::Request, code: u16, body: &T) {
@@ -515,7 +654,12 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
         let _ = req.respond(tiny_http::Response::empty(413));
         return;
     }
+    let Some(id) = caller_account(&req) else {
+        let _ = req.respond(tiny_http::Response::empty(403));
+        return;
+    };
     let mut s = svc.lock().unwrap();
+    s.adopt_legacy_if_console(&id);
     let err = |e: String| ErrorBody { error: e };
     match (req.method().as_str(), path.as_str()) {
         ("GET", "/svc/v1/status") => {
@@ -528,46 +672,47 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
                     s.bridge.report_browser_windows(session, bridge::parse_browser_windows(&http::percent_decode(w)), now_ms());
                 }
             }
-            let st = s.status(since);
+            let st = s.status(since, &id);
             respond(req, 200, &st)
         }
-        ("GET", "/svc/v1/state") if s.has_state => respond(req, 200, &s.state),
+        ("GET", "/svc/v1/state") if s.account(&id).has_state => respond(req, 200, &s.account(&id).state),
         ("GET", "/svc/v1/state") => respond(req, 404, &err("No state yet.".into())),
         ("POST", "/svc/v1/state") => {
-            let generation = s.generation;
+            let a = s.account(&id);
+            let generation = a.generation;
             let stale = http::query_param(&url, "gen").and_then(|g| g.parse::<u64>().ok()).is_some_and(|g| g != generation);
             match serde_json::from_str::<State>(&body) {
                 Err(e) => respond(req, 400, &err(e.to_string())),
-                Ok(incoming) => match if stale { Err("Out of date.".to_string()) } else { s.accept(incoming) } {
+                Ok(incoming) => match if stale { Err("Out of date.".to_string()) } else { a.accept(incoming) } {
                     Ok(()) => respond(req, 200, &Generation { generation }),
                     Err(e) => {
-                        let state = s.state.clone();
+                        let state = a.state.clone();
                         respond(req, 409, &Rejection { error: e, state, generation })
                     }
                 },
             }
         }
-        ("POST", "/svc/v1/challenge") => match serde_json::from_str::<KeyAnswer>(&body).map_err(|e| e.to_string()).and_then(|k| s.challenge(&k.key)) {
+        ("POST", "/svc/v1/challenge") => match serde_json::from_str::<KeyAnswer>(&body).map_err(|e| e.to_string()).and_then(|k| s.account(&id).challenge(&k.key)) {
             Ok(text) => respond(req, 200, &Text { text }),
             Err(e) => respond(req, 400, &err(e)),
         },
         ("POST", "/svc/v1/unlock") => match serde_json::from_str::<KeyAnswer>(&body)
             .map_err(|e| e.to_string())
-            .and_then(|k| s.unlock(&k.key, k.answer.as_deref()))
+            .and_then(|k| s.account(&id).unlock(&k.key, k.answer.as_deref()))
         {
             Ok(generation) => respond(req, 200, &Generation { generation }),
             Err(e) => respond(req, 403, &err(e)),
         },
         ("POST", "/svc/v1/password") => match serde_json::from_str::<PasswordChange>(&body)
             .map_err(|e| e.to_string())
-            .and_then(|p| s.set_password(p.current.as_deref(), p.new.as_deref()))
+            .and_then(|p| s.account(&id).set_password(p.current.as_deref(), p.new.as_deref()))
         {
             Ok((generation, password)) => respond(req, 200, &PasswordSet { generation, password }),
             Err(e) => respond(req, 403, &err(e)),
         },
         ("PUT", "/svc/v1/source") => {
-            let id = http::query_param(&url, "id").unwrap_or("").to_string();
-            match s.set_source(&id, &body) {
+            let category = http::query_param(&url, "id").unwrap_or("").to_string();
+            match s.account(&id).set_source(&category, &body) {
                 Ok(()) => respond(req, 200, &serde_json::json!({})),
                 Err(e) => respond(req, 400, &err(e)),
             }
@@ -586,7 +731,13 @@ const SHUTDOWN: u8 = 2;
 /// lock state changes (the Windows service then refuses "stop" while locked).
 fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
     let bridge = Arc::new(bridge::Bridge::default());
-    let svc = Arc::new(Mutex::new(Svc::load(dir, bridge.clone())));
+    let mut loaded = Svc::load(dir, bridge.clone());
+    // An update installed by the user at the screen: their account takes over
+    // the old state before anything can talk to the service.
+    if let Some(sid) = platform::console_user_session().and_then(platform::session_user_sid) {
+        loaded.adopt_legacy(&sid);
+    }
+    let svc = Arc::new(Mutex::new(loaded));
     {
         let bridge = bridge.clone();
         std::thread::spawn(move || bridge::run(bridge, || true));
@@ -611,16 +762,36 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
     while control.load(Ordering::Relaxed) == RUN {
         let now = now_ms();
         let local = local_now();
-        let (state, locked) = {
+        // Who is logged in, and who is at the screen.
+        let console = platform::console_user_session();
+        let console_sid = console.and_then(platform::session_user_sid);
+        let sessions: Vec<(u32, String)> = platform::user_sessions()
+            .into_iter()
+            .filter_map(|id| Some((id, platform::session_user_sid(id)?)))
+            .collect();
+        let (hosts_state, targets, locked, console_locked) = {
             let mut s = svc.lock().unwrap();
-            if !engine::tick(&mut s.state, now).is_empty() {
-                s.save();
+            for account in s.accounts.values_mut() {
+                if !engine::tick(&mut account.state, now).is_empty() {
+                    account.save();
+                }
             }
-            let locked = s.any_lock();
-            (s.has_state.then(|| s.state.clone()), locked)
+            if let Some(sid) = &console_sid {
+                s.adopt_legacy(sid);
+            }
+            // The hosts file is one for the whole PC: it follows the account
+            // at the screen (with the blocks others share). Nobody logged in:
+            // it stays as it is, so it isn't rewritten twice around a logon.
+            let hosts_state = console_sid.as_deref().map(|sid| s.effective(Some(sid), now, &local));
+            let targets: Vec<(u32, State)> = sessions.iter().map(|(id, sid)| (*id, s.effective(Some(sid), now, &local))).collect();
+            let console_locked = hosts_state.as_ref().is_some_and(|st| {
+                st.freeze.is_some() || engine::active_blocks(st, now, &local).iter().any(|b| b.locked)
+            });
+            (hosts_state, targets, s.any_lock(), console_locked)
         };
-        if let Some(state) = state {
-            let out = enforcer.run(&state, &bridge, now, &local);
+        {
+            let targets: Vec<enforce::SessionTarget> = targets.iter().map(|(session, state)| enforce::SessionTarget { session: *session, state }).collect();
+            let out = enforcer.run(hosts_state.as_ref(), &targets, &bridge, now, &local);
             let mut s = svc.lock().unwrap();
             s.hosts_error = enforcer.hosts_error.clone();
             for name in out.killed {
@@ -659,7 +830,7 @@ fn main_loop(dir: PathBuf, control: Arc<AtomicU8>, report_lock: impl Fn(bool)) {
         // No waiting for Windows' autostart: it runs late and at reduced
         // priority (often half a minute on a laptop), and since only one app
         // copy can run, a second one just hands over and exits.
-        if locked && platform::console_user_session().is_some() {
+        if console_locked && console.is_some() {
             if let Some(sys) = sys.as_mut() {
                 // Give a started app time to show up before starting another.
                 if !platform::ui_running_in_console_session(sys) && now - last_launch > WATCHDOG_RETRY_MS {
@@ -694,11 +865,17 @@ pub fn run_console() {
 /// `openblocker --uninstall-check`, run by the installer: exit code 1 if a
 /// locked block or freeze is running (uninstalling/updating is refused then).
 pub fn uninstall_check() -> i32 {
-    let state = std::fs::read_to_string(platform::service_data_dir().join("state.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<State>(&s).ok());
-    let locked = state.is_some_and(|s| {
-        s.freeze.as_ref().is_some_and(|f| f.ends_at > now_ms()) || engine::active_blocks(&s, now_ms(), &local_now()).iter().any(|b| b.locked)
+    let root = platform::service_data_dir();
+    // Every account's state, and the one from before accounts were told apart.
+    let mut files = vec![root.join("state.json")];
+    files.extend(std::fs::read_dir(root.join("accounts")).into_iter().flatten().flatten().map(|e| e.path().join("state.json")));
+    let locked = files.iter().any(|f| {
+        std::fs::read_to_string(f)
+            .ok()
+            .and_then(|s| serde_json::from_str::<State>(&s).ok())
+            .is_some_and(|s| {
+                s.freeze.as_ref().is_some_and(|f| f.ends_at > now_ms()) || engine::active_blocks(&s, now_ms(), &local_now()).iter().any(|b| b.locked)
+            })
     });
     i32::from(locked)
 }

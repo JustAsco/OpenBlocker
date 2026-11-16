@@ -53,6 +53,13 @@ export function SettingsPage() {
               lockedOn={locked}
               onChange={(hideShortVideoFeeds) => save({ hideShortVideoFeeds })}
             />
+            <Toggle
+              label={t("Apply my blocks to every Windows account")}
+              hint={t("While a block runs here, it's enforced in the other Windows accounts on this PC too (with super strict mode, if it's on), so switching accounts doesn't get around it. Each account keeps its own lists and settings. For this to hold, the other accounts must be standard users, not administrators.")}
+              checked={settings.shareBlocks}
+              lockedOn={locked}
+              onChange={(shareBlocks) => save({ shareBlocks })}
+            />
             <Toggle label={t("Flush DNS cache")} hint={t("Helps new blocks apply sooner. Browsers can keep open connections alive; the extension below fixes that.")} checked={settings.flushDns} onChange={(flushDns) => save({ flushDns })} />
             <Toggle label={t("Block Task Manager while frozen")} checked={settings.freezeBlocksTaskManager} onChange={(freezeBlocksTaskManager) => save({ freezeBlocksTaskManager })} />
             <div className="py-3">

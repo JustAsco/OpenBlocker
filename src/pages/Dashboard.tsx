@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { CalendarClock, Flame, KeyRound, Lock, LockKeyhole, Play, Plus, ShieldCheck, Square, Timer, TypeIcon, Unlock, Zap } from "lucide-react";
+import { CalendarClock, Flame, KeyRound, Lock, LockKeyhole, Play, Plus, ShieldCheck, Square, Timer, TypeIcon, Unlock, Users, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { Page } from "../App";
 import { LockWarning, fmtWhen, lockedWord } from "../components/LockWarning";
@@ -8,7 +8,7 @@ import { PasswordModal, UnlockModal } from "../components/UnlockModal";
 import { ListBadge, Segmented, usePref } from "../components/ui";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
-import type { ActiveBlock, LockMode, State } from "../lib/types";
+import type { ActiveBlock, CarriedBlock, LockMode, State } from "../lib/types";
 import { DAYS, dateKey, fmtClock, fmtDuration, fmtMinutes, fmtTime, listTargets, minuteOfDay, weekday } from "../lib/util";
 import { language, t, tx } from "../lib/i18n";
 
@@ -31,6 +31,7 @@ export function Dashboard({ go }: { go: (p: Page) => void }) {
 
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="flex flex-col gap-5 lg:col-span-3">
+          {!!status.carried?.length && <CarriedCard blocks={status.carried} />}
           <ActiveCard active={status.active} state={state} onUnlock={setUnlockId} go={go} />
           <QuickBlock state={state} go={go} />
         </div>
@@ -41,6 +42,29 @@ export function Dashboard({ go }: { go: (p: Page) => void }) {
       </div>
       <UnlockModal sessionId={unlockId} onClose={() => setUnlockId(null)} />
     </>
+  );
+}
+
+/** Blocks another Windows account on this PC applies here too: only their names and ends. */
+function CarriedCard({ blocks }: { blocks: CarriedBlock[] }) {
+  // Permanent blocks "end" in the year 9999.
+  const forever = (ts: number) => ts > Date.now() + 10 * 365 * 86_400_000;
+  return (
+    <div className="card p-5">
+      <h2 className="mb-1 flex items-center gap-2 font-semibold">
+        <Users size={17} className="text-accent-2" /> {t("From another account")}
+      </h2>
+      <p className="mb-3 text-sm text-muted">{t("Another Windows account on this PC applies its blocks to every account. Only that account can change or end them.")}</p>
+      <ul className="space-y-1.5 text-sm">
+        {blocks.map((b) => (
+          <li key={b.name} className="flex items-center gap-2">
+            {b.locked && <Lock size={13} className="text-faint" />}
+            <span className="font-medium">{b.name}</span>
+            <span className="text-muted">{forever(b.endsAt) ? t("until turned off") : t("until {time}", { time: fmtTime(b.endsAt) })}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
