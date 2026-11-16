@@ -1335,7 +1335,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         let mut killed = vec![];
         let mut browser_notices = vec![];
         let mut site_hits = vec![];
-        match service::client::status(kill_seq.unwrap_or(u64::MAX)) {
+        // The service can't see windows: tell it which browsers have one.
+        let windows = platform::browsers_with_windows();
+        match service::client::status(kill_seq.unwrap_or(u64::MAX), windows.as_ref()) {
             Ok(status) => {
                 if kill_seq.is_some() {
                     killed = status.killed.clone();
@@ -1365,6 +1367,9 @@ fn engine_loop(app: AppHandle, shared: Shared) {
         // 3. No service: enforce here (needs administrator rights for websites).
         if let Some(state) = local_state {
             let bridge = shared.lock().unwrap().bridge.clone();
+            if let Some(w) = windows {
+                bridge.report_browser_windows(w, now);
+            }
             let out = enforcer.run(&state, &bridge, now, &local);
             shared.lock().unwrap().hosts_error = enforcer.hosts_error.clone();
             killed = out.killed;
@@ -1510,7 +1515,7 @@ pub fn run() {
             let bridge = Arc::new(bridge::Bridge::default());
             // Ask the service first, so the app doesn't grab the bridge port
             // for a moment when the service owns it.
-            let svc_up = Arc::new(AtomicBool::new(service::client::status(u64::MAX).is_ok()));
+            let svc_up = Arc::new(AtomicBool::new(service::client::status(u64::MAX, None).is_ok()));
             let shared: Shared = Arc::new(Mutex::new(Inner::load(dir, bridge.clone(), svc_up.clone())));
             app.manage(shared.clone());
             // The app serves the extension only while the service doesn't.
