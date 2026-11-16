@@ -7,7 +7,9 @@
 // in Settings doesn't appear and OpenBlocker never contacts a server.
 // Sign-in uses email and password without a confirmation email, so it works
 // without an email server (SMTP) and without a redirect URL or deep link.
-// Google sign-in or emailed codes can be added next to it later.
+// Google sign-in or emailed codes can be added next to it later. The PKCE
+// flow makes links in emails (sign-up confirmation) carry a one-time code
+// instead of session tokens, so the page they redirect to gets nothing usable.
 
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 
@@ -23,7 +25,7 @@ let client: Promise<SupabaseClient> | null = null;
 function supabase(): Promise<SupabaseClient> {
   if (!cloudEnabled) return Promise.reject("Cloud sync isn't available in this build.");
   client ??= import("@supabase/supabase-js").then(({ createClient }) =>
-    createClient(URL!, KEY!, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: "ob-cloud-auth" } }),
+    createClient(URL!, KEY!, { auth: { flowType: "pkce", persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: "ob-cloud-auth" } }),
   );
   return client;
 }

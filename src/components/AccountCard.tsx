@@ -33,13 +33,19 @@ function SignIn() {
   const [password, setPassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && password.length >= (creating ? 8 : 1);
   const submit = async () => {
     if (!valid || busy) return;
     setBusy(true);
     try {
       if (!creating) await signIn(email.trim(), password);
-      else if (!(await signUp(email.trim(), password))) toast(t("Account created. Open the link in the email we sent, then sign in."), "info");
+      else if (!(await signUp(email.trim(), password))) {
+        // The project wants the address confirmed first: keep what was typed
+        // so signing in afterwards is one click.
+        setCreating(false);
+        setConfirming(true);
+      }
     } catch (e) {
       toast(String(e), "error");
     } finally {
@@ -52,6 +58,11 @@ function SignIn() {
       <p className="mb-4 text-sm text-muted">
         {t("Optional. Sign in to keep your block lists, categories, schedules, limits and settings in sync between computers. Without an account everything works the same, and nothing leaves this computer.")}
       </p>
+      {confirming && (
+        <p className="mb-3 rounded-lg border border-accent/30 bg-accent/10 p-3 text-sm">
+          {t("Account created. Open the link in the email we sent to confirm your address (the page it opens doesn't matter), then click Sign in here.")}
+        </p>
+      )}
       <div className="space-y-2">
         <input className="input" type="email" autoComplete="email" placeholder={t("Email address")} value={email} onChange={(e) => setEmail(e.target.value)} />
         <input
@@ -65,7 +76,7 @@ function SignIn() {
         />
       </div>
       <div className="mt-3 flex items-center gap-2">
-        <button className="text-xs text-muted hover:underline" onClick={() => setCreating(!creating)}>
+        <button className="text-xs text-muted hover:underline" onClick={() => (setCreating(!creating), setConfirming(false))}>
           {creating ? t("I already have an account") : t("Create an account")}
         </button>
         <div className="flex-1" />
