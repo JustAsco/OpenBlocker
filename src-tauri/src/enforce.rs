@@ -100,7 +100,22 @@ pub struct Enforcer {
     warned: std::collections::HashMap<String, i64>,
     /// Browsers in which the extension ran since the current blocks began.
     had_extension: BTreeSet<String>,
+    /// Whether the hosts file holds the community lists too, see
+    /// [`Enforcer::community_in_hosts`].
+    community_in_hosts: bool,
+    /// Since when that should change (to take them out again only once
+    /// every browser has been covered for a while).
+    community_switch_since: Option<i64>,
+    started_at: i64,
 }
+
+/// After starting, the extensions get this long to check in before a browser
+/// counts as uncovered, so restarting OpenBlocker doesn't rewrite a huge
+/// hosts file twice.
+const COMMUNITY_STARTUP_GRACE_MS: i64 = 10_000;
+/// Community lists leave the hosts file once every browser has been covered
+/// this long: closing and reopening a browser shouldn't rewrite it each time.
+const COMMUNITY_REMOVE_AFTER_MS: i64 = 60_000;
 
 impl Default for Enforcer {
     fn default() -> Self {
@@ -117,6 +132,9 @@ impl Enforcer {
             retry_at: 0,
             warned: Default::default(),
             had_extension: BTreeSet::new(),
+            community_in_hosts: false,
+            community_switch_since: None,
+            started_at: chrono::Utc::now().timestamp_millis(),
         }
     }
 
@@ -125,6 +143,36 @@ impl Enforcer {
     pub fn invalidate(&mut self) {
         self.applied = None;
         self.retry_at = 0;
+    }
+
+    /// Should the hosts file hold the community lists? Only while a browser
+    /// runs that the extension doesn't cover (not installed, switched off, or
+    /// not allowed in private windows); then they go in at once. They come
+    /// out again after every browser has been covered for a minute. Browsers
+    /// get 30 s after starting before they count as uncovered.
+    fn community_in_hosts(&mut self, community: bool, bridge: &bridge::Bridge, now_ms: i64) -> bool {
+        if !community {
+            self.community_in_hosts = false;
+            self.community_switch_since = None;
+            return false;
+        }
+        if now_ms - self.started_at < COMMUNITY_STARTUP_GRACE_MS {
+            return self.community_in_hosts;
+        }
+        let uncovered = !self
+            .killer
+            .unprotected_browsers(|exe| bridge.alive(exe, now_ms) && !bridge.private_windows_missing(exe, now_ms))
+            .is_empty();
+        if uncovered == self.community_in_hosts {
+            self.community_switch_since = None;
+        } else {
+            let since = *self.community_switch_since.get_or_insert(now_ms);
+            if uncovered || now_ms - since >= COMMUNITY_REMOVE_AFTER_MS {
+                self.community_in_hosts = uncovered;
+                self.community_switch_since = None;
+            }
+        }
+        self.community_in_hosts
     }
 
     /// One enforcement round.
@@ -139,8 +187,15 @@ impl Enforcer {
         let connected = bridge.connected(now_ms);
         let super_strict = engine::super_strict(state, &blocks);
         let strict = ext_features && connected.is_empty() && (state.settings.extension_fallback == ExtensionFallback::Strict || super_strict);
+        // Community lists (tens of thousands of domains) slow down Windows'
+        // name lookups when they're in the hosts file, so it only gets the
+        // hand-entered sites while the extension covers every browser.
+        let mut keep = engine::manual_sites(state, &blocks);
+        let community = sites.iter().any(|s| !keep.contains(s));
         if strict {
-            sites.extend(engine::strict_fallback_domains(state, &blocks));
+            let fallback = engine::strict_fallback_domains(state, &blocks);
+            keep.extend(fallback.iter().cloned());
+            sites.extend(fallback);
         } else {
             // A site with an excepted path can't be in the hosts file (that
             // would block the excepted part too); the extension blocks the rest.
@@ -153,6 +208,9 @@ impl Enforcer {
         }
         if state.freeze.is_some() && state.settings.freeze_blocks_task_manager {
             apps.insert("taskmgr.exe".into());
+        }
+        if !self.community_in_hosts(community, bridge, now_ms) {
+            sites.retain(|s| keep.contains(s));
         }
         let subdomains = state.settings.block_subdomains;
         let key = (sites, subdomains);
