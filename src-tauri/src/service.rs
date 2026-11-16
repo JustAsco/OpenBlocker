@@ -520,8 +520,13 @@ fn handle(svc: &Mutex<Svc>, mut req: tiny_http::Request) {
     match (req.method().as_str(), path.as_str()) {
         ("GET", "/svc/v1/status") => {
             let since = http::query_param(&url, "since").and_then(|v| v.parse().ok()).unwrap_or(u64::MAX);
+            // Open browser windows in the caller's account. The account is
+            // traced through the connection, never taken from the request.
             if let Some(w) = http::query_param(&url, "w") {
-                s.bridge.report_browser_windows(bridge::parse_browser_windows(&http::percent_decode(w)), now_ms());
+                let port = req.remote_addr().map(|a| a.port()).unwrap_or(0);
+                if let Some(session) = platform::tcp_client_pid(port, PORT).and_then(platform::session_of) {
+                    s.bridge.report_browser_windows(session, bridge::parse_browser_windows(&http::percent_decode(w)), now_ms());
+                }
             }
             let st = s.status(since);
             respond(req, 200, &st)

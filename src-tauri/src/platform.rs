@@ -148,9 +148,11 @@ impl ProcessKiller {
     }
 
     /// Browsers running without a working extension (`has_extension` says
-    /// whether an exe is covered), as (exe, friendly name). Browsers get 30 s
-    /// after starting so the extension can check in.
-    pub fn unprotected_browsers(&mut self, has_extension: impl Fn(&str) -> bool) -> Vec<(String, String)> {
+    /// whether a browser in a session is covered), as (session, exe,
+    /// friendly name): the same browser in two Windows accounts is listed
+    /// once per account. Browsers get 30 s after starting so the extension
+    /// can check in.
+    pub fn unprotected_browsers(&mut self, has_extension: impl Fn(u32, &str) -> bool) -> Vec<(u32, String, String)> {
         let now_s = chrono::Utc::now().timestamp().max(0) as u64;
         let own_exe = std::env::current_exe().ok();
         let Some(sys) = self.refresh() else { return vec![] };
@@ -158,25 +160,26 @@ impl ProcessKiller {
         for (pid, p) in sys.processes() {
             let exe = p.name().to_string_lossy().to_lowercase();
             let Some(name) = crate::bridge::browser_name(&exe) else { continue };
-            if !may_close(pid.as_u32(), &exe, p.exe(), own_exe.as_deref()) || has_extension(&exe) || now_s.saturating_sub(p.start_time()) < 30 {
+            let Some(session) = session_of(pid.as_u32()) else { continue };
+            if !may_close(pid.as_u32(), &exe, p.exe(), own_exe.as_deref()) || has_extension(session, &exe) || now_s.saturating_sub(p.start_time()) < 30 {
                 continue;
             }
-            out.insert(exe, name.to_string());
+            out.insert((session, exe), name.to_string());
         }
-        out.into_iter().collect()
+        out.into_iter().map(|((session, exe), name)| (session, exe, name)).collect()
     }
 
-    /// Closes a browser by ending its main process only (the one whose parent
+    /// Closes a browser (in one session) by ending its main process only (the one whose parent
     /// isn't the same browser). Its tab and helper processes then exit on
     /// their own, so there's no "Aw, Snap!" flash, and the browser offers to
     /// restore the tabs next time. Returns whether anything was ended.
-    pub fn close_browser(&mut self, exe: &str) -> bool {
+    pub fn close_browser(&mut self, session: u32, exe: &str) -> bool {
         let own_exe = std::env::current_exe().ok();
         let Some(sys) = self.refresh() else { return false };
         let mut closed = false;
         for (pid, p) in sys.processes() {
             let name = p.name().to_string_lossy().to_lowercase();
-            if name != exe || !may_close(pid.as_u32(), &name, p.exe(), own_exe.as_deref()) {
+            if name != exe || session_of(pid.as_u32()) != Some(session) || !may_close(pid.as_u32(), &name, p.exe(), own_exe.as_deref()) {
                 continue;
             }
             let child = p
@@ -211,6 +214,64 @@ impl ProcessKiller {
             });
         }
         out.into_values().collect()
+    }
+}
+
+/// Windows session a process runs in: each logged-in account has its own,
+/// services run in session 0. Elsewhere everything counts as one session.
+pub fn session_of(pid: u32) -> Option<u32> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+        let mut session = 0u32;
+        unsafe { ProcessIdToSessionId(pid, &mut session) }.ok()?;
+        Some(session)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Some(0)
+    }
+}
+
+/// This process's session.
+pub fn own_session() -> Option<u32> {
+    session_of(std::process::id())
+}
+
+/// Process on the client side of a loopback TCP connection from
+/// `client_port` to our `server_port`, so a local request can be traced to
+/// the program (and account) that made it.
+pub fn tcp_client_pid(client_port: u16, server_port: u16) -> Option<u32> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::NetworkManagement::IpHelper::{GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, TCP_TABLE_OWNER_PID_ALL};
+        use windows::Win32::Networking::WinSock::AF_INET;
+        if client_port == 0 {
+            return None;
+        }
+        let mut size = 0u32;
+        let _ = GetExtendedTcpTable(None, &mut size, false, AF_INET.0 as u32, TCP_TABLE_OWNER_PID_ALL, 0);
+        if size == 0 {
+            return None;
+        }
+        // u32 buffer keeps the table properly aligned.
+        let mut buf = vec![0u32; (size as usize).div_ceil(4) + 1];
+        if GetExtendedTcpTable(Some(buf.as_mut_ptr().cast()), &mut size, false, AF_INET.0 as u32, TCP_TABLE_OWNER_PID_ALL, 0) != 0 {
+            return None;
+        }
+        let count = buf[0] as usize;
+        let rows = std::slice::from_raw_parts(buf.as_ptr().add(1) as *const MIB_TCPROW_OWNER_PID, count);
+        // Ports are stored in network byte order in the low 16 bits.
+        let port = |p: u32| u16::from_be(p as u16);
+        rows.iter()
+            .find(|r| port(r.dwLocalPort) == client_port && port(r.dwRemotePort) == server_port)
+            .map(|r| r.dwOwningPid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (client_port, server_port);
+        None
     }
 }
 
