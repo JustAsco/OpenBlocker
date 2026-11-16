@@ -207,11 +207,23 @@ pub fn end_block(state: &mut State, ref_id: &str, now_ms: i64, local: &NaiveDate
 
 /// Union of every domain and executable that must be blocked.
 pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<String>, BTreeSet<String>) {
+    targets(state, blocks, true)
+}
+
+/// The blocked websites without those that only come from community lists:
+/// what was entered by hand in block lists and categories. The hosts file
+/// gets only these while the extension covers every browser, because tens of
+/// thousands of entries slow down Windows' name lookups.
+pub fn manual_sites(state: &State, blocks: &[ActiveBlock]) -> BTreeSet<String> {
+    targets(state, blocks, false).0
+}
+
+fn targets(state: &State, blocks: &[ActiveBlock], sources: bool) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut sites = BTreeSet::new();
     let mut apps = BTreeSet::new();
     let ids: BTreeSet<&str> = blocks.iter().map(|b| b.list_id.as_str()).collect();
     for list in state.lists.iter().filter(|l| ids.contains(l.id.as_str())) {
-        let (list_sites, list_apps) = list_items(state, list);
+        let (list_sites, list_apps) = items(state, list, sources);
         // Allowlist items are *allowed*, not blocked.
         if list.mode == ListMode::Block {
             sites.extend(list_sites);
@@ -226,6 +238,10 @@ pub fn enforced_targets(state: &State, blocks: &[ActiveBlock]) -> (BTreeSet<Stri
 
 /// A list's own items plus those of its categories (normalised).
 pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSet<String>) {
+    items(state, list, true)
+}
+
+fn items(state: &State, list: &BlockList, sources: bool) -> (BTreeSet<String>, BTreeSet<String>) {
     let cats = list.categories.iter().filter_map(|id| state.category(id));
     let mut sites: BTreeSet<String> = list
         .sites
@@ -234,7 +250,7 @@ pub fn list_items(state: &State, list: &BlockList) -> (BTreeSet<String>, BTreeSe
         .filter_map(|s| crate::hosts::normalize_site(s))
         .collect();
     // Community lists are normalised when they're loaded.
-    for id in &list.categories {
+    for id in list.categories.iter().filter(|_| sources) {
         if let Some(extra) = state.source_sites.get(id) {
             sites.extend(extra.iter().cloned());
         }
@@ -1260,6 +1276,19 @@ mod tests {
         state.source_sites.insert("social".into(), std::sync::Arc::new(["huge-list-domain.com".to_string()].into()));
         let (sites, _) = list_items(&state, &state.lists[0]);
         assert!(sites.contains("huge-list-domain.com"));
+        // Hand-entered sites only (for the hosts file): the community list is left out.
+        state.lists[0].sites.push("huge-list-domain.com".into());
+        state.lists[0].sites.push("my-own-entry.com".into());
+        state.source_sites.insert("social".into(), std::sync::Arc::new(["huge-list-domain.com".to_string(), "only-in-list.com".to_string()].into()));
+        let list = state.lists[0].id.clone();
+        state.sessions.push(Session { id: "s".into(), list_id: list, started_at: 0, ends_at: 1_000_000, lock: LockMode::None });
+        let blocks = active_blocks(&state, 0, &at(4, 12, 0));
+        let (all, _) = enforced_targets(&state, &blocks);
+        let manual = manual_sites(&state, &blocks);
+        assert!(all.contains("only-in-list.com") && !manual.contains("only-in-list.com"));
+        assert!(manual.contains("huge-list-domain.com"), "also entered by hand: stays");
+        assert!(manual.contains("my-own-entry.com") && manual.contains("instagram.com"));
+        assert!(manual.is_subset(&all));
     }
 
     #[test]
