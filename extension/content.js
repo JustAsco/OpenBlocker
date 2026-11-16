@@ -20,6 +20,8 @@ const FEED_CSS = [
       ytd-rich-section-renderer:has(ytd-rich-shelf-renderer[is-shorts]),
       ytd-rich-section-renderer:has(ytm-shorts-lockup-view-model),
       ytd-rich-section-renderer:has(ytm-shorts-lockup-view-model-v2),
+      ytd-rich-section-renderer:has(a[href^="/shorts/"]),
+      grid-shelf-view-model:has(a[href^="/shorts/"]),
       grid-shelf-view-model:has(ytm-shorts-lockup-view-model),
       grid-shelf-view-model:has(ytm-shorts-lockup-view-model-v2),
       ytd-rich-item-renderer:has(a[href^="/shorts/"]),
@@ -132,6 +134,19 @@ const TILES = [
   "ytm-compact-video-renderer",
   "ytm-media-item",
 ].join(",");
+// Shelves and sections that hold video tiles: hidden too once every tile in
+// them is, so no empty frames or lone headings ("Shorts", "For You") stay.
+// Only generic containers; if YouTube renames them, the tiles are still hidden.
+const SECTIONS = [
+  "ytd-rich-section-renderer",
+  "ytd-rich-shelf-renderer",
+  "ytd-reel-shelf-renderer",
+  "ytd-shelf-renderer",
+  "ytd-item-section-renderer",
+  "ytd-horizontal-card-list-renderer",
+  "grid-shelf-view-model",
+  "ytm-reel-shelf-renderer",
+].join(",");
 const CHANNEL_LINK = 'a[href^="/@"], a[href^="/channel/UC"], a[href^="/c/"], a[href^="/user/"]';
 
 const tileVerdicts = new Map(); // key -> allowed
@@ -219,7 +234,11 @@ function applyTileFilter(rules, subs) {
   if (!tileStyle) {
     tileStyle = document.createElement("style");
     tileStyle.id = "openblocker-channels";
-    tileStyle.textContent = `:is(${TILES}):not([data-ob-ok="1"]) { display: none !important; }`;
+    tileStyle.textContent = `
+      :is(${TILES}):not([data-ob-ok="1"]) { display: none !important; }
+      :is(${SECTIONS}):has(:is(${TILES})):not(:has(:is(${TILES})[data-ob-ok="1"])) { display: none !important; }
+      /* The home grid's rows: let the remaining videos flow on instead of leaving gaps. */
+      ytd-rich-grid-row, ytd-rich-grid-row > #contents { display: contents !important; }`;
   }
   if (!tileStyle.isConnected) (document.head || document.documentElement).append(tileStyle);
   if (!observer) {

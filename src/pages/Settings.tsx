@@ -92,7 +92,7 @@ export function SettingsPage() {
 
         <PasswordCard />
 
-        <section className="card p-6 lg:row-span-2">
+        <section className="card self-start p-6">
           <h2 className="mb-1 flex items-center gap-2 font-semibold">
             <Puzzle size={18} className="text-accent-2" /> {t("Browser extension")}
           </h2>
@@ -220,130 +220,133 @@ export function SettingsPage() {
           </div>
         </section>
 
-        <section className="card p-6">
-          <h2 className="mb-2 font-semibold">{t("App")}</h2>
-          <div className="divide-y divide-line">
-            {autostart !== null && (status.platform === "windows" || !isTauri) && (
+        {/* Next to the tall extension card: stacked, so no card gets stretched. */}
+        <div className="flex flex-col gap-5">
+          <section className="card p-6">
+            <h2 className="mb-2 font-semibold">{t("App")}</h2>
+            <div className="divide-y divide-line">
+              {autostart !== null && (status.platform === "windows" || !isTauri) && (
+                <Toggle
+                  label={t("Start with Windows")}
+                  hint={
+                    status.service
+                      ? t("Opens OpenBlocker in the tray when you log in. Blocking itself runs in the background service either way.")
+                      : t("Opens OpenBlocker in the tray when you log in, so blocks apply from the start.")
+                  }
+                  checked={autostart}
+                  lockedOn={locked}
+                  onChange={(v) =>
+                    api
+                      .setAutostart(v)
+                      .then((now) => {
+                        setAutostart(now);
+                        toast(now ? "OpenBlocker will start with Windows." : "Autostart disabled.", "success");
+                      })
+                      .catch((e) => toast(String(e), "error"))
+                  }
+                />
+              )}
               <Toggle
-                label={t("Start with Windows")}
+                label={t("Record screen time")}
                 hint={
-                  status.service
-                    ? t("Opens OpenBlocker in the tray when you log in. Blocking itself runs in the background service either way.")
-                    : t("Opens OpenBlocker in the tray when you log in, so blocks apply from the start.")
+                  <>
+                    {t("For the statistics: which programs and websites you use, and for how long. Kept on this PC only.")}{" "}
+                    <button
+                      className="underline underline-offset-2 hover:text-fg"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (confirm(t("Delete all recorded screen time? Focus time and blocked counts stay."))) run(api.clearScreenTime, "Screen time history deleted.");
+                      }}
+                    >
+                      {t("Delete history")}
+                    </button>
+                  </>
                 }
-                checked={autostart}
-                lockedOn={locked}
-                onChange={(v) =>
+                checked={settings.recordScreenTime}
+                onChange={(recordScreenTime) => save({ recordScreenTime })}
+              />
+              <Toggle label={t("Notifications")} hint={t("Pomodoro phases, finished blocks and closed apps.")} checked={settings.notifications} onChange={(notifications) => save({ notifications })} />
+              <Toggle label={t("Keep running in the tray")} hint={t("Closing the window keeps your blocks active.")} checked={settings.closeToTray} onChange={(closeToTray) => save({ closeToTray })} />
+              <Toggle label={t("Show website icons")} hint={t("Icons are loaded from Google's favicon service.")} checked={siteIcons} onChange={setSiteIcons} />
+              <div className="flex items-center justify-between gap-6 py-3">
+                <span className="text-sm font-medium">{t("Theme")}</span>
+                <Segmented
+                  value={theme}
+                  onChange={setTheme}
+                  options={[
+                    { value: "dark", label: t("Dark") },
+                    { value: "light", label: t("Light") },
+                    { value: "system", label: t("System") },
+                  ]}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-6 py-3">
+                <span className="text-sm font-medium">{t("Language")}</span>
+                <select className="input w-auto py-1.5" value={settings.language} onChange={(e) => save({ language: e.target.value })}>
+                  <option value="">{t("Like Windows")}</option>
+                  {LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section className="card p-6">
+            <h2 className="mb-4 font-semibold">{t("System status")}</h2>
+            <div className="flex items-start gap-3">
+              {status.service || status.elevated ? <ShieldCheck className="shrink-0 text-good" /> : <ShieldAlert className="shrink-0 text-warn" />}
+              <div className="text-sm">
+                <div className="font-medium">
+                  {status.service ? t("Protected by the background service") : status.elevated ? t("Running with administrator rights") : t("Limited mode")}
+                </div>
+                <p className="mt-0.5 text-muted">
+                  {status.service
+                    ? t("Blocking runs in the OpenBlocker service, even while this window is closed. Closing or killing the app doesn't end a block, and locks can't be undone by editing files.")
+                    : status.elevated
+                      ? t("Website and app blocking work while OpenBlocker is open. Install it with the installer to get the background service, so blocks keep running when the app is closed.")
+                      : t("The background service isn't running, and website blocking needs it (or administrator rights). App blocking still works.")}
+                </p>
+                {!status.service && !status.elevated && isTauri && (
+                  <button className="btn-ghost mt-3" onClick={() => run(async () => (await api.relaunchAsAdmin(), api.snapshot()))}>
+                    {t("Restart as administrator")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="card p-6">
+            <h2 className="mb-1 font-semibold">{t("Backup")}</h2>
+            <p className="mb-4 text-sm text-muted">
+              {t("Save your block lists, categories, schedules and settings to a file, to keep a backup or move them to another computer. Running blocks and statistics aren't included.")}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="btn-ghost"
+                onClick={() =>
                   api
-                    .setAutostart(v)
-                    .then((now) => {
-                      setAutostart(now);
-                      toast(now ? "OpenBlocker will start with Windows." : "Autostart disabled.", "success");
-                    })
+                    .exportSettings()
+                    .then((saved) => saved && toast("Settings exported.", "success"))
                     .catch((e) => toast(String(e), "error"))
                 }
-              />
-            )}
-            <Toggle
-              label={t("Record screen time")}
-              hint={
-                <>
-                  {t("For the statistics: which programs and websites you use, and for how long. Kept on this PC only.")}{" "}
-                  <button
-                    className="underline underline-offset-2 hover:text-fg"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (confirm(t("Delete all recorded screen time? Focus time and blocked counts stay."))) run(api.clearScreenTime, "Screen time history deleted.");
-                    }}
-                  >
-                    {t("Delete history")}
-                  </button>
-                </>
-              }
-              checked={settings.recordScreenTime}
-              onChange={(recordScreenTime) => save({ recordScreenTime })}
-            />
-            <Toggle label={t("Notifications")} hint={t("Pomodoro phases, finished blocks and closed apps.")} checked={settings.notifications} onChange={(notifications) => save({ notifications })} />
-            <Toggle label={t("Keep running in the tray")} hint={t("Closing the window keeps your blocks active.")} checked={settings.closeToTray} onChange={(closeToTray) => save({ closeToTray })} />
-            <Toggle label={t("Show website icons")} hint={t("Icons are loaded from Google's favicon service.")} checked={siteIcons} onChange={setSiteIcons} />
-            <div className="flex items-center justify-between gap-6 py-3">
-              <span className="text-sm font-medium">{t("Theme")}</span>
-              <Segmented
-                value={theme}
-                onChange={setTheme}
-                options={[
-                  { value: "dark", label: t("Dark") },
-                  { value: "light", label: t("Light") },
-                  { value: "system", label: t("System") },
-                ]}
-              />
+              >
+                <Download size={15} /> {t("Export…")}
+              </button>
+              <button
+                className="btn-ghost"
+                disabled={locked}
+                title={locked ? t("Not available while a locked block is running") : t("Replaces your lists, categories, schedules and settings")}
+                onClick={() => run(api.importSettings, "Settings imported.")}
+              >
+                <Upload size={15} /> {t("Import…")}
+              </button>
             </div>
-            <div className="flex items-center justify-between gap-6 py-3">
-              <span className="text-sm font-medium">{t("Language")}</span>
-              <select className="input w-auto py-1.5" value={settings.language} onChange={(e) => save({ language: e.target.value })}>
-                <option value="">{t("Like Windows")}</option>
-                {LANGUAGES.map((l) => (
-                  <option key={l.code} value={l.code}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </section>
-
-        <section className="card p-6">
-          <h2 className="mb-4 font-semibold">{t("System status")}</h2>
-          <div className="flex items-start gap-3">
-            {status.service || status.elevated ? <ShieldCheck className="shrink-0 text-good" /> : <ShieldAlert className="shrink-0 text-warn" />}
-            <div className="text-sm">
-              <div className="font-medium">
-                {status.service ? t("Protected by the background service") : status.elevated ? t("Running with administrator rights") : t("Limited mode")}
-              </div>
-              <p className="mt-0.5 text-muted">
-                {status.service
-                  ? t("Blocking runs in the OpenBlocker service, even while this window is closed. Closing or killing the app doesn't end a block, and locks can't be undone by editing files.")
-                  : status.elevated
-                    ? t("Website and app blocking work while OpenBlocker is open. Install it with the installer to get the background service, so blocks keep running when the app is closed.")
-                    : t("The background service isn't running, and website blocking needs it (or administrator rights). App blocking still works.")}
-              </p>
-              {!status.service && !status.elevated && isTauri && (
-                <button className="btn-ghost mt-3" onClick={() => run(async () => (await api.relaunchAsAdmin(), api.snapshot()))}>
-                  {t("Restart as administrator")}
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="card p-6">
-          <h2 className="mb-1 font-semibold">{t("Backup")}</h2>
-          <p className="mb-4 text-sm text-muted">
-            {t("Save your block lists, categories, schedules and settings to a file, to keep a backup or move them to another computer. Running blocks and statistics aren't included.")}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="btn-ghost"
-              onClick={() =>
-                api
-                  .exportSettings()
-                  .then((saved) => saved && toast("Settings exported.", "success"))
-                  .catch((e) => toast(String(e), "error"))
-              }
-            >
-              <Download size={15} /> {t("Export…")}
-            </button>
-            <button
-              className="btn-ghost"
-              disabled={locked}
-              title={locked ? t("Not available while a locked block is running") : t("Replaces your lists, categories, schedules and settings")}
-              onClick={() => run(api.importSettings, "Settings imported.")}
-            >
-              <Upload size={15} /> {t("Import…")}
-            </button>
-          </div>
-          {locked && <p className="mt-2 text-xs text-faint">{t("Importing is disabled while a locked block is running.")}</p>}
-        </section>
+            {locked && <p className="mt-2 text-xs text-faint">{t("Importing is disabled while a locked block is running.")}</p>}
+          </section>
+        </div>
 
         <AccountCard />
 
