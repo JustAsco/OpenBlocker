@@ -406,7 +406,7 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       localStorage.setItem("mock-autostart", a.enabled ? "1" : "0");
       return a.enabled;
     case "extension_path":
-      return "C:\\Program Files\\OpenBlocker\\extension";
+      return a.firefox ? "C:\\Users\\you\\AppData\\Roaming\\org.openblocker.app\\extension-firefox" : "C:\\Program Files\\OpenBlocker\\extension";
     case "open_extension_folder":
       return;
     case "relaunch_as_admin":

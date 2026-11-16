@@ -107,8 +107,8 @@ export const api = {
   appIcon: (path: string | null, exe: string | null) => call<string | null>("app_icon", { path, exe }),
   getAutostart: () => call<boolean>("get_autostart"),
   setAutostart: (enabled: boolean) => call<boolean>("set_autostart", { enabled }),
-  extensionPath: () => call<string | null>("extension_path"),
-  openExtensionFolder: () => call<void>("open_extension_folder"),
+  extensionPath: (firefox = false) => call<string | null>("extension_path", { firefox }),
+  openExtensionFolder: (firefox = false) => call<void>("open_extension_folder", { firefox }),
   clearScreenTime: () => call<Snapshot>("clear_screen_time"),
   relaunchAsAdmin: () => call<void>("relaunch_as_admin"),
   /** Asks where to save, then writes lists, categories, schedules and settings. False if cancelled. */

@@ -23,8 +23,10 @@ export function SettingsPage() {
   const { toast } = useStore();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [extPath, setExtPath] = useState<string | null>(null);
+  const [firefoxPath, setFirefoxPath] = useState<string | null>(null);
   useEffect(() => {
     api.extensionPath().then(setExtPath).catch(() => {});
+    api.extensionPath(true).then(setFirefoxPath).catch(() => {});
   }, []);
   useEffect(() => {
     api.getAutostart().then(setAutostart).catch(() => setAutostart(false));
@@ -141,31 +143,15 @@ export function SettingsPage() {
               {tx("Click {button} and choose this folder:", { button: <span className="text-fg">{t("Load unpacked")}</span> })}
             </li>
           </ol>
-          <div className="mb-5 flex gap-2">
-            <code className="min-w-0 flex-1 truncate rounded-xl border border-line bg-panel px-3 py-2 text-xs leading-5 text-fg select-all" title={extPath ?? ""}>
-              {extPath ?? t("Extension folder not found")}
-            </code>
-            <button
-              className="btn-ghost px-3"
-              disabled={!extPath}
-              title={t("Copy path")}
-              onClick={() => navigator.clipboard.writeText(extPath!).then(() => toast("Path copied.", "success"))}
-            >
-              <Copy size={15} />
-            </button>
-            {isTauri && (
-              <button className="btn-ghost px-3" disabled={!extPath} title={t("Open folder")} onClick={() => api.openExtensionFolder().catch((e) => toast(String(e), "error"))}>
-                <FolderOpen size={15} />
-              </button>
-            )}
-          </div>
+          <FolderRow path={extPath} />
           <h3 className="mb-2 text-sm font-medium">{t("Firefox")}</h3>
           <p className="mb-4 text-sm text-muted">
-            {tx("Open {page} → This Firefox → Load Temporary Add-on → pick {file} in the folder above. Firefox removes it on restart until the add-on is published.", {
+            {tx("Open {page} → This Firefox → Load Temporary Add-on → pick {file} in this folder (Firefox has its own copy). Firefox removes it on restart until the add-on is published.", {
               page: <code className="rounded bg-elevated px-1.5 py-0.5 text-fg">about:debugging</code>,
               file: <code className="rounded bg-elevated px-1.5 py-0.5 text-fg">manifest.json</code>,
             })}
           </p>
+          <FolderRow path={firefoxPath} firefox />
           <div className="border-t border-line">
             <Toggle
               label={
@@ -379,6 +365,26 @@ export function SettingsPage() {
       </div>
       <ResetModal open={resetOpen} onClose={() => setResetOpen(false)} />
     </>
+  );
+}
+
+/** An extension folder to load, with copy and open buttons. */
+function FolderRow({ path, firefox = false }: { path: string | null; firefox?: boolean }) {
+  const { toast } = useStore();
+  return (
+    <div className="mb-5 flex gap-2">
+      <code className="min-w-0 flex-1 truncate rounded-xl border border-line bg-panel px-3 py-2 text-xs leading-5 text-fg select-all" title={path ?? ""}>
+        {path ?? t("Extension folder not found")}
+      </code>
+      <button className="btn-ghost px-3" disabled={!path} title={t("Copy path")} onClick={() => navigator.clipboard.writeText(path!).then(() => toast("Path copied.", "success"))}>
+        <Copy size={15} />
+      </button>
+      {isTauri && (
+        <button className="btn-ghost px-3" disabled={!path} title={t("Open folder")} onClick={() => api.openExtensionFolder(firefox).catch((e) => toast(String(e), "error"))}>
+          <FolderOpen size={15} />
+        </button>
+      )}
+    </div>
   );
 }
 

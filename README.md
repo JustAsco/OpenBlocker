@@ -120,6 +120,7 @@ src-tauri/
 - [x] Permanent blocks: on around the clock until you turn them off (flexible, type to unlock or password; never locked, that would be a trap)
 - [x] Usage limits ("max 30 min of YouTube per day")
 - [x] Importable community category lists (large adult/gambling/news domain lists)
+- [ ] **Super strict mode for every Windows user**: enforce it in all accounts on the PC and carry running blocks over, so switching to another account isn't a way around a block (today the service keeps one shared copy of the blocks and assumes one user per PC)
 - [ ] Linux and macOS support (hosts + process blocking already implemented cross-platform in `core`)
 - [x] Light theme (Settings → App → Theme; dark, light or follow Windows)
 - [x] Translations: English and German (Settings → App → Language). To add a language, copy `src/locales/de.ts` and the table in `src-tauri/src/i18n.rs`

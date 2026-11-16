@@ -526,8 +526,8 @@ const de: Record<string, string> = {
   "Open folder": "Ordner öffnen",
   "Extension folder not found": "Erweiterungsordner nicht gefunden",
   Firefox: "Firefox",
-  "Open {page} → This Firefox → Load Temporary Add-on → pick {file} in the folder above. Firefox removes it on restart until the add-on is published.":
-    "Öffne {page} → Dieser Firefox → Temporäres Add-on laden → wähle {file} im Ordner oben. Firefox entfernt es beim Neustart, bis das Add-on veröffentlicht ist.",
+  "Open {page} → This Firefox → Load Temporary Add-on → pick {file} in this folder (Firefox has its own copy). Firefox removes it on restart until the add-on is published.":
+    "Öffne {page} → Dieser Firefox → Temporäres Add-on laden → wähle {file} in diesem Ordner (Firefox hat eine eigene Kopie). Firefox entfernt es beim Neustart, bis das Add-on veröffentlicht ist.",
   "Close browsers without the extension": "Browser ohne die Erweiterung schließen",
   "While websites are blocked, browsers in which the extension isn't running are closed after 30 seconds. Always on while an allowlist is active.":
     "Solange Websites gesperrt sind, werden Browser, in denen die Erweiterung nicht läuft, nach 30 Sekunden geschlossen. Immer aktiv, solange eine Positivliste läuft.",
