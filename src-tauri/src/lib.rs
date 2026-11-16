@@ -1059,15 +1059,54 @@ fn extension_dir(app: &AppHandle) -> Option<PathBuf> {
         .map(|p| p.canonicalize().unwrap_or(p))
 }
 
+/// Firefox doesn't support `"incognito": "split"`: it would install the
+/// extension as "not allowed in private windows". So Firefox gets a copy
+/// without that key (its default, "spanning", works there), refreshed from
+/// the bundled extension whenever the app starts, so the extension's
+/// self-update finds the new files in this folder too.
+fn firefox_extension_dir(app: &AppHandle) -> Option<PathBuf> {
+    let src = extension_dir(app)?;
+    let dst = app.path().app_data_dir().ok()?.join("extension-firefox");
+    let mut manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(src.join("manifest.json")).ok()?).ok()?;
+    manifest.as_object_mut()?.remove("incognito");
+    let _ = std::fs::remove_dir_all(&dst);
+    copy_dir(&src, &dst).ok()?;
+    std::fs::write(dst.join("manifest.json"), serde_json::to_string_pretty(&manifest).ok()?).ok()?;
+    Some(dst)
+}
+
+fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Strips the \\?\ prefix canonicalize adds on Windows; browsers don't accept it.
+fn display_path(p: PathBuf) -> String {
+    p.to_string_lossy().trim_start_matches(r"\\?\").to_string()
+}
+
+/// The folder to load the extension from: Chrome, Edge, … or (`firefox`) Firefox.
 #[tauri::command]
-fn extension_path(app: AppHandle) -> Option<String> {
-    // Strip the \\?\ prefix canonicalize adds on Windows; browsers don't accept it.
-    extension_dir(&app).map(|p| p.to_string_lossy().trim_start_matches(r"\\?\").to_string())
+fn extension_path(app: AppHandle, firefox: Option<bool>) -> Option<String> {
+    if firefox == Some(true) {
+        let dir = app.path().app_data_dir().ok()?.join("extension-firefox");
+        return Some(display_path(if dir.join("manifest.json").exists() { dir } else { firefox_extension_dir(&app)? }));
+    }
+    extension_dir(&app).map(display_path)
 }
 
 #[tauri::command]
-fn open_extension_folder(app: AppHandle) -> Res<()> {
-    let dir = extension_path(app).ok_or("Extension folder not found.")?;
+fn open_extension_folder(app: AppHandle, firefox: Option<bool>) -> Res<()> {
+    let dir = extension_path(app, firefox).ok_or("Extension folder not found.")?;
     #[cfg(windows)]
     let cmd = "explorer";
     #[cfg(target_os = "macos")]
@@ -1453,6 +1492,11 @@ pub fn run() {
         .manage(Arc::new(IconCache::default()))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
+            // Refresh Firefox's copy of the extension off the startup path.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                firefox_extension_dir(&handle);
+            });
             let bridge = Arc::new(bridge::Bridge::default());
             // Ask the service first, so the app doesn't grab the bridge port
             // for a moment when the service owns it.

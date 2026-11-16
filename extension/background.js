@@ -13,6 +13,16 @@ const EMPTY = { blocked: [], blockedPaths: [], allowOnly: null, until: null, lis
 const MAX_PATH_RULES = 700;
 const MAX_EXCEPTION_RULES = 200;
 
+// Chromium runs a second copy of this script for incognito windows
+// ("incognito": "split" in the manifest), because only then can the block
+// page open in incognito tabs. That copy is a helper: the main one talks to
+// the app and installs the blocking rules (which apply to incognito tabs as
+// well); the helper takes the rules from the shared storage, redirects its
+// open tabs, and passes the active incognito tab and block-page views back
+// through storage. Firefox runs one copy for all windows.
+const INCOGNITO = !!api.extension.inIncognitoContext;
+const INCOGNITO_TAB_FRESH_MS = 5000;
+
 let current = null; // rules currently installed
 let currentKey = null;
 
@@ -44,6 +54,22 @@ async function activeUrl() {
   }
 }
 
+/** The main copy can't see incognito windows: their active tab, as reported by the helper. */
+async function incognitoActiveUrl() {
+  const { incognitoTab } = await api.storage.local.get("incognitoTab");
+  return incognitoTab?.url && Date.now() - incognitoTab.at < INCOGNITO_TAB_FRESH_MS ? incognitoTab.url : "";
+}
+
+/** Block-page views in incognito tabs, counted by the helper: moved into pendingHits. */
+async function collectIncognitoHits() {
+  const { incognitoHits } = await api.storage.local.get("incognitoHits");
+  if (!incognitoHits || !Object.keys(incognitoHits).length) return;
+  await api.storage.local.remove("incognitoHits");
+  for (const [d, n] of Object.entries(incognitoHits)) {
+    if (Object.keys(pendingHits).length < 500 || pendingHits[d]) pendingHits[d] = (pendingHits[d] || 0) + n;
+  }
+}
+
 let lastRules = null; // last full rules (with rev), to reuse when unchanged
 
 // Websites whose block page was shown, not yet reported to the app.
@@ -52,7 +78,8 @@ const pendingHits = {};
 async function fetchRules() {
   try {
     const incognito = await api.extension.isAllowedIncognitoAccess().catch(() => false);
-    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: await activeUrl(), i: incognito ? "1" : "0" });
+    await collectIncognitoHits();
+    const params = new URLSearchParams({ b: browserHint(), v: VERSION, a: (await activeUrl()) || (await incognitoActiveUrl()), i: incognito ? "1" : "0" });
     if (lastRules?.rev) params.set("r", lastRules.rev);
     // Block-page views for the statistics, sent until the app has them.
     const hits = Object.entries(pendingHits).slice(0, 50);
@@ -382,6 +409,8 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       checkVideo(sender.tab.id, sender.tab.url);
     }
   } else if (msg?.type === "yt-subs" && sender.tab) {
+    // Incognito tabs aren't signed in to YouTube: their answer would wipe the list.
+    if (INCOGNITO || sender.tab.incognito) return void sendResponse(false);
     storeSubscriptions(msg).then(() => sendResponse(true), () => sendResponse(false));
     return true;
   } else if (msg?.type === "channel-allowed" && typeof msg.channel === "string") {
@@ -399,7 +428,9 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const host = msg.site.toLowerCase().slice(0, 253);
     const entries = [...(current?.blocked || []), ...(current?.blockedPaths || []).map((p) => p.split("/")[0])];
     const site = entries.find((d) => host === d || host.endsWith("." + d)) ?? host;
-    if (/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(site) && Object.keys(pendingHits).length < 500) pendingHits[site] = (pendingHits[site] || 0) + 1;
+    if (!/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(site)) return;
+    if (INCOGNITO) countIncognitoHit(site);
+    else if (Object.keys(pendingHits).length < 500) pendingHits[site] = (pendingHits[site] || 0) + 1;
   } else if (msg?.type === "yt-embed" && typeof msg.videoId === "string") {
     // A YouTube player embedded on another website: may this video play?
     (async () => {
@@ -416,14 +447,43 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+/** In the incognito helper: hand a block-page view to the main copy, which reports it. */
+let hitWrites = Promise.resolve();
+function countIncognitoHit(site) {
+  hitWrites = hitWrites.then(async () => {
+    const { incognitoHits = {} } = await api.storage.local.get("incognitoHits");
+    if (Object.keys(incognitoHits).length >= 500 && !incognitoHits[site]) return;
+    incognitoHits[site] = (incognitoHits[site] || 0) + 1;
+    await api.storage.local.set({ incognitoHits });
+  }).catch(() => {});
+}
+
+/** In the incognito helper: the rules the main copy got from the app (same fallback when it's unreachable). */
+async function storedRules() {
+  const { rules, connected } = await api.storage.local.get(["rules", "connected"]);
+  if (!rules) return EMPTY;
+  return connected || (rules.until && rules.until > Date.now()) ? rules : EMPTY;
+}
+
+/** In the incognito helper: tell the main copy which incognito tab is in front. */
+let lastIncognitoUrl = "";
+async function reportIncognitoTab() {
+  const url = await activeUrl();
+  // Written while one is in front (to keep it fresh) and once when that ends.
+  if (url || lastIncognitoUrl) await api.storage.local.set({ incognitoTab: { url, at: Date.now() } });
+  lastIncognitoUrl = url;
+}
+
 async function apply(rules) {
   const key = rules.rev ?? JSON.stringify([rules.blocked, rules.blockedPaths, rules.allowedPaths, rules.allowOnly]);
   if (key === currentKey) return;
-  const existing = await api.declarativeNetRequest.getDynamicRules();
-  await api.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: existing.map((r) => r.id),
-    addRules: buildRules(rules),
-  });
+  if (!INCOGNITO) {
+    const existing = await api.declarativeNetRequest.getDynamicRules();
+    await api.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: existing.map((r) => r.id),
+      addRules: buildRules(rules),
+    });
+  }
   current = rules;
   currentKey = key;
   await sweepTabs(rules);
@@ -435,7 +495,12 @@ async function tick() {
   if (running) return;
   running = true;
   try {
-    await apply(await fetchRules());
+    if (INCOGNITO) {
+      await apply(await storedRules());
+      await reportIncognitoTab();
+    } else {
+      await apply(await fetchRules());
+    }
   } catch (e) {
     console.warn("OpenBlocker:", e);
   } finally {
@@ -460,7 +525,14 @@ api.tabs.onUpdated.addListener((tabId, info) => {
 api.alarms.create("openblocker-poll", { periodInMinutes: 0.5 });
 api.alarms.onAlarm.addListener(tick);
 api.runtime.onStartup.addListener(tick);
+// The other copy changed something in the shared storage.
+api.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.ytSubs) subsCache = changes.ytSubs.newValue ?? null;
+  if (INCOGNITO && (changes.rules || changes.connected)) tick();
+});
 api.runtime.onInstalled.addListener(async () => {
+  if (INCOGNITO) return tick();
   // Firefox doesn't grant host access for MV3 extensions at install time.
   const granted = await api.permissions.contains({ origins: ["<all_urls>"] });
   if (!granted) api.tabs.create({ url: api.runtime.getURL("welcome.html") });
