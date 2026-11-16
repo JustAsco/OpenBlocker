@@ -66,6 +66,8 @@ cd src-tauri && cargo test -p openblocker-core
 
 The service's local API has its own security and behaviour tests, which build the service code without Tauri, so they run anywhere: `python3 dev/service_api_test.py`. `node dev/extension_test.cjs` tests the extension's YouTube subscription parsing. From Linux/WSL, `dev/check-windows.sh` type-checks and lints the Windows build.
 
+**Optional cloud sync** (Settings → Account & sync) uses [Supabase](https://supabase.com). Without configuration the account section is hidden and the app never contacts a server. To enable it: create a Supabase project, run `supabase/migrations/*.sql` (SQL editor, or `supabase db push`), and turn off *Authentication → Sign In / Providers → Email → Confirm email* (sign-in is email + password; until the project has its own SMTP server, Supabase can't send emails to other people). Then copy `.env.example` to `.env.local` with the project URL and its **publishable** key (never the `service_role` key). CI reads the same values from the repository variables `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`.
+
 To try the background service without installing it, run `openblocker --service-console` from an administrator terminal (set `OPENBLOCKER_SERVICE_DIR` to keep its data somewhere other than ProgramData). The app connects to it automatically. The installer hooks that register the service are in `src-tauri/windows/hooks.nsh`.
 
 GitHub Actions builds the Windows installer (NSIS `.exe`) on every push to `main` and publishes a draft release for `v*` tags. There's no `.msi` any more: only the NSIS installer can register the service and refuse to uninstall during a lock.
@@ -123,7 +125,9 @@ src-tauri/
 - [x] Translations: English and German (Settings → App → Language). To add a language, copy `src/locales/de.ts` and the table in `src-tauri/src/i18n.rs`
 - [x] Export/import settings
 - [x] Warning before starting a locked block, hidden emergency reset
-- [ ] **User accounts**: sign in to sync lists, categories, schedules and settings between devices (optional; everything keeps working offline and without an account)
+- [x] **User accounts** (optional): sign in with email and password and upload/download lists, categories, schedules, limits and settings (Supabase; downloads are refused during locked blocks)
+- [ ] Automatic sync and end-to-end encryption of the synced data
+- [ ] Sign in with Google; email confirmation and password reset (need an SMTP server for the Supabase project)
 - [ ] **Android and iOS apps** synced with the desktop (needs user accounts), so you can, for example, lock your phone from your PC. Far in the future: phones only allow this through their parental-control/Screen Time APIs
 
 Contributions are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the [CLA](CLA.md). Open an issue to discuss bigger changes.

@@ -46,6 +46,10 @@ jobs:
         with: { workspaces: src-tauri }
       - run: npm ci
       - run: npx tauri build
+        env:
+          # Optional cloud sync; leave these repository variables unset to build without it.
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
       - uses: actions/upload-artifact@v4
         with:
           name: openblocker-windows

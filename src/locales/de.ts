@@ -797,6 +797,36 @@ const de: Record<string, string> = {
   "Delete history": "Verlauf löschen",
   "Delete all recorded screen time? Focus time and blocked counts stay.": "Die gesamte aufgezeichnete Bildschirmzeit löschen? Fokuszeit und Sperrzählungen bleiben.",
   "Screen time history deleted.": "Verlauf der Bildschirmzeit gelöscht.",
+
+  // ── Account & sync ──
+  "Account & sync": "Konto & Synchronisierung",
+  "Optional. Sign in to keep your block lists, categories, schedules, limits and settings in sync between computers. Without an account everything works the same, and nothing leaves this computer.":
+    "Optional. Melde dich an, um Sperrlisten, Kategorien, Zeitpläne, Limits und Einstellungen zwischen Computern abzugleichen. Ohne Konto funktioniert alles genauso, und nichts verlässt diesen Computer.",
+  "Email address": "E-Mail-Adresse",
+  "Sign in": "Anmelden",
+  "Password (at least 8 characters)": "Passwort (mindestens 8 Zeichen)",
+  "I already have an account": "Ich habe schon ein Konto",
+  "Create an account": "Konto erstellen",
+  "Create account": "Konto erstellen",
+  "Account created. Open the link in the email we sent, then sign in.": "Konto erstellt. Öffne den Link in der E-Mail, die wir geschickt haben, und melde dich dann an.",
+  "Signed in as {email}": "Angemeldet als {email}",
+  "Nothing uploaded yet.": "Noch nichts hochgeladen.",
+  "Last uploaded: {date}": "Zuletzt hochgeladen: {date}",
+  Upload: "Hochladen",
+  Download: "Herunterladen",
+  "Sign out": "Abmelden",
+  "Replaces the copy in your account with this computer's settings": "Ersetzt die Kopie in deinem Konto durch die Einstellungen dieses Computers",
+  "Replaces this computer's lists, categories, schedules, limits and settings": "Ersetzt Listen, Kategorien, Zeitpläne, Limits und Einstellungen dieses Computers",
+  "Uploaded to your account.": "In dein Konto hochgeladen.",
+  "Settings downloaded from your account.": "Einstellungen aus deinem Konto heruntergeladen.",
+  "There's nothing in your account yet.": "In deinem Konto ist noch nichts gespeichert.",
+  "Downloading is disabled while a locked block is running.": "Herunterladen ist deaktiviert, solange eine gesperrte Sperre läuft.",
+  "Running blocks and statistics aren't synced. Community lists are downloaded again on each computer.":
+    "Laufende Sperren und Statistiken werden nicht synchronisiert. Community-Listen werden auf jedem Computer neu heruntergeladen.",
+  "Cloud sync isn't available in this build.": "Cloud-Synchronisierung ist in diesem Build nicht verfügbar.",
+  "Please sign in again.": "Bitte melde dich erneut an.",
+  "· free & open source under the AGPL-3.0. Your data only leaves your computer if you sign in to sync.":
+    "· frei und quelloffen unter der AGPL-3.0. Deine Daten verlassen deinen Computer nur, wenn du dich zur Synchronisierung anmeldest.",
 };
 
 export default de;

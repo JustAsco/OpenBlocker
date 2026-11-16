@@ -7,3 +7,8 @@ src-tauri/gen/schemas/
 *.tsbuildinfo
 dev/service-harness/target/
 dist-extension/
+.env
+.env.local
+.env.*.local
+supabase/.temp/
+supabase/.branches/

@@ -146,6 +146,10 @@ export const api = {
     });
     return text === null ? null : call<Snapshot>("mock_import", { text });
   },
+  /** Lists, categories, schedules, limits and settings, as uploaded by cloud sync. */
+  getBackup: async (): Promise<unknown> => (isTauri ? call<unknown>("get_backup") : JSON.parse(await call<string>("mock_export"))),
+  /** Replaces lists, categories, schedules, limits and settings with a synced copy. */
+  restoreBackup: (backup: unknown) => (isTauri ? call<Snapshot>("restore_backup", { backup }) : call<Snapshot>("mock_import", { text: JSON.stringify(backup) })),
   /** Sets (current = null when none is set), changes or removes (next = null) the unlock password. */
   setPassword: (current: string | null, next: string | null) => call<Snapshot>("set_password", { current, new: next }),
   saveLimit: (limit: UsageLimit) => call<Snapshot>("save_limit", { limit }),
