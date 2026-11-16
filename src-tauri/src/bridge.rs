@@ -63,6 +63,10 @@ pub struct BrowserSeen {
     /// isn't idle (reported by the extension; used for usage limits).
     #[serde(default)]
     pub active_url: Option<String>,
+    /// The active tab is in a private/incognito window: it counts for usage
+    /// limits, but the statistics don't record the website.
+    #[serde(default)]
+    pub active_private: bool,
     /// Whether the extension may run in private/incognito windows (None =
     /// an older extension that doesn't say).
     #[serde(default)]
@@ -207,12 +211,13 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
 }
 
-/// URL of the active tab in a browser, if the report is fresh.
-pub fn active_url(browsers: &[BrowserSeen], exe: &str, now_ms: i64) -> Option<String> {
+/// URL of the active tab in a browser, if the report is fresh, and whether
+/// it's in a private window.
+pub fn active_url(browsers: &[BrowserSeen], exe: &str, now_ms: i64) -> Option<(String, bool)> {
     browsers
         .iter()
         .find(|b| b.exe.eq_ignore_ascii_case(exe) && now_ms - b.last_seen < ACTIVE_TAB_TIMEOUT_MS)
-        .and_then(|b| b.active_url.clone())
+        .and_then(|b| Some((b.active_url.clone()?, b.active_private)))
 }
 
 fn exe_from_hint(hint: &str) -> Option<&'static str> {
@@ -291,6 +296,7 @@ fn handle(bridge: &Bridge, req: tiny_http::Request) {
                 name,
                 last_seen: chrono::Utc::now().timestamp_millis(),
                 extension_version: version,
+                active_private: active_url.is_some() && http::query_param(&url, "ap") == Some("1"),
                 active_url,
                 incognito: http::query_param(&url, "i").map(|v| v == "1"),
                 youtube_subscriptions: http::query_param(&url, "ys").and_then(|v| v.parse::<i64>().ok()).map(|n| n.clamp(-1, 100_000)),

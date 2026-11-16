@@ -651,6 +651,15 @@ fn clear_screen_time(shared: tauri::State<'_, Shared>) -> Res<Snapshot> {
     })
 }
 
+/// Removes a program or website from the statistics of every day.
+#[tauri::command]
+fn forget_stats_item(shared: tauri::State<'_, Shared>, kind: engine::StatsItem, key: String) -> Res<Snapshot> {
+    with(&shared, |i| {
+        engine::forget_stats_item(&mut i.state, kind, &key);
+        Ok(i.commit())
+    })
+}
+
 #[tauri::command]
 fn pomodoro_start(shared: tauri::State<'_, Shared>, config: PomodoroConfig) -> Res<Snapshot> {
     with(&shared, |i| {
@@ -1206,11 +1215,12 @@ fn current_activity(browsers: &[bridge::BrowserSeen], now: i64) -> engine::Activ
         return engine::Activity::default();
     }
     let exe = platform::foreground_exe();
-    let url = exe
+    let tab = exe
         .as_deref()
         .filter(|e| bridge::browser_name(e).is_some())
         .and_then(|e| bridge::active_url(browsers, e, now));
-    engine::Activity { exe, url }
+    let private = tab.as_ref().is_some_and(|t| t.1);
+    engine::Activity { exe, url: tab.map(|t| t.0), private }
 }
 
 fn engine_loop(app: AppHandle, shared: Shared) {
@@ -1611,6 +1621,7 @@ pub fn run() {
             installed_apps,
             app_icon,
             clear_screen_time,
+            forget_stats_item,
             get_autostart,
             set_autostart,
             extension_path,

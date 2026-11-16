@@ -110,6 +110,8 @@ export const api = {
   extensionPath: (firefox = false) => call<string | null>("extension_path", { firefox }),
   openExtensionFolder: (firefox = false) => call<void>("open_extension_folder", { firefox }),
   clearScreenTime: () => call<Snapshot>("clear_screen_time"),
+  /** Removes a program (exe) or website (with subdomains) from the statistics of every day. */
+  forgetStatsItem: (kind: "app" | "site", key: string) => call<Snapshot>("forget_stats_item", { kind, key }),
   relaunchAsAdmin: () => call<void>("relaunch_as_admin"),
   /** Asks where to save, then writes lists, categories, schedules and settings. False if cancelled. */
   exportSettings: async (): Promise<boolean> => {

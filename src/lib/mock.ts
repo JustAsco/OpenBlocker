@@ -392,6 +392,16 @@ export async function mockInvoke(cmd: string, a: any = {}): Promise<unknown> {
       return FAKE_APPS;
     case "app_icon":
       return null;
+    case "forget_stats_item": {
+      const key = String(a.key).toLowerCase();
+      const match = (k: string) => (a.kind === "app" ? k === key : k === key || k.endsWith("." + key));
+      const drop = (m: Record<string, number> | undefined) => m && Object.keys(m).filter(match).forEach((k) => delete m[k]);
+      for (const day of Object.values(state.stats)) {
+        if (a.kind === "app") (drop(day.apps), drop(day.closedApps));
+        else (drop(day.sites), drop(day.blockedSites));
+      }
+      return commit();
+    }
     case "clear_screen_time":
       for (const day of Object.values(state.stats)) {
         day.apps = {};
