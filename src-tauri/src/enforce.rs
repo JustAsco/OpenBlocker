@@ -103,6 +103,11 @@ pub struct Enforcer {
     applied: Option<(BTreeSet<String>, bool)>,
     pub hosts_error: Option<String>,
     retry_at: i64,
+    /// Since when writing the hosts file keeps failing because another
+    /// program has it open (the warning only shows if that lasts).
+    hosts_busy_since: Option<i64>,
+    /// When our section was last checked against the file.
+    hosts_checked_at: i64,
     /// Browsers found without the extension: (session, exe) -> when they were warned.
     warned: std::collections::HashMap<(u32, String), i64>,
     /// Browsers in which the extension ran since the current blocks began.
@@ -115,6 +120,12 @@ pub struct Enforcer {
     community_switch_since: Option<i64>,
     started_at: i64,
 }
+
+/// Our section of the hosts file is compared with the file this often.
+const HOSTS_RECHECK_MS: i64 = 10_000;
+/// Writing the hosts file may fail this long because another program has
+/// it open before that's shown as a problem.
+const HOSTS_BUSY_WARN_MS: i64 = 30_000;
 
 /// After starting, the extensions get this long to check in before a browser
 /// counts as uncovered, so restarting OpenBlocker doesn't rewrite a huge
@@ -137,6 +148,8 @@ impl Enforcer {
             applied: None,
             hosts_error: None,
             retry_at: 0,
+            hosts_busy_since: None,
+            hosts_checked_at: 0,
             warned: Default::default(),
             had_extension: BTreeSet::new(),
             community_in_hosts: false,
@@ -265,7 +278,11 @@ impl Enforcer {
         }
         let subdomains = state.settings.block_subdomains;
         let key = (sites, subdomains);
-        if self.applied.as_ref() != Some(&key) && now_ms >= self.retry_at {
+        // Other programs keep their own sections in the hosts file too
+        // (Tailscale, Docker) and rewrite it now and then: check ours every
+        // few seconds, so a copy written over it is put right.
+        let due = self.applied.as_ref() != Some(&key) || now_ms - self.hosts_checked_at >= HOSTS_RECHECK_MS;
+        if due && now_ms >= self.retry_at {
             // Community lists usually contain their www. variants already.
             let from_sources = |d: &str| state.source_sites.values().any(|s| s.contains(d));
             match platform::apply_hosts(&key.0, subdomains, |d| !from_sources(d)) {
@@ -275,8 +292,19 @@ impl Enforcer {
                     }
                     self.applied = Some(key);
                     self.hosts_error = None;
+                    self.hosts_busy_since = None;
+                    self.hosts_checked_at = now_ms;
                 }
-                Err(e) => {
+                Err(platform::HostsError::Busy(e)) => {
+                    // Someone else has it open: try again in a second, and
+                    // only warn if it stays that way.
+                    let since = *self.hosts_busy_since.get_or_insert(now_ms);
+                    if now_ms - since >= HOSTS_BUSY_WARN_MS {
+                        self.hosts_error = Some(e);
+                    }
+                    self.retry_at = now_ms + 1_000;
+                }
+                Err(platform::HostsError::Other(e)) => {
                     self.hosts_error = Some(e);
                     self.retry_at = now_ms + 15_000;
                 }
@@ -331,7 +359,15 @@ impl Enforcer {
         };
         let warning_ms = if super_strict { SUPER_STRICT_WARNING_MS } else { BROWSER_WARNING_MS };
         let uncovered = self.killer.unprotected_browsers(|s, exe| s != session || reason(exe).is_none());
+        // Only browsers with an open window: one running in the background
+        // (Edge's startup boost) can't open websites, and closing it just
+        // makes it start again. Without a recent report of the account's
+        // windows, every browser counts.
+        let windows = bridge.browser_windows(session, now_ms);
         for (s, exe, name) in uncovered {
+            if !windows.as_ref().is_none_or(|w| w.contains(&exe)) {
+                continue;
+            }
             if let Some(r) = reason(&exe) {
                 found.push(((s, exe), name, r, warning_ms));
             }

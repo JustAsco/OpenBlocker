@@ -147,6 +147,7 @@ Contributions are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and th
 - App allowlists close programs only when they come to the front, so things already running in the background (music, sync tools) keep running. Like daily limits this is done by the app, which the service restarts during locks. Store apps that run inside Windows' own frame (Calculator, Photos, …) aren't caught yet.
 - With several Windows accounts, the other accounts must be standard users: an administrator can stop the service. Daily limits are counted per account, and the hosts file follows the account at the screen (blocks another account shares are always in it).
 - Community lists are blocked in browsers (with the extension); other programs, such as a game's built-in browser, can still reach those sites while every browser has the extension.
+- Other programs keep their own sections in the hosts file too (Tailscale, Docker, …). OpenBlocker only touches its own section, retries when one of them has the file open, and checks its section every 10 seconds, restoring it if another program wrote an older copy over it.
 - Some antivirus tools warn about hosts-file changes. OpenBlocker only edits its own marked section.
 
 ## License

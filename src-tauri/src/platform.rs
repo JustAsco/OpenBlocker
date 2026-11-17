@@ -35,29 +35,43 @@ pub fn can_write_hosts() -> bool {
 
 /// Rewrites our managed section of the hosts file. `expand` picks the domains
 /// that also get www./m. variants. Returns Ok(true) if the file changed.
-pub fn apply_hosts(domains: &BTreeSet<String>, subdomains: bool, expand: impl Fn(&str) -> bool) -> Result<bool, String> {
+/// Why the hosts file couldn't be updated.
+pub enum HostsError {
+    /// Another program has it open right now (Windows' DNS Client, a virus
+    /// scanner, or another program keeping its own section in it, like
+    /// Tailscale or Docker). Passes within moments: try again shortly.
+    Busy(String),
+    Other(String),
+}
+
+/// Sharing violation (os error 32) or locked range (33).
+fn busy(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(32 | 33))
+}
+
+/// Brings our section of the hosts file up to date (one attempt). Returns
+/// whether the file changed; when our section is already right, it isn't
+/// written at all.
+pub fn apply_hosts(domains: &BTreeSet<String>, subdomains: bool, expand: impl Fn(&str) -> bool) -> Result<bool, HostsError> {
     let path = hosts_path();
-    let existing = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read hosts file: {e}"))?;
+    let existing = std::fs::read_to_string(&path).map_err(|e| {
+        let msg = format!("Cannot read hosts file: {e}");
+        if busy(&e) {
+            HostsError::Busy(msg)
+        } else {
+            HostsError::Other(msg)
+        }
+    })?;
     let section = hosts::render_section(domains, subdomains, expand, hosts::newline_for(&existing));
     let merged = hosts::merge(&existing, &section);
     if merged == existing {
         return Ok(false);
     }
-    // Windows' DNS Client re-reads the file after every change, and virus
-    // scanners check it too; while one of them has it open, writing fails
-    // with a sharing violation (os error 32, or 33 for a locked range). That
-    // passes within moments, so retry briefly instead of giving up.
-    let mut attempt = 0;
-    loop {
-        match std::fs::write(&path, &merged) {
-            Ok(()) => return Ok(true),
-            Err(e) if matches!(e.raw_os_error(), Some(32 | 33)) && attempt < 15 => {
-                attempt += 1;
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err("Website blocking needs administrator rights.".into()),
-            Err(e) => return Err(format!("Cannot write hosts file: {e}")),
-        }
+    match std::fs::write(&path, &merged) {
+        Ok(()) => Ok(true),
+        Err(e) if busy(&e) => Err(HostsError::Busy(format!("Cannot write hosts file: {e}"))),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Err(HostsError::Other("Website blocking needs administrator rights.".into())),
+        Err(e) => Err(HostsError::Other(format!("Cannot write hosts file: {e}"))),
     }
 }
 
